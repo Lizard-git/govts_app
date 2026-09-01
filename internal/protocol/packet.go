@@ -76,6 +76,10 @@ func EncodePacket(packet VoicePacket) []byte {
 	return data
 }
 
+func DecodePacket(data []byte) (VoicePacket, error) {
+	return decodePacket(data)
+}
+
 func decodePacket(data []byte) (VoicePacket, error) {
 	if len(data) < HeaderSize {
 		return VoicePacket{}, ErrPacketTooShort

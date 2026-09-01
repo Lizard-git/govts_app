@@ -5,22 +5,23 @@ import (
 	"log"
 
 	"example.com/go-voice-mvp/internal/protocol"
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 func main() {
-	conn, err := protocol.ConnectUDP("127.0.0.1", 9000)
+	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
 
 	hello := protocol.VoicePacket{Type: protocol.PacketHello, SessionID: 43}
-	if err := protocol.SendPacket(conn, hello); err != nil {
+	if err := udp.SendPacket(conn, hello); err != nil {
 		log.Fatal(err)
 	}
 
 	for {
-		packet, err := protocol.ReceivePacket(conn)
+		packet, err := udp.ReceivePacket(conn)
 		if err != nil {
 			log.Printf("receive error: %v", err)
 			continue

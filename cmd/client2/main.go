@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"math"
-	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	voiceclient "example.com/go-voice-mvp/internal/client"
 	"example.com/go-voice-mvp/internal/protocol"
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 )
 
 func main() {
-	conn, err := protocol.ConnectUDP("127.0.0.1", 9000)
+	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func main() {
 		Type:      protocol.PacketHello,
 		SessionID: 42,
 	}
-	if err := protocol.SendPacket(conn, hello); err != nil {
+	if err := udp.SendPacket(conn, hello); err != nil {
 		log.Fatal(err)
 	}
 
@@ -67,21 +67,21 @@ func main() {
 	defer player.Close()
 
 	go func() {
-		errCh <- encodeLoop(ctx, encoder, pcmCh, audioCh)
+		errCh <- voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh)
 	}()
 	go func() {
 		// UDP → receiveLoop → encodedInCh → decodeLoop → pcmOutCh
-		errCh <- decodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
+		errCh <- voiceclient.DecodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
 	}()
 	go produceTestAudio(ctx, pcmCh)
 	go func() {
-		errCh <- sendLoop(ctx, conn, 42, audioCh)
+		errCh <- voiceclient.SendLoop(ctx, conn, 42, audioCh)
 	}()
 	go func() {
-		errCh <- receiveLoop(ctx, conn, encodedInCh)
+		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh)
 	}()
 	go func() {
-		errCh <- playbackLoop(ctx, player, pcmOutCh)
+		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
 
 	err1 := <-errCh
@@ -144,152 +144,6 @@ func produceTestAudio(
 			case <-ctx.Done():
 				return
 			}
-		}
-	}
-}
-
-func encodeLoop(
-	ctx context.Context,
-	encoder audio.Encoder,
-	pcmCh <-chan audio.PCMFrame,
-	audioCh chan<- audio.Frame,
-) error {
-	defer close(audioCh)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case pcmFrame, ok := <-pcmCh:
-			if !ok {
-				return nil
-			}
-			buffer, err := encoder.Encode(pcmFrame.Samples)
-			if err != nil {
-				return err
-			}
-			frame := audio.Frame{
-				Data:     buffer,
-				Duration: pcmFrame.Duration,
-			}
-			select {
-			case audioCh <- frame:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-}
-
-func sendLoop(ctx context.Context, conn *net.UDPConn, sessionID uint64, audioCh <-chan audio.Frame) error {
-	sequence := uint32(1)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case frame, ok := <-audioCh:
-			if !ok {
-				return nil
-			}
-			sent := protocol.NewVoicePacket(sessionID, sequence, frame.Data)
-			if err := protocol.SendPacket(conn, sent); err != nil {
-				return err
-			}
-			sequence++
-		}
-	}
-}
-
-func receiveLoop(
-	ctx context.Context,
-	conn *net.UDPConn,
-	encodedCh chan<- audio.Frame,
-) error {
-	defer close(encodedCh)
-
-	for {
-		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-			return err
-		}
-
-		packet, err := protocol.ReceivePacket(conn)
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					continue
-				}
-			} else {
-				return err
-			}
-		}
-
-		frame := audio.Frame{
-			Data:     packet.Payload,
-			Duration: frameDuration,
-		}
-
-		select {
-		case encodedCh <- frame:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
-
-func decodeLoop(
-	ctx context.Context,
-	decoder audio.Decoder,
-	encodedCh <-chan audio.Frame,
-	pcmOutCh chan<- audio.PCMFrame,
-) error {
-	defer close(pcmOutCh)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case frame, ok := <-encodedCh:
-			if !ok {
-				return nil
-			}
-			samples, err := decoder.Decode(frame.Data)
-			if err != nil {
-				return err
-			}
-			pcmFrame := audio.PCMFrame{
-				Samples:  samples,
-				Duration: frame.Duration,
-			}
-			select {
-			case pcmOutCh <- pcmFrame:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-}
-
-func playbackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.PCMFrame) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case frame, ok := <-pcmOutCh:
-			if !ok {
-				return nil
-			}
-
-			if err := player.Write(frame.Samples); err != nil {
-				return err
-			}
-			fmt.Printf("decoded PCM: samples=%d duration=%s", len(frame.Samples), frame.Duration)
 		}
 	}
 }
