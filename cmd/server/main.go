@@ -21,11 +21,6 @@ func main() {
 		Name:    "Alice",
 		Channel: "Lobby",
 	})
-	//	hub.Add(&voice.Session{
-	//		ID:      43,
-	//		Name:    "Bob",
-	//		Channel: "Lobby",
-	//	})
 
 	if err := voice.ServeUDP(conn, hub); err != nil {
 		log.Fatalf("serve UDP: %v", err)

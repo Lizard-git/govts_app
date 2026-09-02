@@ -43,6 +43,7 @@ func main() {
 	hello := protocol.VoicePacket{
 		Type:      protocol.PacketHello,
 		SessionID: *sessionID,
+		Payload:   []byte(*name),
 	}
 	if err := udp.SendPacket(conn, hello); err != nil {
 		log.Fatal(err)

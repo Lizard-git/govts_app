@@ -34,12 +34,44 @@ func RouteVoicePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket) 
 	return SendToSessions(conn, sessions, packet)
 }
 
-func UpdateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
+func UpdateSessionAddr(
+	hub *Hub,
+	sessionID uint64,
+	addr *net.UDPAddr,
+) error {
 	session, ok := hub.Get(sessionID)
 	if !ok {
 		return fmt.Errorf("session %d not found", sessionID)
 	}
+
 	session.Addr = addr
+	return nil
+}
+
+func HandleHelloPacket(
+	hub *Hub,
+	packet protocol.VoicePacket,
+	addr *net.UDPAddr,
+) error {
+	if len(packet.Payload) > 64 {
+		return fmt.Errorf("client name too long: %d bytes", len(packet.Payload))
+	}
+
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return fmt.Errorf("session %d not found", packet.SessionID)
+	}
+
+	session.Addr = addr
+	session.Name = string(packet.Payload)
+
+	log.Printf(
+		"client connected: id=%d name=%q addr=%s",
+		session.ID,
+		session.Name,
+		session.Addr,
+	)
+
 	return nil
 }
 
@@ -55,7 +87,7 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr
 	case protocol.PacketVoice:
 		return HandleVoicePacket(conn, hub, packet, addr)
 	case protocol.PacketHello:
-		return UpdateSessionAddr(hub, packet.SessionID, addr)
+		return HandleHelloPacket(hub, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}
