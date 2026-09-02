@@ -34,6 +34,11 @@ type Player interface {
 	Close() error
 }
 
+type Recorder interface {
+	Read(samples []int16) (int, error)
+	Close() error
+}
+
 type PCM16Encoder struct {
 	config CodecConfig
 }

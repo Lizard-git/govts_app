@@ -2,6 +2,8 @@ github.com/ebitengine/oto/v3 v3.4.1 h1:uX7B03/P2P8oWiSI5HXjyjSP4besYn3V9nDk3cR+e
 github.com/ebitengine/oto/v3 v3.4.1/go.mod h1:IOleLVD0m+CMak3mRVwsYY8vTctQgOM0iiL6S7Ar7eI=
 github.com/ebitengine/purego v0.9.0 h1:mh0zpKBIXDceC63hpvPuGLiJ8ZAa3DfrFTudmfi8A4k=
 github.com/ebitengine/purego v0.9.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
+github.com/gen2brain/malgo v0.11.26 h1:k5WcPIKw1bbJAbPqrvNPt7nehPLoaPNcOFde2+eruiM=
+github.com/gen2brain/malgo v0.11.26/go.mod h1:xLVG3ROA33Bzol1quF3e4ehqcFuqh8QK4B8T6LQUs/M=
 github.com/pion/opus v0.1.1-0.20260828191211-6393603fc131 h1:LXkL9XncctiKyXTHzq1GQhAeScWhPEQev7ofmWQssw8=
 github.com/pion/opus v0.1.1-0.20260828191211-6393603fc131/go.mod h1:5l4peFc2c/mybJriaIUmWc2WQj69xjWj6L95JtmbLA8=
 github.com/stretchr/testify v1.12.0 h1:K6Mr6jO9JICuend/5xzTM03ydSV3vdNRYAdPSukj8uI=

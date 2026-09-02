@@ -36,3 +36,46 @@ func main() {
 		)
 	}
 }
+func produceTestAudio(
+	ctx context.Context,
+	pcmCh chan<- audio.PCMFrame,
+) {
+	defer close(pcmCh)
+
+	ticker := time.NewTicker(frameDuration)
+	defer ticker.Stop()
+
+	const frequency = 440.0
+	const amplitude = 10000.0
+	phase := 0.0
+	phaseStep := 2 * math.Pi * frequency / float64(sampleRate)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			samples := make([]int16, samplesPerFrame)
+
+			for i := range samples {
+				samples[i] = int16(amplitude * math.Sin(phase))
+
+				phase += phaseStep
+
+				if phase >= 2*math.Pi {
+					phase -= 2 * math.Pi
+				}
+			}
+
+			pcmFrame := audio.PCMFrame{
+				Samples:  samples,
+				Duration: frameDuration,
+			}
+			select {
+			case pcmCh <- pcmFrame:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}

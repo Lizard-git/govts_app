@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
-	"math"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -35,7 +35,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	errCh := make(chan error, 5)
+	errCh := make(chan error, 6)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -66,6 +66,11 @@ func main() {
 	}
 	defer player.Close()
 
+	recorder, err := audio.NewMalgoRecorder(codecConfig)
+	if err != nil {
+		log.Fatalf("create audio recorder: %v", err)
+	}
+
 	go func() {
 		errCh <- voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh)
 	}()
@@ -73,7 +78,9 @@ func main() {
 		// UDP → receiveLoop → encodedInCh → decodeLoop → pcmOutCh
 		errCh <- voiceclient.DecodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
 	}()
-	go produceTestAudio(ctx, pcmCh)
+	go func() {
+		errCh <- recordLoop(ctx, recorder, pcmCh)
+	}()
 	go func() {
 		errCh <- voiceclient.SendLoop(ctx, conn, 42, audioCh)
 	}()
@@ -85,17 +92,22 @@ func main() {
 	}()
 
 	err1 := <-errCh
+
 	cancel()
+	_ = recorder.Close()
+
 	err2 := <-errCh
 	err3 := <-errCh
 	err4 := <-errCh
 	err5 := <-errCh
+	err6 := <-errCh
 
 	logLoopError("client stopped", err1)
 	logLoopError("client stopped", err2)
 	logLoopError("client stopped", err3)
 	logLoopError("client stopped", err4)
 	logLoopError("client stopped", err5)
+	logLoopError("client stopped", err6)
 }
 
 func logLoopError(prefix string, err error) {
@@ -104,46 +116,39 @@ func logLoopError(prefix string, err error) {
 	}
 }
 
-func produceTestAudio(
+func recordLoop(
 	ctx context.Context,
+	recorder audio.Recorder,
 	pcmCh chan<- audio.PCMFrame,
-) {
+) error {
 	defer close(pcmCh)
-
-	ticker := time.NewTicker(frameDuration)
-	defer ticker.Stop()
-
-	const frequency = 440.0
-	const amplitude = 10000.0
-	phase := 0.0
-	phaseStep := 2 * math.Pi * frequency / float64(sampleRate)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			samples := make([]int16, samplesPerFrame)
+			return ctx.Err()
+		default:
+		}
 
-			for i := range samples {
-				samples[i] = int16(amplitude * math.Sin(phase))
+		samples := make([]int16, samplesPerFrame)
 
-				phase += phaseStep
-
-				if phase >= 2*math.Pi {
-					phase -= 2 * math.Pi
-				}
+		n, err := recorder.Read(samples)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
+			return err
+		}
 
-			pcmFrame := audio.PCMFrame{
-				Samples:  samples,
-				Duration: frameDuration,
-			}
-			select {
-			case pcmCh <- pcmFrame:
-			case <-ctx.Done():
-				return
-			}
+		frame := audio.PCMFrame{
+			Samples:  samples[:n],
+			Duration: frameDuration,
+		}
+
+		select {
+		case pcmCh <- frame:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
