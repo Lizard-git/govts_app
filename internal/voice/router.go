@@ -87,10 +87,22 @@ func HandleVoicePacket(
 	hub *Hub,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr) error {
-	if err := UpdateSessionAddr(hub, packet.SessionID, addr); err != nil {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		return err
 	}
 	return RouteVoicePacket(conn, hub, packet)
+}
+
+func ValidateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
+	session, ok := hub.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("session %d not found", sessionID)
+	}
+	if !session.Addr.IP.Equal(addr.IP) ||
+		session.Addr.Port != addr.Port {
+		return fmt.Errorf("invalid session address: ip=%s port=%d", addr.IP, addr.Port)
+	}
+	return nil
 }
 
 func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
@@ -128,13 +140,13 @@ func ServeUDP(conn *net.UDPConn, hub *Hub) error {
 			log.Printf("bad packet: %v", err)
 			continue
 		}
-		log.Printf(
-			"recv type=%d session=%d sequence=%d bytes=%d",
-			packet.Type,
-			packet.SessionID,
-			packet.Sequence,
-			len(packet.Payload),
-		)
+		//log.Printf(
+		//	"recv type=%d session=%d sequence=%d bytes=%d",
+		//	packet.Type,
+		//	packet.SessionID,
+		//	packet.Sequence,
+		//	len(packet.Payload),
+		//)
 		if err := HandlePacket(conn, hub, packet, addr); err != nil {
 			log.Printf("cannot handle packet: %v", err)
 			continue
