@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"log"
 	"time"
@@ -21,6 +22,18 @@ const (
 )
 
 func main() {
+
+	sessionID := flag.Uint64("id", 0, "session id")
+	name := flag.String("name", "", "client name")
+	flag.Parse()
+
+	if *sessionID == 0 {
+		log.Fatal("session id required")
+	}
+	if *name == "" {
+		log.Fatal("client name required")
+	}
+
 	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
 		log.Fatal(err)
@@ -29,7 +42,7 @@ func main() {
 
 	hello := protocol.VoicePacket{
 		Type:      protocol.PacketHello,
-		SessionID: 42,
+		SessionID: *sessionID,
 	}
 	if err := udp.SendPacket(conn, hello); err != nil {
 		log.Fatal(err)
@@ -82,7 +95,7 @@ func main() {
 		errCh <- recordLoop(ctx, recorder, pcmCh)
 	}()
 	go func() {
-		errCh <- voiceclient.SendLoop(ctx, conn, 42, audioCh)
+		errCh <- voiceclient.SendLoop(ctx, conn, *sessionID, audioCh)
 	}()
 	go func() {
 		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh)
@@ -90,6 +103,12 @@ func main() {
 	go func() {
 		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
+
+	log.Printf(
+		"client started: id=%d name=%s",
+		*sessionID,
+		*name,
+	)
 
 	err1 := <-errCh
 

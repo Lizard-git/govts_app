@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"time"
 
@@ -155,7 +154,7 @@ func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audi
 			if err := player.Write(frame.Samples); err != nil {
 				return err
 			}
-			fmt.Printf("decoded PCM: samples=%d duration=%s", len(frame.Samples), frame.Duration)
+			// fmt.Printf("decoded PCM: samples=%d duration=%s", len(frame.Samples), frame.Duration)
 		}
 	}
 }

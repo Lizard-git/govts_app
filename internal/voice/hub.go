@@ -69,22 +69,29 @@ func (h *Hub) SessionsInChannel(channel string) []*Session {
 	return sessions
 }
 
+/*
+	func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
+		sender, ok := h.Get(senderID)
+		if !ok || sender.Channel != channel || sender.Addr == nil {
+			return nil
+		}
+
+		return []*Session{sender}
+	}
+*/
 func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
+	sessions := make([]*Session, 0)
 	sender, ok := h.Get(senderID)
-	if !ok || sender.Channel != channel || sender.Addr == nil {
+
+	if !ok {
 		return nil
 	}
 
-	return []*Session{sender}
-}
-
-/*func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
-	sessions := make([]*Session, 0)
 	for _, session := range h.SessionsInChannel(channel) {
-		if session.ID == senderID {
+		if session.ID == sender.ID {
 			// continue
 		}
 		sessions = append(sessions, session)
 	}
 	return sessions
-}*/
+}
