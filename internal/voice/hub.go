@@ -1,16 +1,21 @@
 package voice
 
-import "errors"
+import (
+	"errors"
+	"net"
+)
 
 var ErrSessionNotFound = errors.New("session not found")
 
 type Hub struct {
 	sessions map[uint64]*Session
+	nextID   uint64
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		sessions: make(map[uint64]*Session),
+		nextID:   1,
 	}
 }
 
@@ -69,29 +74,25 @@ func (h *Hub) SessionsInChannel(channel string) []*Session {
 	return sessions
 }
 
-/*
-	func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
-		sender, ok := h.Get(senderID)
-		if !ok || sender.Channel != channel || sender.Addr == nil {
-			return nil
-		}
-
-		return []*Session{sender}
-	}
-*/
 func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
 	sessions := make([]*Session, 0)
-	sender, ok := h.Get(senderID)
-
-	if !ok {
-		return nil
-	}
-
 	for _, session := range h.SessionsInChannel(channel) {
-		if session.ID == sender.ID {
-			// continue
+		if session.ID == senderID {
+			continue
 		}
 		sessions = append(sessions, session)
 	}
 	return sessions
+}
+
+func (h *Hub) CreateSession(name string, addr *net.UDPAddr) *Session {
+	id := h.nextID
+	h.nextID++
+	session := &Session{
+		ID:   id,
+		Name: name,
+		Addr: addr,
+	}
+	h.sessions[id] = session
+	return session
 }

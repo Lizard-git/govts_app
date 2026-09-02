@@ -22,14 +22,8 @@ const (
 )
 
 func main() {
-
-	sessionID := flag.Uint64("id", 0, "session id")
 	name := flag.String("name", "", "client name")
 	flag.Parse()
-
-	if *sessionID == 0 {
-		log.Fatal("session id required")
-	}
 	if *name == "" {
 		log.Fatal("client name required")
 	}
@@ -42,12 +36,22 @@ func main() {
 
 	hello := protocol.VoicePacket{
 		Type:      protocol.PacketHello,
-		SessionID: *sessionID,
+		SessionID: 0,
 		Payload:   []byte(*name),
 	}
-	if err := udp.SendPacket(conn, hello); err != nil {
+	if err = udp.SendPacket(conn, hello); err != nil {
 		log.Fatal(err)
 	}
+	ack, err := udp.ReceivePacket(conn)
+	if err != nil {
+		log.Fatalf(
+			"expected hello ack, got packet type %d", ack.Type)
+	}
+	if ack.SessionID == 0 {
+		log.Fatal("server returned invalid session ID")
+	}
+	sessionID := ack.SessionID
+	log.Printf("connected: id=%d name=%s", sessionID, *name)
 
 	errCh := make(chan error, 6)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,7 +100,7 @@ func main() {
 		errCh <- recordLoop(ctx, recorder, pcmCh)
 	}()
 	go func() {
-		errCh <- voiceclient.SendLoop(ctx, conn, *sessionID, audioCh)
+		errCh <- voiceclient.SendLoop(ctx, conn, sessionID, audioCh)
 	}()
 	go func() {
 		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh)
@@ -107,7 +111,7 @@ func main() {
 
 	log.Printf(
 		"client started: id=%d name=%s",
-		*sessionID,
+		sessionID,
 		*name,
 	)
 

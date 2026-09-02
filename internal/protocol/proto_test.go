@@ -72,3 +72,32 @@ func TestDecodePacketTooShort(t *testing.T) {
 		t.Fatalf("expected ErrPacketTooShort, got %v", err)
 	}
 }
+
+func TestHelloAckRoundTrip(t *testing.T) {
+	original := VoicePacket{
+		Type:      PacketHelloAck,
+		SessionID: 42,
+	}
+
+	data := EncodePacket(original)
+
+	decoded, err := decodePacket(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decoded.Type != PacketHelloAck {
+		t.Fatalf(
+			"expected type %d, got %d",
+			PacketHelloAck,
+			decoded.Type,
+		)
+	}
+
+	if decoded.SessionID != 42 {
+		t.Fatalf(
+			"expected session ID 42, got %d",
+			decoded.SessionID,
+		)
+	}
+}

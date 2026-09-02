@@ -49,21 +49,28 @@ func UpdateSessionAddr(
 }
 
 func HandleHelloPacket(
+	conn *net.UDPConn,
 	hub *Hub,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,
 ) error {
+	if len(packet.Payload) == 0 {
+		return fmt.Errorf("client name is required")
+	}
 	if len(packet.Payload) > 64 {
 		return fmt.Errorf("client name too long: %d bytes", len(packet.Payload))
 	}
 
-	session, ok := hub.Get(packet.SessionID)
-	if !ok {
-		return fmt.Errorf("session %d not found", packet.SessionID)
-	}
+	name := string(packet.Payload)
+	session := hub.CreateSession(name, addr)
 
-	session.Addr = addr
-	session.Name = string(packet.Payload)
+	ack := protocol.VoicePacket{
+		Type:      protocol.PacketHelloAck,
+		SessionID: session.ID,
+	}
+	if err := SendToSession(conn, session, ack); err != nil {
+		return err
+	}
 
 	log.Printf(
 		"client connected: id=%d name=%q addr=%s",
@@ -75,7 +82,11 @@ func HandleHelloPacket(
 	return nil
 }
 
-func HandleVoicePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
+func HandleVoicePacket(
+	conn *net.UDPConn,
+	hub *Hub,
+	packet protocol.VoicePacket,
+	addr *net.UDPAddr) error {
 	if err := UpdateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		return err
 	}
@@ -87,7 +98,7 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr
 	case protocol.PacketVoice:
 		return HandleVoicePacket(conn, hub, packet, addr)
 	case protocol.PacketHello:
-		return HandleHelloPacket(hub, packet, addr)
+		return HandleHelloPacket(conn, hub, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}
