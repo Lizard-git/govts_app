@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -34,24 +36,15 @@ func main() {
 	}
 	defer conn.Close()
 
-	hello := protocol.VoicePacket{
-		Type:      protocol.PacketHello,
-		SessionID: 0,
-		Payload:   []byte(*name),
-	}
-	if err = udp.SendPacket(conn, hello); err != nil {
-		log.Fatal(err)
-	}
-	ack, err := udp.ReceivePacket(conn)
+	sessionID, err := performHandshake(conn, *name)
 	if err != nil {
-		log.Fatalf(
-			"expected hello ack, got packet type %d", ack.Type)
+		log.Fatalf("handshake failed: %v", err)
 	}
-	if ack.SessionID == 0 {
-		log.Fatal("server returned invalid session ID")
-	}
-	sessionID := ack.SessionID
-	log.Printf("connected: id=%d name=%s", sessionID, *name)
+	log.Printf(
+		"client connected: id=%d name=%s",
+		sessionID,
+		*name,
+	)
 
 	errCh := make(chan error, 6)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,6 +131,47 @@ func logLoopError(prefix string, err error) {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("%s: %v", prefix, err)
 	}
+}
+
+func performHandshake(
+	conn *net.UDPConn,
+	name string,
+) (uint64, error) {
+	hello := protocol.VoicePacket{
+		Type:      protocol.PacketHello,
+		SessionID: 0,
+		Payload:   []byte(name),
+	}
+
+	if err := conn.SetReadDeadline(
+		time.Now().Add(3 * time.Second),
+	); err != nil {
+		return 0, err
+	}
+
+	defer conn.SetReadDeadline(time.Time{})
+
+	if err := udp.SendPacket(conn, hello); err != nil {
+		return 0, err
+	}
+
+	ack, err := udp.ReceivePacket(conn)
+	if err != nil {
+		return 0, err
+	}
+
+	if ack.Type != protocol.PacketHelloAck {
+		return 0, fmt.Errorf(
+			"expected hello ack, got packet type %d",
+			ack.Type,
+		)
+	}
+
+	if ack.SessionID == 0 {
+		return 0, fmt.Errorf("server returned invalid session ID")
+	}
+
+	return ack.SessionID, nil
 }
 
 func recordLoop(
