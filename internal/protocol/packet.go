@@ -9,9 +9,10 @@ import (
 var ErrPacketTooShort = errors.New("packet too short")
 
 const (
-	PacketHello    uint8 = 1
-	PacketVoice    uint8 = 2
-	PacketHelloAck uint8 = 3
+	PacketHello     uint8 = 1
+	PacketVoice     uint8 = 2
+	PacketHelloAck  uint8 = 3
+	PacketHeartbeat uint8 = 4
 )
 
 type VoicePacket struct {
@@ -103,7 +104,7 @@ func decodePacket(data []byte) (VoicePacket, error) {
 
 func validPacketType(packetType uint8) bool {
 	switch packetType {
-	case PacketHello, PacketVoice, PacketHelloAck:
+	case PacketHello, PacketVoice, PacketHelloAck, PacketHeartbeat:
 		return true
 	default:
 		return false

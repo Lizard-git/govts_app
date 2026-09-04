@@ -90,6 +90,9 @@ func HandleVoicePacket(
 	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		return err
 	}
+	if err := hub.Touch(packet.SessionID); err != nil {
+		return err
+	}
 	return RouteVoicePacket(conn, hub, packet)
 }
 
@@ -105,12 +108,30 @@ func ValidateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
 	return nil
 }
 
+func HandleHeartbeatPacket(
+	hub *Hub,
+	packet protocol.VoicePacket,
+	addr *net.UDPAddr,
+) error {
+	if err := ValidateSessionAddr(
+		hub,
+		packet.SessionID,
+		addr,
+	); err != nil {
+		return err
+	}
+
+	return hub.Touch(packet.SessionID)
+}
+
 func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
 	switch packet.Type {
 	case protocol.PacketVoice:
 		return HandleVoicePacket(conn, hub, packet, addr)
 	case protocol.PacketHello:
 		return HandleHelloPacket(conn, hub, packet, addr)
+	case protocol.PacketHeartbeat:
+		return HandleHeartbeatPacket(hub, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}

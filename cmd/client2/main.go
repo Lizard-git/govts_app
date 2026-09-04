@@ -4,15 +4,11 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
-	"io"
 	"log"
-	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
@@ -36,7 +32,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	sessionID, err := performHandshake(conn, *name)
+	sessionID, err := voiceclient.PerformHandshake(conn, *name)
 	if err != nil {
 		log.Fatalf("handshake failed: %v", err)
 	}
@@ -46,7 +42,7 @@ func main() {
 		*name,
 	)
 
-	errCh := make(chan error, 6)
+	errCh := make(chan error, 7)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -90,10 +86,13 @@ func main() {
 		errCh <- voiceclient.DecodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
 	}()
 	go func() {
-		errCh <- recordLoop(ctx, recorder, pcmCh)
+		errCh <- voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame)
 	}()
 	go func() {
 		errCh <- voiceclient.SendLoop(ctx, conn, sessionID, audioCh)
+	}()
+	go func() {
+		errCh <- voiceclient.HeartbeatLoop(ctx, conn, sessionID)
 	}()
 	go func() {
 		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh)
@@ -102,14 +101,7 @@ func main() {
 		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
 
-	log.Printf(
-		"client started: id=%d name=%s",
-		sessionID,
-		*name,
-	)
-
 	err1 := <-errCh
-
 	cancel()
 	_ = recorder.Close()
 
@@ -118,6 +110,7 @@ func main() {
 	err4 := <-errCh
 	err5 := <-errCh
 	err6 := <-errCh
+	err7 := <-errCh
 
 	logLoopError("client stopped", err1)
 	logLoopError("client stopped", err2)
@@ -125,88 +118,11 @@ func main() {
 	logLoopError("client stopped", err4)
 	logLoopError("client stopped", err5)
 	logLoopError("client stopped", err6)
+	logLoopError("client stopped", err7)
 }
 
 func logLoopError(prefix string, err error) {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("%s: %v", prefix, err)
-	}
-}
-
-func performHandshake(
-	conn *net.UDPConn,
-	name string,
-) (uint64, error) {
-	hello := protocol.VoicePacket{
-		Type:      protocol.PacketHello,
-		SessionID: 0,
-		Payload:   []byte(name),
-	}
-
-	if err := conn.SetReadDeadline(
-		time.Now().Add(3 * time.Second),
-	); err != nil {
-		return 0, err
-	}
-
-	defer conn.SetReadDeadline(time.Time{})
-
-	if err := udp.SendPacket(conn, hello); err != nil {
-		return 0, err
-	}
-
-	ack, err := udp.ReceivePacket(conn)
-	if err != nil {
-		return 0, err
-	}
-
-	if ack.Type != protocol.PacketHelloAck {
-		return 0, fmt.Errorf(
-			"expected hello ack, got packet type %d",
-			ack.Type,
-		)
-	}
-
-	if ack.SessionID == 0 {
-		return 0, fmt.Errorf("server returned invalid session ID")
-	}
-
-	return ack.SessionID, nil
-}
-
-func recordLoop(
-	ctx context.Context,
-	recorder audio.Recorder,
-	pcmCh chan<- audio.PCMFrame,
-) error {
-	defer close(pcmCh)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		samples := make([]int16, samplesPerFrame)
-
-		n, err := recorder.Read(samples)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-
-		frame := audio.PCMFrame{
-			Samples:  samples[:n],
-			Duration: frameDuration,
-		}
-
-		select {
-		case pcmCh <- frame:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
 	}
 }

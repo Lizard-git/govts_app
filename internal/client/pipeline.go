@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -155,6 +157,111 @@ func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audi
 				return err
 			}
 			// fmt.Printf("decoded PCM: samples=%d duration=%s", len(frame.Samples), frame.Duration)
+		}
+	}
+}
+
+func RecordLoop(
+	ctx context.Context,
+	recorder audio.Recorder,
+	pcmCh chan<- audio.PCMFrame,
+	samplesPerFrame int,
+) error {
+	defer close(pcmCh)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		samples := make([]int16, samplesPerFrame)
+
+		n, err := recorder.Read(samples)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+
+		frame := audio.PCMFrame{
+			Samples:  samples[:n],
+			Duration: frameDuration,
+		}
+
+		select {
+		case pcmCh <- frame:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func PerformHandshake(
+	conn *net.UDPConn,
+	name string,
+) (uint64, error) {
+	hello := protocol.VoicePacket{
+		Type:      protocol.PacketHello,
+		SessionID: 0,
+		Payload:   []byte(name),
+	}
+
+	if err := conn.SetReadDeadline(
+		time.Now().Add(3 * time.Second),
+	); err != nil {
+		return 0, err
+	}
+
+	defer conn.SetReadDeadline(time.Time{})
+
+	if err := udp.SendPacket(conn, hello); err != nil {
+		return 0, err
+	}
+
+	ack, err := udp.ReceivePacket(conn)
+	if err != nil {
+		return 0, err
+	}
+
+	if ack.Type != protocol.PacketHelloAck {
+		return 0, fmt.Errorf(
+			"expected hello ack, got packet type %d",
+			ack.Type,
+		)
+	}
+
+	if ack.SessionID == 0 {
+		return 0, fmt.Errorf("server returned invalid session ID")
+	}
+
+	return ack.SessionID, nil
+}
+
+func HeartbeatLoop(
+	ctx context.Context,
+	conn *net.UDPConn,
+	sessionID uint64,
+) error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-ticker.C:
+			packet := protocol.VoicePacket{
+				Type:      protocol.PacketHeartbeat,
+				SessionID: sessionID,
+			}
+
+			if err := udp.SendPacket(conn, packet); err != nil {
+				return err
+			}
 		}
 	}
 }

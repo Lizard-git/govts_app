@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 
+	"example.com/go-voice-mvp/internal/server"
 	"example.com/go-voice-mvp/internal/transport/udp"
 	"example.com/go-voice-mvp/internal/voice"
 )
@@ -16,11 +19,20 @@ func main() {
 	log.Println("voice server listening on :9000")
 
 	hub := voice.NewHub()
-	hub.Add(&voice.Session{
-		ID:      42,
-		Name:    "Alice",
-		Channel: "Lobby",
-	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := server.CleanupLoop(
+			ctx,
+			hub,
+			server.SessionTimeout,
+			server.CleanupInterval,
+		); err != nil && !errors.Is(err, context.Canceled) {
+			log.Fatalf("cleanup loop stopped: %v", err)
+		}
+	}()
 
 	if err := voice.ServeUDP(conn, hub); err != nil {
 		log.Fatalf("serve UDP: %v", err)
