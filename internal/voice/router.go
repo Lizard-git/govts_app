@@ -124,6 +124,24 @@ func HandleHeartbeatPacket(
 	return hub.Touch(packet.SessionID)
 }
 
+func HandleDisconnectPocket(
+	hub *Hub,
+	packet protocol.VoicePacket,
+	addr *net.UDPAddr,
+) error {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		return err
+	}
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return fmt.Errorf("session %d not found", packet.SessionID)
+	}
+	hub.Remove(session.ID)
+	log.Printf("client disconnected: id=%d, name=%s",
+		packet.SessionID, session.Name)
+	return nil
+}
+
 func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
 	switch packet.Type {
 	case protocol.PacketVoice:
@@ -132,6 +150,8 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr
 		return HandleHelloPacket(conn, hub, packet, addr)
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(hub, packet, addr)
+	case protocol.PacketDisconnect:
+		return HandleDisconnectPocket(hub, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}

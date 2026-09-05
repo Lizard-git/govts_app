@@ -5,6 +5,9 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -43,7 +46,14 @@ func main() {
 	)
 
 	errCh := make(chan error, 7)
-	ctx, cancel := context.WithCancel(context.Background())
+	signalCtx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 
 	audioCh := make(chan audio.Frame)
@@ -101,24 +111,19 @@ func main() {
 		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
 
-	err1 := <-errCh
+	firstErr := <-errCh
 	cancel()
 	_ = recorder.Close()
+	if err := voiceclient.Disconnect(conn, sessionID); err != nil {
+		log.Printf("send disconnect: %v", err)
+	}
 
-	err2 := <-errCh
-	err3 := <-errCh
-	err4 := <-errCh
-	err5 := <-errCh
-	err6 := <-errCh
-	err7 := <-errCh
+	for range 6 {
+		err := <-errCh
+		logLoopError("client stopped", err)
+	}
 
-	logLoopError("client stopped", err1)
-	logLoopError("client stopped", err2)
-	logLoopError("client stopped", err3)
-	logLoopError("client stopped", err4)
-	logLoopError("client stopped", err5)
-	logLoopError("client stopped", err6)
-	logLoopError("client stopped", err7)
+	logLoopError("client stopped", firstErr)
 }
 
 func logLoopError(prefix string, err error) {

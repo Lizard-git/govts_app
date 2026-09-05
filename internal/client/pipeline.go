@@ -69,6 +69,8 @@ func SendLoop(ctx context.Context, conn *net.UDPConn, sessionID uint64, audioCh 
 	}
 }
 
+const receivePollInterval = 500 * time.Millisecond
+
 func ReceiveLoop(
 	ctx context.Context,
 	conn *net.UDPConn,
@@ -77,7 +79,9 @@ func ReceiveLoop(
 	defer close(encodedCh)
 
 	for {
-		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		if err := conn.SetReadDeadline(
+			time.Now().Add(receivePollInterval),
+		); err != nil {
 			return err
 		}
 
@@ -264,4 +268,12 @@ func HeartbeatLoop(
 			}
 		}
 	}
+}
+
+func Disconnect(conn *net.UDPConn, sessionID uint64) error {
+	packet := protocol.VoicePacket{
+		Type:      protocol.PacketDisconnect,
+		SessionID: sessionID,
+	}
+	return udp.SendPacket(conn, packet)
 }
