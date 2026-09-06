@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -18,6 +19,47 @@ import (
 )
 
 const frameDuration = 20 * time.Millisecond
+
+type State struct {
+	mu sync.RWMutex
+
+	sessionID uint64
+	name      string
+	channel   string
+}
+
+func NewState(
+	sessionID uint64,
+	name string,
+	channel string,
+) *State {
+	return &State{
+		sessionID: sessionID,
+		name:      name,
+		channel:   channel,
+	}
+}
+
+func (s *State) Channel() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.channel
+}
+
+func (s *State) SetChannel(channel string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.channel = channel
+}
+
+func (s *State) SessionID() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.sessionID
+}
 
 func EncodeLoop(
 	ctx context.Context,
@@ -130,6 +172,7 @@ func ReceiveLoop(
 
 func ControlLoop(
 	ctx context.Context,
+	state *State,
 	controlCh <-chan protocol.VoicePacket,
 ) error {
 	for {
@@ -140,9 +183,15 @@ func ControlLoop(
 			if !ok {
 				return nil
 			}
+			if packet.SessionID != state.SessionID() {
+				log.Printf("ignoring control packet for session %d", packet.SessionID)
+				continue
+			}
 			switch packet.Type {
 			case protocol.PacketJoinChannelAck:
-				log.Printf("join channel: %s", string(packet.Payload))
+				channel := string(packet.Payload)
+				state.SetChannel(channel)
+				log.Printf("joined channel: %s", channel)
 
 			default:
 				log.Printf(

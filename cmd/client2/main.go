@@ -73,6 +73,11 @@ func main() {
 		Channels:        channels,
 		SamplesPerFrame: samplesPerFrame,
 	}
+	state := voiceclient.NewState(
+		sessionID,
+		*name,
+		*channel,
+	)
 
 	encoder, err := audio.NewOpusEncoder(codecConfig)
 	if err != nil {
@@ -118,7 +123,7 @@ func main() {
 		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
 	go func() {
-		errCh <- voiceclient.ControlLoop(ctx, controlCh)
+		errCh <- voiceclient.ControlLoop(ctx, state, controlCh)
 	}()
 
 	go voiceclient.CommandLoop(conn, sessionID, cancel)
