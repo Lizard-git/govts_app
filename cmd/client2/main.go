@@ -41,17 +41,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("handshake failed: %v", err)
 	}
-	if err := voiceclient.JoinChannel(conn, sessionID, *channel); err != nil {
-		log.Fatalf("join channel failed: %v", err)
-	}
-	log.Printf(
-		"client connected: id=%d name=%s channel=%s",
+
+	state := voiceclient.NewState(
 		sessionID,
 		*name,
-		*channel,
+		"",
 	)
 
-	errCh := make(chan error, 8)
+	const loopCount = 8
+	errCh := make(chan error, loopCount)
+
 	signalCtx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -73,11 +72,6 @@ func main() {
 		Channels:        channels,
 		SamplesPerFrame: samplesPerFrame,
 	}
-	state := voiceclient.NewState(
-		sessionID,
-		*name,
-		*channel,
-	)
 
 	encoder, err := audio.NewOpusEncoder(codecConfig)
 	if err != nil {
@@ -126,16 +120,23 @@ func main() {
 		errCh <- voiceclient.ControlLoop(ctx, state, controlCh)
 	}()
 
-	go voiceclient.CommandLoop(conn, sessionID, cancel)
+	go voiceclient.CommandLoop(conn, state, cancel)
+
+	if err := voiceclient.JoinChannel(conn, sessionID, *channel); err != nil {
+		log.Fatalf("join channel failed: %v", err)
+	}
+	log.Printf("client connected: id=%d name=%s", sessionID, *name)
 
 	firstErr := <-errCh
+
 	cancel()
 	_ = recorder.Close()
+
 	if err := voiceclient.Disconnect(conn, sessionID); err != nil {
 		log.Printf("send disconnect: %v", err)
 	}
 
-	for range len(errCh) {
+	for i := 1; i < loopCount; i++ {
 		err := <-errCh
 		logLoopError("client stopped", err)
 	}

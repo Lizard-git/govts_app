@@ -26,6 +26,8 @@ type State struct {
 	sessionID uint64
 	name      string
 	channel   string
+
+	pendingJoin chan string
 }
 
 func NewState(
@@ -34,9 +36,10 @@ func NewState(
 	channel string,
 ) *State {
 	return &State{
-		sessionID: sessionID,
-		name:      name,
-		channel:   channel,
+		sessionID:   sessionID,
+		name:        name,
+		channel:     channel,
+		pendingJoin: make(chan string, 1),
 	}
 }
 
@@ -59,6 +62,17 @@ func (s *State) SessionID() uint64 {
 	defer s.mu.RUnlock()
 
 	return s.sessionID
+}
+
+func (s *State) PendingJoin() <-chan string {
+	return s.pendingJoin
+}
+
+func (s *State) CompleteJoin(channel string) {
+	select {
+	case s.pendingJoin <- channel:
+	default:
+	}
 }
 
 func EncodeLoop(
@@ -191,6 +205,7 @@ func ControlLoop(
 			case protocol.PacketJoinChannelAck:
 				channel := string(packet.Payload)
 				state.SetChannel(channel)
+				state.CompleteJoin(channel)
 				log.Printf("joined channel: %s", channel)
 
 			default:
@@ -379,51 +394,12 @@ func JoinChannel(
 		Payload:   []byte(channel),
 	}
 
-	if err := conn.SetReadDeadline(
-		time.Now().Add(3 * time.Second),
-	); err != nil {
-		return err
-	}
-	defer conn.SetReadDeadline(time.Time{})
-
-	if err := udp.SendPacket(conn, packet); err != nil {
-		return err
-	}
-
-	ack, err := udp.ReceivePacket(conn)
-	if err != nil {
-		return err
-	}
-
-	if ack.Type != protocol.PacketJoinChannelAck {
-		return fmt.Errorf(
-			"expected join channel ack, got packet type %d",
-			ack.Type,
-		)
-	}
-
-	if ack.SessionID != sessionID {
-		return fmt.Errorf(
-			"unexpected session id: got %d want %d",
-			ack.SessionID,
-			sessionID,
-		)
-	}
-
-	if string(ack.Payload) != channel {
-		return fmt.Errorf(
-			"unexpected channel: got %q want %q",
-			string(ack.Payload),
-			channel,
-		)
-	}
-
-	return nil
+	return udp.SendPacket(conn, packet)
 }
 
 func CommandLoop(
 	conn *net.UDPConn,
-	sessionID uint64,
+	state *State,
 	cancel context.CancelFunc,
 ) {
 	scanner := bufio.NewScanner(os.Stdin)
@@ -434,7 +410,7 @@ func CommandLoop(
 		}
 		switch parts[0] {
 		case "/join":
-			handleJoin(conn, sessionID, parts[1:])
+			handleJoin(conn, state, parts[1:])
 		case "/quit":
 			cancel()
 			return
@@ -448,19 +424,36 @@ func CommandLoop(
 	}
 }
 
-func handleJoin(conn *net.UDPConn, sessionID uint64, parts []string) {
+func handleJoin(conn *net.UDPConn, state *State, parts []string) {
 	if len(parts) != 1 {
 		log.Printf("usage: /join <channel>")
 		return
 	}
+
+	channel := parts[0]
+
 	packet := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
-		SessionID: sessionID,
-		Payload:   []byte(parts[0]),
+		SessionID: state.SessionID(),
+		Payload:   []byte(channel),
 	}
+
 	if err := udp.SendPacket(conn, packet); err != nil {
 		log.Printf("join channel: %v", err)
 		return
 	}
-	log.Printf("join requested: %s", parts[0])
+
+	log.Printf("join requested: %s", channel)
+
+	select {
+	case joinedChannel := <-state.PendingJoin():
+		if joinedChannel != channel {
+			log.Printf("unexpected join ack: got=%q want=%q", joinedChannel, channel)
+			return
+		}
+		log.Printf("join confirmed: %s", joinedChannel)
+
+	case <-time.After(3 * time.Second):
+		log.Printf("join channel timeout: %s", channel)
+	}
 }
