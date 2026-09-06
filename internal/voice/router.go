@@ -142,6 +142,40 @@ func HandleDisconnectPocket(
 	return nil
 }
 
+func HandleJoinChannelPacket(
+	conn *net.UDPConn,
+	hub *Hub,
+	packet protocol.VoicePacket,
+	addr *net.UDPAddr,
+) error {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		return err
+	}
+	if len(packet.Payload) == 0 {
+		return fmt.Errorf("channel name is required")
+	}
+	if len(packet.Payload) > 64 {
+		return fmt.Errorf(
+			"channel name too long: %d bytes",
+			len(packet.Payload),
+		)
+	}
+	channel := string(packet.Payload)
+	if err := hub.JoinChannel(packet.SessionID, channel); err != nil {
+		return err
+	}
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return fmt.Errorf("session %d not found", packet.SessionID)
+	}
+	ack := protocol.VoicePacket{
+		Type:      protocol.PacketJoinChannelAck,
+		SessionID: session.ID,
+		Payload:   []byte(channel),
+	}
+	return SendToSession(conn, session, ack)
+}
+
 func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
 	switch packet.Type {
 	case protocol.PacketVoice:
@@ -152,6 +186,8 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr
 		return HandleHeartbeatPacket(hub, packet, addr)
 	case protocol.PacketDisconnect:
 		return HandleDisconnectPocket(hub, packet, addr)
+	case protocol.PacketJoinChannel:
+		return HandleJoinChannelPacket(conn, hub, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}

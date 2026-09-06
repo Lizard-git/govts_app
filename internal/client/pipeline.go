@@ -277,3 +277,56 @@ func Disconnect(conn *net.UDPConn, sessionID uint64) error {
 	}
 	return udp.SendPacket(conn, packet)
 }
+
+func JoinChannel(
+	conn *net.UDPConn,
+	sessionID uint64,
+	channel string,
+) error {
+	packet := protocol.VoicePacket{
+		Type:      protocol.PacketJoinChannel,
+		SessionID: sessionID,
+		Payload:   []byte(channel),
+	}
+
+	if err := conn.SetReadDeadline(
+		time.Now().Add(3 * time.Second),
+	); err != nil {
+		return err
+	}
+	defer conn.SetReadDeadline(time.Time{})
+
+	if err := udp.SendPacket(conn, packet); err != nil {
+		return err
+	}
+
+	ack, err := udp.ReceivePacket(conn)
+	if err != nil {
+		return err
+	}
+
+	if ack.Type != protocol.PacketJoinChannelAck {
+		return fmt.Errorf(
+			"expected join channel ack, got packet type %d",
+			ack.Type,
+		)
+	}
+
+	if ack.SessionID != sessionID {
+		return fmt.Errorf(
+			"unexpected session id: got %d want %d",
+			ack.SessionID,
+			sessionID,
+		)
+	}
+
+	if string(ack.Payload) != channel {
+		return fmt.Errorf(
+			"unexpected channel: got %q want %q",
+			string(ack.Payload),
+			channel,
+		)
+	}
+
+	return nil
+}

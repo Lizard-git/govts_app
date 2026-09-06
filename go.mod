@@ -1,6 +1,6 @@
 module example.com/go-voice-mvp
 
-go 1.26.4
+go 1.27.1
 
 require (
 	github.com/ebitengine/oto/v3 v3.4.1

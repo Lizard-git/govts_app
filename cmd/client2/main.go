@@ -24,6 +24,7 @@ const (
 
 func main() {
 	name := flag.String("name", "", "client name")
+	channel := flag.String("channel", "default", "channel name")
 	flag.Parse()
 	if *name == "" {
 		log.Fatal("client name required")
@@ -39,10 +40,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("handshake failed: %v", err)
 	}
+	if err := voiceclient.JoinChannel(conn, sessionID, *channel); err != nil {
+		log.Fatalf("join channel failed: %v", err)
+	}
 	log.Printf(
-		"client connected: id=%d name=%s",
+		"client connected: id=%d name=%s channel=%s",
 		sessionID,
 		*name,
+		*channel,
 	)
 
 	errCh := make(chan error, 7)
