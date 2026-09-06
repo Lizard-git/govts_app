@@ -54,6 +54,7 @@ func (h *Hub) JoinChannel(id uint64, channel string) error {
 		return ErrSessionNotFound
 	}
 	session.JoinChannel(channel)
+	fmt.Printf("session %d joined channel %s\n", id, channel)
 	return nil
 }
 

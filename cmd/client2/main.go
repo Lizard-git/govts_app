@@ -12,6 +12,7 @@ import (
 
 	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
+	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
@@ -50,7 +51,7 @@ func main() {
 		*channel,
 	)
 
-	errCh := make(chan error, 7)
+	errCh := make(chan error, 8)
 	signalCtx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -64,6 +65,7 @@ func main() {
 	audioCh := make(chan audio.Frame)
 	pcmCh := make(chan audio.PCMFrame)
 	encodedInCh := make(chan audio.Frame)
+	controlCh := make(chan protocol.VoicePacket, 16)
 	pcmOutCh := make(chan audio.PCMFrame)
 
 	codecConfig := audio.CodecConfig{
@@ -110,11 +112,16 @@ func main() {
 		errCh <- voiceclient.HeartbeatLoop(ctx, conn, sessionID)
 	}()
 	go func() {
-		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh)
+		errCh <- voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh)
 	}()
 	go func() {
 		errCh <- voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
 	}()
+	go func() {
+		errCh <- voiceclient.ControlLoop(ctx, controlCh)
+	}()
+
+	go voiceclient.CommandLoop(conn, sessionID, cancel)
 
 	firstErr := <-errCh
 	cancel()
@@ -123,7 +130,7 @@ func main() {
 		log.Printf("send disconnect: %v", err)
 	}
 
-	for range 6 {
+	for range len(errCh) {
 		err := <-errCh
 		logLoopError("client stopped", err)
 	}

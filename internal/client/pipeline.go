@@ -1,11 +1,15 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
+	"strings"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -75,8 +79,10 @@ func ReceiveLoop(
 	ctx context.Context,
 	conn *net.UDPConn,
 	encodedCh chan<- audio.Frame,
+	controlCh chan<- protocol.VoicePacket,
 ) error {
 	defer close(encodedCh)
+	defer close(controlCh)
 
 	for {
 		if err := conn.SetReadDeadline(
@@ -95,20 +101,55 @@ func ReceiveLoop(
 				default:
 					continue
 				}
-			} else {
-				return err
+			}
+			return err
+		}
+
+		switch packet.Type {
+		case protocol.PacketVoice:
+			frame := audio.Frame{
+				Data:     packet.Payload,
+				Duration: frameDuration,
+			}
+
+			select {
+			case encodedCh <- frame:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+
+		default:
+			select {
+			case controlCh <- packet:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
+	}
+}
 
-		frame := audio.Frame{
-			Data:     packet.Payload,
-			Duration: frameDuration,
-		}
-
+func ControlLoop(
+	ctx context.Context,
+	controlCh <-chan protocol.VoicePacket,
+) error {
+	for {
 		select {
-		case encodedCh <- frame:
 		case <-ctx.Done():
 			return ctx.Err()
+		case packet, ok := <-controlCh:
+			if !ok {
+				return nil
+			}
+			switch packet.Type {
+			case protocol.PacketJoinChannelAck:
+				log.Printf("join channel: %s", string(packet.Payload))
+
+			default:
+				log.Printf(
+					"unhandled control packet: type=%d",
+					packet.Type,
+				)
+			}
 		}
 	}
 }
@@ -329,4 +370,48 @@ func JoinChannel(
 	}
 
 	return nil
+}
+
+func CommandLoop(
+	conn *net.UDPConn,
+	sessionID uint64,
+	cancel context.CancelFunc,
+) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		parts := strings.Fields(scanner.Text())
+		if len(parts) == 0 {
+			continue
+		}
+		switch parts[0] {
+		case "/join":
+			handleJoin(conn, sessionID, parts[1:])
+		case "/quit":
+			cancel()
+			return
+
+		default:
+			log.Printf(
+				"unknown command: %s",
+				parts[0],
+			)
+		}
+	}
+}
+
+func handleJoin(conn *net.UDPConn, sessionID uint64, parts []string) {
+	if len(parts) != 1 {
+		log.Printf("usage: /join <channel>")
+		return
+	}
+	packet := protocol.VoicePacket{
+		Type:      protocol.PacketJoinChannel,
+		SessionID: sessionID,
+		Payload:   []byte(parts[0]),
+	}
+	if err := udp.SendPacket(conn, packet); err != nil {
+		log.Printf("join channel: %v", err)
+		return
+	}
+	log.Printf("join requested: %s", parts[0])
 }
