@@ -30,7 +30,13 @@ type State struct {
 
 	nextRequestID atomic.Uint32
 
-	pending map[uint32]chan string
+	pending map[uint32]chan ControlResponse
+}
+
+type ControlResponse struct {
+	Type      uint8
+	RequestID uint32
+	Payload   []byte
 }
 
 func NewState(
@@ -42,7 +48,7 @@ func NewState(
 		sessionID: sessionID,
 		name:      name,
 		channel:   channel,
-		pending:   make(map[uint32]chan string),
+		pending:   make(map[uint32]chan ControlResponse),
 	}
 }
 
@@ -67,31 +73,32 @@ func (s *State) SessionID() uint64 {
 	return s.sessionID
 }
 
-func (s *State) RegisterRequest(requestID uint32) <-chan string {
+func (s *State) RegisterRequest(
+	requestID uint32,
+) <-chan ControlResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ch := make(chan string, 1)
+	ch := make(chan ControlResponse, 1)
 	s.pending[requestID] = ch
 
 	return ch
 }
 
 func (s *State) CompleteRequest(
-	requestID uint32,
-	result string,
+	response ControlResponse,
 ) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ch, ok := s.pending[requestID]
+	ch, ok := s.pending[response.RequestID]
 	if !ok {
 		return false
 	}
 
-	delete(s.pending, requestID)
+	delete(s.pending, response.RequestID)
 
-	ch <- result
+	ch <- response
 	close(ch)
 
 	return true
@@ -236,10 +243,16 @@ func ControlLoop(
 			}
 			switch packet.Type {
 			case protocol.PacketJoinChannelAck:
-				channel := string(packet.Payload)
-				if !state.CompleteRequest(packet.RequestID, channel) {
-					log.Printf("join ack for unknown request: request_id=%d", packet.RequestID)
+				response := ControlResponse{
+					Type:      packet.Type,
+					RequestID: packet.RequestID,
+					Payload:   packet.Payload,
 				}
+				if !state.CompleteRequest(response) {
+					log.Printf("response for unknown request: request_id=%d", packet.RequestID)
+					continue
+				}
+				channel := string(packet.Payload)
 				state.SetChannel(channel)
 				log.Printf("join ack: channel=%s request_id=%d", channel, packet.RequestID)
 
@@ -488,11 +501,18 @@ func handleJoin(conn *net.UDPConn, state *State, parts []string) {
 	log.Printf("join requested: channel=%s request_id=%d", channel, requestID)
 
 	select {
-	case joinedChannel := <-resultCh:
+	case response := <-resultCh:
+		if response.Type != protocol.PacketJoinChannelAck {
+			log.Printf("unexpected response type: %d", response.Type)
+			return
+		}
+
+		joinedChannel := string(response.Payload)
+
 		log.Printf(
 			"join confirmed: channel=%s request_id=%d",
 			joinedChannel,
-			requestID,
+			response.RequestID,
 		)
 
 	case <-time.After(3 * time.Second):
