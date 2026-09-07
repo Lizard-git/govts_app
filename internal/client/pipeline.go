@@ -85,18 +85,32 @@ func (s *State) RegisterRequest(
 	return ch
 }
 
+// CompleteRequest LOCK
+// │
+// ├─ найти pending
+// ├─ удалить pending
+// │
+//
+//	UNLOCK
+//
+// │
+// ├─ отправить response
+// └─ close
 func (s *State) CompleteRequest(
 	response ControlResponse,
 ) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	ch, ok := s.pending[response.RequestID]
+	if ok {
+		delete(s.pending, response.RequestID)
+	}
+
+	s.mu.Unlock()
+
 	if !ok {
 		return false
 	}
-
-	delete(s.pending, response.RequestID)
 
 	ch <- response
 	close(ch)
@@ -442,22 +456,19 @@ func Disconnect(conn *net.UDPConn, sessionID uint64) error {
 }
 
 func JoinChannel(
+	ctx context.Context,
 	conn *net.UDPConn,
 	state *State,
 	channel string,
 ) error {
-	/*packet := protocol.VoicePacket{
-		Type:      protocol.PacketJoinChannel,
-		SessionID: sessionID,
-		Payload:   []byte(channel),
-	}*/
 	ch := make([]string, 1)
 	ch[0] = channel
-	handleJoin(conn, state, ch)
+	handleJoin(ctx, conn, state, ch)
 	return nil
 }
 
 func CommandLoop(
+	ctx context.Context,
 	conn *net.UDPConn,
 	state *State,
 	cancel context.CancelFunc,
@@ -470,7 +481,7 @@ func CommandLoop(
 		}
 		switch parts[0] {
 		case "/join":
-			handleJoin(conn, state, parts[1:])
+			handleJoin(ctx, conn, state, parts[1:])
 		case "/quit":
 			cancel()
 			return
@@ -484,7 +495,12 @@ func CommandLoop(
 	}
 }
 
-func handleJoin(conn *net.UDPConn, state *State, parts []string) {
+func handleJoin(
+	ctx context.Context,
+	conn *net.UDPConn,
+	state *State,
+	parts []string,
+) {
 	if len(parts) != 1 {
 		log.Printf("usage: /join <channel>")
 		return
@@ -492,56 +508,72 @@ func handleJoin(conn *net.UDPConn, state *State, parts []string) {
 
 	channel := parts[0]
 
-	requestID := state.NextRequestID()
-	resultCh := state.RegisterRequest(requestID)
-
 	packet := protocol.VoicePacket{
-		Type:      protocol.PacketJoinChannel,
-		SessionID: state.SessionID(),
-		RequestID: requestID,
-		Payload:   []byte(channel),
+		Type:    protocol.PacketJoinChannel,
+		Payload: []byte(channel),
 	}
 
-	if err := udp.SendPacket(conn, packet); err != nil {
-		state.CancelRequest(requestID)
+	response, err := DoRequest(
+		ctx,
+		conn,
+		state,
+		packet,
+		3*time.Second,
+	)
+	if err != nil {
 		log.Printf("join channel: %v", err)
 		return
 	}
 
-	log.Printf("join requested: channel=%s request_id=%d", channel, requestID)
+	if response.Type != protocol.PacketJoinChannelAck {
+		log.Printf(
+			"unexpected join response: type=%d",
+			response.Type,
+		)
+		return
+	}
+
+	log.Printf(
+		"join confirmed: %s",
+		string(response.Payload),
+	)
+}
+
+func DoRequest(
+	ctx context.Context,
+	conn *net.UDPConn,
+	state *State,
+	packet protocol.VoicePacket,
+	timeout time.Duration,
+) (ControlResponse, error) {
+	requestID := state.NextRequestID()
+
+	packet.SessionID = state.SessionID()
+	packet.RequestID = requestID
+
+	respomseCh := state.RegisterRequest(requestID)
+
+	if err := udp.SendPacket(conn, packet); err != nil {
+		state.CancelRequest(requestID)
+		return ControlResponse{}, fmt.Errorf("failed to send request %d: %v", requestID, err)
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	select {
-	case response := <-resultCh:
-		switch response.Type {
-		case protocol.PacketJoinChannelAck:
-			joinedChannel := string(response.Payload)
-
-			log.Printf(
-				"join confirmed: channel=%s request_id=%d",
-				joinedChannel,
-				response.RequestID,
-			)
-
-		case protocol.PacketError:
-			log.Printf(
-				"join failed: %s",
-				string(response.Payload),
-			)
-
-		default:
-			log.Printf(
-				"unexpected response type: %d",
-				response.Type,
-			)
+	case response := <-respomseCh:
+		if response.Type == protocol.PacketError {
+			return ControlResponse{}, fmt.Errorf("server returned error: %v", string(response.Payload))
 		}
+		return response, nil
 
-	case <-time.After(3 * time.Second):
+	case <-timer.C:
 		state.CancelRequest(requestID)
+		return ControlResponse{}, fmt.Errorf("server timed out, request %d", requestID)
 
-		log.Printf(
-			"join timeout: channel=%s request_id=%d",
-			channel,
-			requestID,
-		)
+	case <-ctx.Done():
+		state.CancelRequest(requestID)
+		return ControlResponse{}, ctx.Err()
 	}
 }

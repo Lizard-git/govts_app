@@ -116,10 +116,10 @@ func main() {
 		errCh <- voiceclient.ControlLoop(ctx, state, controlCh)
 	}()
 
-	go voiceclient.CommandLoop(conn, state, cancel)
+	go voiceclient.CommandLoop(ctx, conn, state, cancel)
 
 	log.Printf("client connected: id=%d name=%s", sessionID, *name)
-	if err := voiceclient.JoinChannel(conn, state, *channel); err != nil {
+	if err := voiceclient.JoinChannel(ctx, conn, state, *channel); err != nil {
 		log.Fatalf("join channel failed: %v", err)
 	}
 
