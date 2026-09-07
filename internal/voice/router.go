@@ -171,6 +171,7 @@ func HandleJoinChannelPacket(
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannelAck,
 		SessionID: session.ID,
+		RequestID: packet.RequestID,
 		Payload:   []byte(channel),
 	}
 	return SendToSession(conn, session, ack)

@@ -51,11 +51,7 @@ func main() {
 	const loopCount = 8
 	errCh := make(chan error, loopCount)
 
-	signalCtx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	ctx, cancel := context.WithCancel(signalCtx)
@@ -122,10 +118,10 @@ func main() {
 
 	go voiceclient.CommandLoop(conn, state, cancel)
 
-	if err := voiceclient.JoinChannel(conn, sessionID, *channel); err != nil {
+	log.Printf("client connected: id=%d name=%s", sessionID, *name)
+	if err := voiceclient.JoinChannel(conn, state, *channel); err != nil {
 		log.Fatalf("join channel failed: %v", err)
 	}
-	log.Printf("client connected: id=%d name=%s", sessionID, *name)
 
 	firstErr := <-errCh
 

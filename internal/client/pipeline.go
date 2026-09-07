@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -27,7 +28,9 @@ type State struct {
 	name      string
 	channel   string
 
-	pendingJoin chan string
+	nextRequestID atomic.Uint32
+
+	pending map[uint32]chan string
 }
 
 func NewState(
@@ -36,10 +39,10 @@ func NewState(
 	channel string,
 ) *State {
 	return &State{
-		sessionID:   sessionID,
-		name:        name,
-		channel:     channel,
-		pendingJoin: make(chan string, 1),
+		sessionID: sessionID,
+		name:      name,
+		channel:   channel,
+		pending:   make(map[uint32]chan string),
 	}
 }
 
@@ -64,15 +67,45 @@ func (s *State) SessionID() uint64 {
 	return s.sessionID
 }
 
-func (s *State) PendingJoin() <-chan string {
-	return s.pendingJoin
+func (s *State) RegisterRequest(requestID uint32) <-chan string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ch := make(chan string, 1)
+	s.pending[requestID] = ch
+
+	return ch
 }
 
-func (s *State) CompleteJoin(channel string) {
-	select {
-	case s.pendingJoin <- channel:
-	default:
+func (s *State) CompleteRequest(
+	requestID uint32,
+	result string,
+) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ch, ok := s.pending[requestID]
+	if !ok {
+		return false
 	}
+
+	delete(s.pending, requestID)
+
+	ch <- result
+	close(ch)
+
+	return true
+}
+
+func (s *State) CancelRequest(requestID uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.pending, requestID)
+}
+
+func (s *State) NextRequestID() uint32 {
+	return s.nextRequestID.Add(1)
 }
 
 func EncodeLoop(
@@ -204,9 +237,11 @@ func ControlLoop(
 			switch packet.Type {
 			case protocol.PacketJoinChannelAck:
 				channel := string(packet.Payload)
+				if !state.CompleteRequest(packet.RequestID, channel) {
+					log.Printf("join ack for unknown request: request_id=%d", packet.RequestID)
+				}
 				state.SetChannel(channel)
-				state.CompleteJoin(channel)
-				log.Printf("joined channel: %s", channel)
+				log.Printf("join ack: channel=%s request_id=%d", channel, packet.RequestID)
 
 			default:
 				log.Printf(
@@ -385,16 +420,18 @@ func Disconnect(conn *net.UDPConn, sessionID uint64) error {
 
 func JoinChannel(
 	conn *net.UDPConn,
-	sessionID uint64,
+	state *State,
 	channel string,
 ) error {
-	packet := protocol.VoicePacket{
+	/*packet := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
 		SessionID: sessionID,
 		Payload:   []byte(channel),
-	}
-
-	return udp.SendPacket(conn, packet)
+	}*/
+	ch := make([]string, 1)
+	ch[0] = channel
+	handleJoin(conn, state, ch)
+	return nil
 }
 
 func CommandLoop(
@@ -432,28 +469,39 @@ func handleJoin(conn *net.UDPConn, state *State, parts []string) {
 
 	channel := parts[0]
 
+	requestID := state.NextRequestID()
+	resultCh := state.RegisterRequest(requestID)
+
 	packet := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
 		SessionID: state.SessionID(),
+		RequestID: requestID,
 		Payload:   []byte(channel),
 	}
 
 	if err := udp.SendPacket(conn, packet); err != nil {
+		state.CancelRequest(requestID)
 		log.Printf("join channel: %v", err)
 		return
 	}
 
-	log.Printf("join requested: %s", channel)
+	log.Printf("join requested: channel=%s request_id=%d", channel, requestID)
 
 	select {
-	case joinedChannel := <-state.PendingJoin():
-		if joinedChannel != channel {
-			log.Printf("unexpected join ack: got=%q want=%q", joinedChannel, channel)
-			return
-		}
-		log.Printf("join confirmed: %s", joinedChannel)
+	case joinedChannel := <-resultCh:
+		log.Printf(
+			"join confirmed: channel=%s request_id=%d",
+			joinedChannel,
+			requestID,
+		)
 
 	case <-time.After(3 * time.Second):
-		log.Printf("join channel timeout: %s", channel)
+		state.CancelRequest(requestID)
+
+		log.Printf(
+			"join timeout: channel=%s request_id=%d",
+			channel,
+			requestID,
+		)
 	}
 }

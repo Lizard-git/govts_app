@@ -24,6 +24,7 @@ type VoicePacket struct {
 	Type      uint8
 	SessionID uint64
 	Sequence  uint32
+	RequestID uint32
 	Payload   []byte
 }
 
@@ -58,19 +59,20 @@ func encodeSessionID(id uint64) []byte {
 }
 
 // index
-// 0    1 2 3 4 5 6 7 8    9 10 11 12
-// ┌───┬───────────────────┬─────────────┐
-// │ T │     SessionID     │  Sequence   │
-// └───┴───────────────────┴─────────────┘
-// 1           8                 4
+// 0        Type       1 byte
+// 1..8     SessionID  8 bytes
+// 9..12    Sequence   4 bytes
+// 13..16   RequestID  4 bytes
+// 17..     Payload
 
-const HeaderSize = 13
+const HeaderSize = 17
 
 func encodeHeader(packet VoicePacket) []byte {
 	header := make([]byte, HeaderSize)
 	header[0] = packet.Type
 	binary.BigEndian.PutUint64(header[1:9], packet.SessionID)
-	binary.BigEndian.PutUint32(header[9:HeaderSize], packet.Sequence)
+	binary.BigEndian.PutUint32(header[9:13], packet.Sequence)
+	binary.BigEndian.PutUint32(header[13:17], packet.RequestID)
 	return header
 }
 
@@ -101,8 +103,9 @@ func decodePacket(data []byte) (VoicePacket, error) {
 	packet := VoicePacket{
 		Type:      packetType,
 		SessionID: binary.BigEndian.Uint64(data[1:9]),
-		Sequence:  binary.BigEndian.Uint32(data[9:HeaderSize]),
-		Payload:   data[HeaderSize:],
+		Sequence:  binary.BigEndian.Uint32(data[9:13]),
+		RequestID: binary.BigEndian.Uint32(data[13:17]),
+		Payload:   data[17:],
 	}
 	return packet, nil
 }

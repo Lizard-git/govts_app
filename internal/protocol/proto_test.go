@@ -25,6 +25,7 @@ func TestEncodeDecodePacket(t *testing.T) {
 		Type:      PacketVoice,
 		SessionID: 42,
 		Sequence:  7,
+		RequestID: 42,
 		Payload:   []byte("hello"),
 	}
 
@@ -55,6 +56,13 @@ func TestEncodeDecodePacket(t *testing.T) {
 			"Sequence: got %d, want %d",
 			decoded.Sequence,
 			original.Sequence,
+		)
+	}
+	if decoded.RequestID != original.RequestID {
+		t.Fatalf(
+			"RequestID = %d, want %d",
+			decoded.RequestID,
+			original.RequestID,
 		)
 	}
 	if !bytes.Equal(original.Payload, decoded.Payload) {
