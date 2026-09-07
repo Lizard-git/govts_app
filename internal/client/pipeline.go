@@ -256,6 +256,16 @@ func ControlLoop(
 				state.SetChannel(channel)
 				log.Printf("join ack: channel=%s request_id=%d", channel, packet.RequestID)
 
+			case protocol.PacketError:
+				response := ControlResponse{
+					Type:      packet.Type,
+					RequestID: packet.RequestID,
+					Payload:   packet.Payload,
+				}
+				if !state.CompleteRequest(response) {
+					log.Printf("error response for unknown request: request_id=%d", packet.RequestID)
+				}
+
 			default:
 				log.Printf(
 					"unhandled control packet: type=%d",
@@ -502,18 +512,28 @@ func handleJoin(conn *net.UDPConn, state *State, parts []string) {
 
 	select {
 	case response := <-resultCh:
-		if response.Type != protocol.PacketJoinChannelAck {
-			log.Printf("unexpected response type: %d", response.Type)
-			return
+		switch response.Type {
+		case protocol.PacketJoinChannelAck:
+			joinedChannel := string(response.Payload)
+
+			log.Printf(
+				"join confirmed: channel=%s request_id=%d",
+				joinedChannel,
+				response.RequestID,
+			)
+
+		case protocol.PacketError:
+			log.Printf(
+				"join failed: %s",
+				string(response.Payload),
+			)
+
+		default:
+			log.Printf(
+				"unexpected response type: %d",
+				response.Type,
+			)
 		}
-
-		joinedChannel := string(response.Payload)
-
-		log.Printf(
-			"join confirmed: channel=%s request_id=%d",
-			joinedChannel,
-			response.RequestID,
-		)
 
 	case <-time.After(3 * time.Second):
 		state.CancelRequest(requestID)

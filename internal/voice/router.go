@@ -152,12 +152,21 @@ func HandleJoinChannelPacket(
 		return err
 	}
 	if len(packet.Payload) == 0 {
-		return fmt.Errorf("channel name is required")
+		return SendError(
+			conn,
+			addr,
+			packet.SessionID,
+			packet.RequestID,
+			"channel name is required",
+		)
 	}
 	if len(packet.Payload) > 64 {
-		return fmt.Errorf(
-			"channel name too long: %d bytes",
-			len(packet.Payload),
+		return SendError(
+			conn,
+			addr,
+			packet.SessionID,
+			packet.RequestID,
+			"channel name too long",
 		)
 	}
 	channel := string(packet.Payload)
@@ -230,4 +239,20 @@ func ServeUDP(conn *net.UDPConn, hub *Hub) error {
 			continue
 		}
 	}
+}
+
+func SendError(
+	conn *net.UDPConn,
+	addr *net.UDPAddr,
+	sessionID uint64,
+	requestID uint32,
+	message string,
+) error {
+	packet := protocol.VoicePacket{
+		Type:      protocol.PacketError,
+		SessionID: sessionID,
+		RequestID: requestID,
+		Payload:   []byte(message),
+	}
+	return udp.WriteVoicePacket(conn, addr, packet)
 }

@@ -16,6 +16,7 @@ const (
 	PacketDisconnect
 	PacketJoinChannel
 	PacketJoinChannelAck
+	PacketError
 
 	PacketEnd
 )
@@ -63,7 +64,7 @@ func encodeSessionID(id uint64) []byte {
 // 1..8     SessionID  8 bytes
 // 9..12    Sequence   4 bytes
 // 13..16   RequestID  4 bytes
-// 17..     Payload
+// 17..N     Payload
 
 const HeaderSize = 17
 
