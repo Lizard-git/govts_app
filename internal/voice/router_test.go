@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"example.com/go-voice-mvp/internal/protocol"
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 func TestValidateSessionAddr(t *testing.T) {
@@ -105,4 +107,81 @@ func TestFindRecipientsReturnsOnlySameChannel(t *testing.T) {
 			sameChannel.ID,
 		)
 	}
+}
+
+func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) {
+	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+
+	clientConn, err := net.DialUDP(
+		"udp4",
+		nil,
+		serverConn.LocalAddr().(*net.UDPAddr),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	hub := NewHub()
+	session := hub.CreateSession("alice", clientAddr)
+	cache := NewRequestCache()
+	request := protocol.VoicePacket{
+		Type:      protocol.PacketJoinChannel,
+		SessionID: session.ID,
+		RequestID: 7,
+		Payload:   []byte("music"),
+	}
+
+	if err := HandleJoinChannelPacket(
+		serverConn,
+		hub,
+		cache,
+		request,
+		clientAddr,
+	); err != nil {
+		t.Fatal(err)
+	}
+	firstResponse := receiveTestPacket(t, clientConn)
+
+	request.Payload = []byte("gaming")
+	if err := HandleJoinChannelPacket(
+		serverConn,
+		hub,
+		cache,
+		request,
+		clientAddr,
+	); err != nil {
+		t.Fatal(err)
+	}
+	secondResponse := receiveTestPacket(t, clientConn)
+
+	if got := session.Channel; got != "music" {
+		t.Fatalf("session channel = %q, want original channel %q", got, "music")
+	}
+	if got := string(firstResponse.Payload); got != "music" {
+		t.Fatalf("first response channel = %q, want %q", got, "music")
+	}
+	if got := string(secondResponse.Payload); got != "music" {
+		t.Fatalf("cached response channel = %q, want %q", got, "music")
+	}
+}
+
+func receiveTestPacket(t *testing.T, conn *net.UDPConn) protocol.VoicePacket {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	packet, err := udp.ReceivePacket(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return packet
 }

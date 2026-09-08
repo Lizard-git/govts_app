@@ -189,8 +189,8 @@ offset   field       type     size
 - [ ] Добавить `RequestID` или отдельный nonce в handshake.
 - [ ] Сделать повторный `Hello` идемпотентным, чтобы потерянный `HelloAck` не
   создавал новую session.
-- [ ] Добавить TTL и максимальный размер `RequestCache`.
-- [ ] Удалять cache entries при disconnect и session timeout.
+- [x] Добавить TTL и максимальный размер `RequestCache`.
+- [x] Удалять cache entries при disconnect и session timeout.
 
 Критерий готовности: повтор одного запроса не выполняет операцию второй раз,
 cache имеет ограниченный размер, слишком большие и усечённые пакеты

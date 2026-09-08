@@ -124,8 +124,9 @@ func HandleHeartbeatPacket(
 	return hub.Touch(packet.SessionID)
 }
 
-func HandleDisconnectPocket(
+func HandleDisconnectPacket(
 	hub *Hub,
+	cache *RequestCache,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,
 ) error {
@@ -137,6 +138,7 @@ func HandleDisconnectPocket(
 		return fmt.Errorf("session %d not found", packet.SessionID)
 	}
 	hub.Remove(session.ID)
+	cache.RemoveSession(session.ID)
 	log.Printf("client disconnected: id=%d, name=%s",
 		packet.SessionID, session.Name)
 	return nil
@@ -228,7 +230,7 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, cache *RequestCache, packet proto
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(hub, packet, addr)
 	case protocol.PacketDisconnect:
-		return HandleDisconnectPocket(hub, packet, addr)
+		return HandleDisconnectPacket(hub, cache, packet, addr)
 	case protocol.PacketJoinChannel:
 		return HandleJoinChannelPacket(conn, hub, cache, packet, addr)
 	default:

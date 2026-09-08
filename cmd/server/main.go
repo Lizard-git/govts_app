@@ -28,6 +28,7 @@ func main() {
 		if err := server.CleanupLoop(
 			ctx,
 			hub,
+			cache,
 			server.SessionTimeout,
 			server.CleanupInterval,
 		); err != nil && !errors.Is(err, context.Canceled) {

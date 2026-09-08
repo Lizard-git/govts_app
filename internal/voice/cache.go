@@ -1,26 +1,65 @@
 package voice
 
 import (
+	"bytes"
 	"sync"
+	"time"
 
 	"example.com/go-voice-mvp/internal/protocol"
+)
+
+const (
+	RequestCacheTTL        = 30 * time.Second
+	RequestCacheMaxEntries = 4096
 )
 
 type requestKey struct {
 	SessionID uint64
 	RequestID uint32
 }
+
+type requestCacheEntry struct {
+	response  protocol.VoicePacket
+	expiresAt time.Time
+}
+
 type RequestCache struct {
 	mu sync.Mutex
 
-	responses map[requestKey]protocol.VoicePacket
+	responses  map[requestKey]requestCacheEntry
+	ttl        time.Duration
+	maxEntries int
+	now        func() time.Time
 }
 
 func NewRequestCache() *RequestCache {
+	return newRequestCache(
+		RequestCacheTTL,
+		RequestCacheMaxEntries,
+		time.Now,
+	)
+}
+
+func newRequestCache(
+	ttl time.Duration,
+	maxEntries int,
+	now func() time.Time,
+) *RequestCache {
+	if ttl <= 0 {
+		panic("request cache TTL must be positive")
+	}
+	if maxEntries <= 0 {
+		panic("request cache max entries must be positive")
+	}
+	if now == nil {
+		panic("request cache clock is required")
+	}
+
 	return &RequestCache{
-		responses: make(
-			map[requestKey]protocol.VoicePacket,
-		),
+		responses:  make(map[requestKey]requestCacheEntry),
+		ttl:        ttl,
+		maxEntries: maxEntries,
+		now:        now,
 	}
 }
 
@@ -31,11 +70,20 @@ func (c *RequestCache) Get(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	packet, ok := c.responses[requestKey{
-		sessionID,
-		requestID,
-	}]
-	return packet, ok
+	key := requestKey{
+		SessionID: sessionID,
+		RequestID: requestID,
+	}
+	entry, ok := c.responses[key]
+	if !ok {
+		return protocol.VoicePacket{}, false
+	}
+	if !c.now().Before(entry.expiresAt) {
+		delete(c.responses, key)
+		return protocol.VoicePacket{}, false
+	}
+
+	return clonePacket(entry.response), true
 }
 
 func (c *RequestCache) Put(
@@ -46,8 +94,81 @@ func (c *RequestCache) Put(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.responses[requestKey{
+	now := c.now()
+	c.removeExpiredLocked(now)
+
+	key := requestKey{
 		SessionID: sessionID,
 		RequestID: requestID,
-	}] = response
+	}
+	if _, exists := c.responses[key]; !exists && len(c.responses) >= c.maxEntries {
+		c.removeOldestLocked()
+	}
+
+	c.responses[key] = requestCacheEntry{
+		response:  clonePacket(response),
+		expiresAt: now.Add(c.ttl),
+	}
+}
+
+func (c *RequestCache) RemoveSession(sessionID uint64) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	removed := 0
+	for key := range c.responses {
+		if key.SessionID == sessionID {
+			delete(c.responses, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+func (c *RequestCache) RemoveExpired() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.removeExpiredLocked(c.now())
+}
+
+func (c *RequestCache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.removeExpiredLocked(c.now())
+	return len(c.responses)
+}
+
+func (c *RequestCache) removeExpiredLocked(now time.Time) int {
+	removed := 0
+	for key, entry := range c.responses {
+		if !now.Before(entry.expiresAt) {
+			delete(c.responses, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+func (c *RequestCache) removeOldestLocked() {
+	var oldestKey requestKey
+	var oldestExpiry time.Time
+	found := false
+
+	for key, entry := range c.responses {
+		if !found || entry.expiresAt.Before(oldestExpiry) {
+			oldestKey = key
+			oldestExpiry = entry.expiresAt
+			found = true
+		}
+	}
+	if found {
+		delete(c.responses, oldestKey)
+	}
+}
+
+func clonePacket(packet protocol.VoicePacket) protocol.VoicePacket {
+	packet.Payload = bytes.Clone(packet.Payload)
+	return packet
 }
