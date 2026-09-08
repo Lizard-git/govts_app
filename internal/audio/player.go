@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/ebitengine/oto/v3"
@@ -15,6 +16,9 @@ type OtoPlayer struct {
 	reader *io.PipeReader
 	writer *io.PipeWriter
 	player *oto.Player
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewOtoPlayer(config CodecConfig) (*OtoPlayer, error) {
@@ -61,13 +65,22 @@ func (p *OtoPlayer) Write(samples []int16) error {
 }
 
 func (p *OtoPlayer) Close() error {
-	if err := p.writer.Close(); err != nil {
-		return err
-	}
-	if err := p.reader.Close(); err != nil {
-		return err
-	}
-	return nil
+	p.closeOnce.Do(func() {
+		var readerErr error
+		var writerErr error
+
+		// Closing the reader first unblocks a concurrent Write immediately.
+		if p.reader != nil {
+			readerErr = p.reader.Close()
+		}
+		if p.writer != nil {
+			writerErr = p.writer.Close()
+		}
+
+		p.closeErr = errors.Join(readerErr, writerErr)
+	})
+
+	return p.closeErr
 }
 
 var _ Player = (*OtoPlayer)(nil)

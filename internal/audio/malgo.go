@@ -2,7 +2,10 @@ package audio
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
+	"sync"
 
 	"github.com/gen2brain/malgo"
 )
@@ -14,6 +17,9 @@ type MalgoRecorder struct {
 
 	dataCh  chan []byte
 	pending []byte
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewMalgoRecorder(config CodecConfig) (*MalgoRecorder, error) {
@@ -113,19 +119,32 @@ func (r *MalgoRecorder) Read(samples []int16) (int, error) {
 }
 
 func (r *MalgoRecorder) Close() error {
-	if err := r.device.Stop(); err != nil {
-		return err
-	}
+	r.closeOnce.Do(func() {
+		var stopErr error
+		var contextErr error
 
-	r.device.Uninit()
+		if r.device != nil {
+			if err := r.device.Stop(); err != nil {
+				stopErr = fmt.Errorf("stop capture device: %w", err)
+			}
+			// Uninit must run even when Stop fails. It also ensures that the
+			// callback cannot send to dataCh after the channel is closed.
+			r.device.Uninit()
+		}
 
-	close(r.dataCh)
+		if r.dataCh != nil {
+			close(r.dataCh)
+		}
 
-	if err := r.context.Uninit(); err != nil {
-		return err
-	}
+		if r.context != nil {
+			if err := r.context.Uninit(); err != nil {
+				contextErr = fmt.Errorf("uninitialize audio context: %w", err)
+			}
+			r.context.Free()
+		}
 
-	r.context.Free()
+		r.closeErr = errors.Join(stopErr, contextErr)
+	})
 
-	return nil
+	return r.closeErr
 }

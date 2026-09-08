@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -27,8 +29,15 @@ func main() {
 	name := flag.String("name", "", "client name")
 	channel := flag.String("channel", "default", "channel name")
 	flag.Parse()
-	if *name == "" {
-		log.Fatal("client name required")
+
+	if err := run(*name, *channel); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(name string, channel string) (runErr error) {
+	if name == "" {
+		return errors.New("client name required")
 	}
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -36,19 +45,22 @@ func main() {
 
 	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("connect UDP: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close UDP connection: %w", err))
+		}
+	}()
 
-	sessionID, err := voiceclient.PerformHandshake(signalCtx, conn, *name)
+	sessionID, err := voiceclient.PerformHandshake(signalCtx, conn, name)
 	if err != nil {
-		log.Printf("handshake failed: %v", err)
-		return
+		return fmt.Errorf("handshake: %w", err)
 	}
 
 	state := voiceclient.NewState(
 		sessionID,
-		*name,
+		name,
 		"",
 	)
 
@@ -72,19 +84,26 @@ func main() {
 
 	encoder, err := audio.NewOpusEncoder(codecConfig)
 	if err != nil {
-		log.Fatalf("create Opus encoder: %v", err)
+		return fmt.Errorf("create Opus encoder: %w", err)
 	}
 
 	decoder, err := audio.NewOpusDecoder(codecConfig)
 	if err != nil {
-		log.Fatalf("create Opus decoder: %v", err)
+		return fmt.Errorf("create Opus decoder: %w", err)
 	}
 
 	player, err := audio.NewOtoPlayer(codecConfig)
 	if err != nil {
-		log.Fatalf("create audio player: %v", err)
+		return fmt.Errorf("create audio player: %w", err)
 	}
-	defer player.Close()
+	playerClosed := false
+	defer func() {
+		if !playerClosed {
+			if err := player.Close(); err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("close audio player: %w", err))
+			}
+		}
+	}()
 
 	// Receive and control loops must be running before JoinChannel: DoRequest
 	// receives its acknowledgement through this part of the pipeline.
@@ -105,23 +124,27 @@ func main() {
 		errCh <- voiceclient.ControlLoop(ctx, state, controlCh)
 	}()
 
-	log.Printf("client connected: id=%d name=%s", sessionID, *name)
-	if err := voiceclient.JoinChannel(ctx, conn, state, *channel); err != nil {
+	log.Printf("client connected: id=%d name=%s", sessionID, name)
+	if err := voiceclient.JoinChannel(ctx, conn, state, channel); err != nil {
 		cancel()
-		_ = voiceclient.Disconnect(conn, sessionID)
-		log.Printf("join channel failed: %v", err)
-		return
+		disconnectErr := voiceclient.Disconnect(conn, sessionID)
+		return errors.Join(
+			fmt.Errorf("join channel: %w", err),
+			wrapError("send disconnect", disconnectErr),
+		)
 	}
-	log.Printf("join confirmed: %s", *channel)
+	log.Printf("join confirmed: %s", channel)
 
 	// Capture starts only after the server has confirmed the channel. Therefore
 	// no microphone frames can enter SendLoop before a successful join.
 	recorder, err := audio.NewMalgoRecorder(codecConfig)
 	if err != nil {
 		cancel()
-		_ = voiceclient.Disconnect(conn, sessionID)
-		log.Printf("create audio recorder: %v", err)
-		return
+		disconnectErr := voiceclient.Disconnect(conn, sessionID)
+		return errors.Join(
+			fmt.Errorf("create audio recorder: %w", err),
+			wrapError("send disconnect", disconnectErr),
+		)
 	}
 
 	go func() {
@@ -138,22 +161,38 @@ func main() {
 	firstErr := <-errCh
 
 	cancel()
-	_ = recorder.Close()
+	recorderErr := recorder.Close()
+	playerErr := player.Close()
+	playerClosed = true
 
-	if err := voiceclient.Disconnect(conn, sessionID); err != nil {
-		log.Printf("send disconnect: %v", err)
-	}
-
+	loopErrors := make([]error, 0, loopCount)
+	loopErrors = append(loopErrors, unexpectedLoopError(firstErr))
 	for i := 1; i < loopCount; i++ {
-		err := <-errCh
-		logLoopError("client stopped", err)
+		loopErrors = append(loopErrors, unexpectedLoopError(<-errCh))
 	}
 
-	logLoopError("client stopped", firstErr)
+	disconnectErr := voiceclient.Disconnect(conn, sessionID)
+	return errors.Join(
+		errors.Join(loopErrors...),
+		wrapError("close audio recorder", recorderErr),
+		wrapError("close audio player", playerErr),
+		wrapError("send disconnect", disconnectErr),
+	)
 }
 
-func logLoopError(prefix string, err error) {
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("%s: %v", prefix, err)
+func unexpectedLoopError(err error) error {
+	if err == nil ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) {
+		return nil
 	}
+	return err
+}
+
+func wrapError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
