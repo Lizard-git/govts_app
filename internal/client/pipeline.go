@@ -21,6 +21,8 @@ import (
 
 const frameDuration = 20 * time.Millisecond
 
+const joinRequestTimeout = 3 * time.Second
+
 type State struct {
 	mu sync.RWMutex
 
@@ -264,11 +266,7 @@ func ControlLoop(
 				}
 				if !state.CompleteRequest(response) {
 					log.Printf("response for unknown request: request_id=%d", packet.RequestID)
-					continue
 				}
-				channel := string(packet.Payload)
-				state.SetChannel(channel)
-				log.Printf("join ack: channel=%s request_id=%d", channel, packet.RequestID)
 
 			case protocol.PacketError:
 				response := ControlResponse{
@@ -461,9 +459,58 @@ func JoinChannel(
 	state *State,
 	channel string,
 ) error {
-	ch := make([]string, 1)
-	ch[0] = channel
-	handleJoin(ctx, conn, state, ch)
+	return joinChannelWithTimeout(
+		ctx,
+		conn,
+		state,
+		channel,
+		joinRequestTimeout,
+	)
+}
+
+func joinChannelWithTimeout(
+	ctx context.Context,
+	conn *net.UDPConn,
+	state *State,
+	channel string,
+	timeout time.Duration,
+) error {
+	if channel == "" {
+		return errors.New("channel name is required")
+	}
+
+	packet := protocol.VoicePacket{
+		Type:    protocol.PacketJoinChannel,
+		Payload: []byte(channel),
+	}
+
+	response, err := DoRequest(
+		ctx,
+		conn,
+		state,
+		packet,
+		timeout,
+	)
+	if err != nil {
+		return fmt.Errorf("join channel %q: %w", channel, err)
+	}
+
+	if err := validateJoinResponse(response, channel); err != nil {
+		return err
+	}
+
+	state.SetChannel(channel)
+	return nil
+}
+
+func validateJoinResponse(response ControlResponse, requestedChannel string) error {
+	if response.Type != protocol.PacketJoinChannelAck {
+		return fmt.Errorf("unexpected join response: type=%d", response.Type)
+	}
+	confirmedChannel := string(response.Payload)
+	if confirmedChannel != requestedChannel {
+		return fmt.Errorf("join response channel mismatch: got %q, want %q", confirmedChannel, requestedChannel)
+	}
 	return nil
 }
 
@@ -507,36 +554,12 @@ func handleJoin(
 	}
 
 	channel := parts[0]
-
-	packet := protocol.VoicePacket{
-		Type:    protocol.PacketJoinChannel,
-		Payload: []byte(channel),
-	}
-
-	response, err := DoRequest(
-		ctx,
-		conn,
-		state,
-		packet,
-		3*time.Second,
-	)
-	if err != nil {
+	if err := JoinChannel(ctx, conn, state, channel); err != nil {
 		log.Printf("join channel: %v", err)
 		return
 	}
 
-	if response.Type != protocol.PacketJoinChannelAck {
-		log.Printf(
-			"unexpected join response: type=%d",
-			response.Type,
-		)
-		return
-	}
-
-	log.Printf(
-		"join confirmed: %s",
-		string(response.Payload),
-	)
+	log.Printf("join confirmed: %s", channel)
 }
 
 func DoRequest(

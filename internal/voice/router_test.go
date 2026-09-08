@@ -1,8 +1,11 @@
 package voice
 
 import (
+	"errors"
 	"net"
 	"testing"
+
+	"example.com/go-voice-mvp/internal/protocol"
 )
 
 func TestValidateSessionAddr(t *testing.T) {
@@ -50,4 +53,56 @@ func TestValidateSessionAddr(t *testing.T) {
 			t.Fatal("expected unknown session error")
 		}
 	})
+}
+
+func TestFindRecipientsRejectsSenderWithoutChannel(t *testing.T) {
+	hub := NewHub()
+	sender := hub.CreateSession("alice", nil)
+
+	_, err := FindRecipients(hub, protocol.VoicePacket{
+		Type:      protocol.PacketVoice,
+		SessionID: sender.ID,
+	})
+	if !errors.Is(err, ErrSessionNotInChannel) {
+		t.Fatalf(
+			"FindRecipients() error = %v, want %v",
+			err,
+			ErrSessionNotInChannel,
+		)
+	}
+}
+
+func TestFindRecipientsReturnsOnlySameChannel(t *testing.T) {
+	hub := NewHub()
+	sender := hub.CreateSession("alice", nil)
+	sameChannel := hub.CreateSession("bob", nil)
+	otherChannel := hub.CreateSession("carol", nil)
+
+	if err := hub.JoinChannel(sender.ID, "music"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.JoinChannel(sameChannel.ID, "music"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.JoinChannel(otherChannel.ID, "gaming"); err != nil {
+		t.Fatal(err)
+	}
+
+	recipients, err := FindRecipients(hub, protocol.VoicePacket{
+		Type:      protocol.PacketVoice,
+		SessionID: sender.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recipients) != 1 {
+		t.Fatalf("FindRecipients() returned %d sessions, want 1", len(recipients))
+	}
+	if recipients[0].ID != sameChannel.ID {
+		t.Fatalf(
+			"FindRecipients() returned session %d, want %d",
+			recipients[0].ID,
+			sameChannel.ID,
+		)
+	}
 }

@@ -85,23 +85,11 @@ func main() {
 	}
 	defer player.Close()
 
-	recorder, err := audio.NewMalgoRecorder(codecConfig)
-	if err != nil {
-		log.Fatalf("create audio recorder: %v", err)
-	}
-
-	go func() {
-		errCh <- voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh)
-	}()
+	// Receive and control loops must be running before JoinChannel: DoRequest
+	// receives its acknowledgement through this part of the pipeline.
 	go func() {
 		// UDP → receiveLoop → encodedInCh → decodeLoop → pcmOutCh
 		errCh <- voiceclient.DecodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
-	}()
-	go func() {
-		errCh <- voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame)
-	}()
-	go func() {
-		errCh <- voiceclient.SendLoop(ctx, conn, sessionID, audioCh)
 	}()
 	go func() {
 		errCh <- voiceclient.HeartbeatLoop(ctx, conn, sessionID)
@@ -116,12 +104,35 @@ func main() {
 		errCh <- voiceclient.ControlLoop(ctx, state, controlCh)
 	}()
 
-	go voiceclient.CommandLoop(ctx, conn, state, cancel)
-
 	log.Printf("client connected: id=%d name=%s", sessionID, *name)
 	if err := voiceclient.JoinChannel(ctx, conn, state, *channel); err != nil {
-		log.Fatalf("join channel failed: %v", err)
+		cancel()
+		_ = voiceclient.Disconnect(conn, sessionID)
+		log.Printf("join channel failed: %v", err)
+		return
 	}
+	log.Printf("join confirmed: %s", *channel)
+
+	// Capture starts only after the server has confirmed the channel. Therefore
+	// no microphone frames can enter SendLoop before a successful join.
+	recorder, err := audio.NewMalgoRecorder(codecConfig)
+	if err != nil {
+		cancel()
+		_ = voiceclient.Disconnect(conn, sessionID)
+		log.Printf("create audio recorder: %v", err)
+		return
+	}
+
+	go func() {
+		errCh <- voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh)
+	}()
+	go func() {
+		errCh <- voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame)
+	}()
+	go func() {
+		errCh <- voiceclient.SendLoop(ctx, conn, sessionID, audioCh)
+	}()
+	go voiceclient.CommandLoop(ctx, conn, state, cancel)
 
 	firstErr := <-errCh
 

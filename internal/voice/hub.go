@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-var ErrSessionNotFound = errors.New("session not found")
+var (
+	ErrSessionNotFound     = errors.New("session not found")
+	ErrSessionNotInChannel = errors.New("session has not joined a channel")
+)
 
 type Hub struct {
 	mu       sync.RWMutex

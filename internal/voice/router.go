@@ -250,6 +250,13 @@ func FindRecipients(hub *Hub, packet protocol.VoicePacket) ([]*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	if senderSession.Channel == "" {
+		return nil, fmt.Errorf(
+			"session %d: %w",
+			senderSession.ID,
+			ErrSessionNotInChannel,
+		)
+	}
 	return hub.Recipients(senderSession.Channel, senderSession.ID), nil
 }
 
