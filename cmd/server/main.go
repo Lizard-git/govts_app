@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"example.com/go-voice-mvp/internal/server"
 	"example.com/go-voice-mvp/internal/transport/udp"
@@ -11,32 +15,50 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	conn, err := udp.ListenUDP(9000)
 	if err != nil {
-		log.Fatalf("listen UDP: %v", err)
+		return fmt.Errorf("listen UDP: %w", err)
 	}
 	defer conn.Close()
-	log.Println("voice server listening on :9000")
+
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer cancel()
 
 	hub := voice.NewHub()
 	cache := voice.NewRequestCache()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	cleanupErrCh := make(chan error, 1)
 
 	go func() {
-		if err := server.CleanupLoop(
+		cleanupErrCh <- server.CleanupLoop(
 			ctx,
 			hub,
 			cache,
 			server.SessionTimeout,
 			server.CleanupInterval,
-		); err != nil && !errors.Is(err, context.Canceled) {
-			log.Fatalf("cleanup loop stopped: %v", err)
-		}
+		)
 	}()
 
-	if err := voice.ServeUDP(conn, hub, cache); err != nil {
-		log.Fatalf("serve UDP: %v", err)
+	log.Println("voice server listening on :9000")
+	serveErr := voice.ServeUDP(ctx, conn, hub, cache)
+	cancel()
+	cleanupErr := <-cleanupErrCh
+
+	if errors.Is(serveErr, context.Canceled) {
+		serveErr = nil
 	}
+	if errors.Is(cleanupErr, context.Canceled) {
+		cleanupErr = nil
+	}
+
+	return errors.Join(serveErr, cleanupErr)
 }

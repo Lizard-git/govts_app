@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"net"
 	"testing"
@@ -244,4 +245,99 @@ func receiveTestPacket(t *testing.T, conn *net.UDPConn) protocol.VoicePacket {
 		t.Fatal(err)
 	}
 	return packet
+}
+
+func TestServeUDPStopsOnContextCancellation(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- ServeUDP(ctx, conn, NewHub(), NewRequestCache())
+	}()
+
+	cancel()
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ServeUDP() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ServeUDP() did not stop after context cancellation")
+	}
+}
+
+func TestServeUDPReturnsClosedConnectionError(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ServeUDP(context.Background(), conn, NewHub(), NewRequestCache())
+	if !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("ServeUDP() error = %v, want %v", err, net.ErrClosed)
+	}
+}
+
+func TestServeUDPSkipsMalformedPacket(t *testing.T) {
+	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+
+	clientConn, err := net.DialUDP(
+		"udp4",
+		nil,
+		serverConn.LocalAddr().(*net.UDPAddr),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- ServeUDP(ctx, serverConn, NewHub(), NewRequestCache())
+	}()
+
+	if _, err := clientConn.Write([]byte{protocol.PacketHello}); err != nil {
+		t.Fatal(err)
+	}
+	if err := udp.SendPacket(clientConn, protocol.VoicePacket{
+		Type:      protocol.PacketHello,
+		RequestID: 17,
+		Payload:   []byte("alice"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := receiveTestPacket(t, clientConn)
+	if response.Type != protocol.PacketHelloAck {
+		t.Fatalf("response type = %d, want %d", response.Type, protocol.PacketHelloAck)
+	}
+
+	cancel()
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ServeUDP() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ServeUDP() did not stop")
+	}
 }

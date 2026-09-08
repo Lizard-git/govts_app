@@ -1,9 +1,12 @@
 package voice
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
@@ -301,12 +304,35 @@ func FindRecipients(hub *Hub, packet protocol.VoicePacket) ([]*Session, error) {
 	return hub.Recipients(senderSession.Channel, senderSession.ID), nil
 }
 
-func ServeUDP(conn *net.UDPConn, hub *Hub, cache *RequestCache) error {
+func ServeUDP(
+	ctx context.Context,
+	conn *net.UDPConn,
+	hub *Hub,
+	cache *RequestCache,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	stopWakeup := context.AfterFunc(ctx, func() {
+		_ = conn.SetReadDeadline(time.Now())
+	})
+	defer stopWakeup()
+
 	for {
 		packet, addr, err := udp.ReadVoicePacket(conn)
 		if err != nil {
-			log.Printf("bad packet: %v", err)
-			continue
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			if errors.Is(err, net.ErrClosed) {
+				return fmt.Errorf("read UDP packet: %w", err)
+			}
+			if isMalformedPacket(err) {
+				log.Printf("bad packet: %v", err)
+				continue
+			}
+			return fmt.Errorf("read UDP packet: %w", err)
 		}
 		//log.Printf(
 		//	"recv type=%d session=%d sequence=%d bytes=%d",
@@ -320,6 +346,12 @@ func ServeUDP(conn *net.UDPConn, hub *Hub, cache *RequestCache) error {
 			continue
 		}
 	}
+}
+
+func isMalformedPacket(err error) bool {
+	return errors.Is(err, protocol.ErrPacketTooShort) ||
+		errors.Is(err, protocol.ErrPacketTooLarge) ||
+		errors.Is(err, protocol.ErrInvalidPacketType)
 }
 
 func SendError(
