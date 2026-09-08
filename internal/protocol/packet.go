@@ -6,7 +6,12 @@ import (
 	"fmt"
 )
 
-var ErrPacketTooShort = errors.New("packet too short")
+var (
+	ErrPacketTooShort    = errors.New("packet too short")
+	ErrPacketTooLarge    = errors.New("packet too large")
+	ErrPayloadTooLarge   = errors.New("packet payload too large")
+	ErrInvalidPacketType = errors.New("invalid packet type")
+)
 
 const (
 	PacketHello uint8 = iota + 1
@@ -66,7 +71,11 @@ func encodeSessionID(id uint64) []byte {
 // 13..16   RequestID  4 bytes
 // 17..N     Payload
 
-const HeaderSize = 17
+const (
+	HeaderSize      = 17
+	MaxPayloadSize  = 1200
+	MaxDatagramSize = HeaderSize + MaxPayloadSize
+)
 
 func encodeHeader(packet VoicePacket) []byte {
 	header := make([]byte, HeaderSize)
@@ -77,13 +86,25 @@ func encodeHeader(packet VoicePacket) []byte {
 	return header
 }
 
-func EncodePacket(packet VoicePacket) []byte {
+func EncodePacket(packet VoicePacket) ([]byte, error) {
+	if !validPacketType(packet.Type) {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidPacketType, packet.Type)
+	}
+	if len(packet.Payload) > MaxPayloadSize {
+		return nil, fmt.Errorf(
+			"%w: got %d bytes, max %d",
+			ErrPayloadTooLarge,
+			len(packet.Payload),
+			MaxPayloadSize,
+		)
+	}
+
 	header := encodeHeader(packet)
 	headerLen := len(header)
 	data := make([]byte, headerLen+len(packet.Payload))
 	copy(data, header)
 	copy(data[headerLen:], packet.Payload)
-	return data
+	return data, nil
 }
 
 func DecodePacket(data []byte) (VoicePacket, error) {
@@ -94,12 +115,17 @@ func decodePacket(data []byte) (VoicePacket, error) {
 	if len(data) < HeaderSize {
 		return VoicePacket{}, ErrPacketTooShort
 	}
+	if len(data) > MaxDatagramSize {
+		return VoicePacket{}, fmt.Errorf(
+			"%w: got %d bytes, max %d",
+			ErrPacketTooLarge,
+			len(data),
+			MaxDatagramSize,
+		)
+	}
 	packetType := data[0]
 	if !validPacketType(packetType) {
-		return VoicePacket{}, fmt.Errorf(
-			"invalid packet type: %d",
-			packetType,
-		)
+		return VoicePacket{}, fmt.Errorf("%w: %d", ErrInvalidPacketType, packetType)
 	}
 	packet := VoicePacket{
 		Type:      packetType,
@@ -113,13 +139,6 @@ func decodePacket(data []byte) (VoicePacket, error) {
 
 func validPacketType(packetType uint8) bool {
 	return packetType > 0 && packetType < PacketEnd
-	/*switch packetType {
-	case PacketHello, PacketVoice, PacketHelloAck, PacketHeartbeat,
-		PacketDisconnect, PacketJoinChannel, PacketJoinChannelAck:
-		return true
-	default:
-		return false
-	}*/
 }
 
 func NewErrorPacket(

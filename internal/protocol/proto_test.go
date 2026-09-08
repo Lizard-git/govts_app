@@ -29,7 +29,10 @@ func TestEncodeDecodePacket(t *testing.T) {
 		Payload:   []byte("hello"),
 	}
 
-	data := EncodePacket(original)
+	data, err := EncodePacket(original)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	decoded, err := decodePacket(data)
 
@@ -87,7 +90,10 @@ func TestHelloAckRoundTrip(t *testing.T) {
 		SessionID: 42,
 	}
 
-	data := EncodePacket(original)
+	data, err := EncodePacket(original)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	decoded, err := decodePacket(data)
 	if err != nil {
@@ -107,5 +113,51 @@ func TestHelloAckRoundTrip(t *testing.T) {
 			"expected session ID 42, got %d",
 			decoded.SessionID,
 		)
+	}
+}
+
+func TestEncodePacketRejectsOversizedPayload(t *testing.T) {
+	packet := VoicePacket{
+		Type:    PacketVoice,
+		Payload: make([]byte, MaxPayloadSize+1),
+	}
+
+	if _, err := EncodePacket(packet); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("EncodePacket() error = %v, want %v", err, ErrPayloadTooLarge)
+	}
+}
+
+func TestDecodePacketRejectsOversizedDatagram(t *testing.T) {
+	data := make([]byte, MaxDatagramSize+1)
+	data[0] = PacketVoice
+
+	if _, err := DecodePacket(data); !errors.Is(err, ErrPacketTooLarge) {
+		t.Fatalf("DecodePacket() error = %v, want %v", err, ErrPacketTooLarge)
+	}
+}
+
+func TestEncodeDecodeMaximumPayload(t *testing.T) {
+	original := VoicePacket{
+		Type:      PacketVoice,
+		SessionID: 42,
+		Sequence:  7,
+		Payload:   make([]byte, MaxPayloadSize),
+	}
+
+	data, err := EncodePacket(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != MaxDatagramSize {
+		t.Fatalf("encoded size = %d, want %d", len(data), MaxDatagramSize)
+	}
+	if _, err := DecodePacket(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEncodePacketRejectsInvalidType(t *testing.T) {
+	if _, err := EncodePacket(VoicePacket{}); !errors.Is(err, ErrInvalidPacketType) {
+		t.Fatalf("EncodePacket() error = %v, want %v", err, ErrInvalidPacketType)
 	}
 }

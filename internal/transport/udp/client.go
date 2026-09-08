@@ -2,6 +2,7 @@ package udp
 
 import (
 	"errors"
+	"fmt"
 	"net"
 
 	"example.com/go-voice-mvp/internal/protocol"
@@ -16,7 +17,10 @@ func ConnectUDP(host string, port int) (*net.UDPConn, error) {
 }
 
 func SendPacket(conn *net.UDPConn, packet protocol.VoicePacket) error {
-	data := protocol.EncodePacket(packet)
+	data, err := protocol.EncodePacket(packet)
+	if err != nil {
+		return err
+	}
 	if _, err := conn.Write(data); err != nil {
 		return err
 	}
@@ -24,9 +28,18 @@ func SendPacket(conn *net.UDPConn, packet protocol.VoicePacket) error {
 }
 
 func ReceivePacket(conn *net.UDPConn) (protocol.VoicePacket, error) {
-	buffer := make([]byte, 1500)
+	// The extra byte lets DecodePacket distinguish an oversized datagram from a
+	// valid datagram whose size is exactly MaxDatagramSize.
+	buffer := make([]byte, protocol.MaxDatagramSize+1)
 	n, err := conn.Read(buffer)
 	if err != nil {
+		if isMessageTooLong(err) {
+			return protocol.VoicePacket{}, fmt.Errorf(
+				"%w: %v",
+				protocol.ErrPacketTooLarge,
+				err,
+			)
+		}
 		return protocol.VoicePacket{}, err
 	}
 	return protocol.DecodePacket(buffer[:n])
