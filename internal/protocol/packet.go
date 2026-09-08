@@ -121,3 +121,16 @@ func validPacketType(packetType uint8) bool {
 		return false
 	}*/
 }
+
+func NewErrorPacket(
+	sessionID uint64,
+	requestID uint32,
+	message string,
+) VoicePacket {
+	return VoicePacket{
+		Type:      PacketError,
+		SessionID: sessionID,
+		RequestID: requestID,
+		Payload:   []byte(message),
+	}
+}

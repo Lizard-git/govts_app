@@ -145,28 +145,56 @@ func HandleDisconnectPocket(
 func HandleJoinChannelPacket(
 	conn *net.UDPConn,
 	hub *Hub,
+	cache *RequestCache,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,
 ) error {
 	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		return err
 	}
-	if len(packet.Payload) == 0 {
-		return SendError(
+	if response, ok := cache.Get(
+		packet.SessionID,
+		packet.RequestID,
+	); ok {
+		return udp.WriteVoicePacket(
 			conn,
 			addr,
+			response,
+		)
+	}
+
+	if len(packet.Payload) == 0 {
+		response := protocol.NewErrorPacket(
 			packet.SessionID,
 			packet.RequestID,
 			"channel name is required",
 		)
-	}
-	if len(packet.Payload) > 64 {
-		return SendError(
+		cache.Put(
+			packet.SessionID,
+			packet.RequestID,
+			response,
+		)
+		return udp.WriteVoicePacket(
 			conn,
 			addr,
+			response,
+		)
+	}
+	if len(packet.Payload) > 64 {
+		response := protocol.NewErrorPacket(
 			packet.SessionID,
 			packet.RequestID,
 			"channel name too long",
+		)
+		cache.Put(
+			packet.SessionID,
+			packet.RequestID,
+			response,
+		)
+		return udp.WriteVoicePacket(
+			conn,
+			addr,
+			response,
 		)
 	}
 	channel := string(packet.Payload)
@@ -179,14 +207,19 @@ func HandleJoinChannelPacket(
 	}
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannelAck,
-		SessionID: session.ID,
+		SessionID: packet.SessionID,
 		RequestID: packet.RequestID,
 		Payload:   []byte(channel),
 	}
+	cache.Put(
+		packet.SessionID,
+		packet.RequestID,
+		ack,
+	)
 	return SendToSession(conn, session, ack)
 }
 
-func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr *net.UDPAddr) error {
+func HandlePacket(conn *net.UDPConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
 	switch packet.Type {
 	case protocol.PacketVoice:
 		return HandleVoicePacket(conn, hub, packet, addr)
@@ -197,7 +230,7 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, packet protocol.VoicePacket, addr
 	case protocol.PacketDisconnect:
 		return HandleDisconnectPocket(hub, packet, addr)
 	case protocol.PacketJoinChannel:
-		return HandleJoinChannelPacket(conn, hub, packet, addr)
+		return HandleJoinChannelPacket(conn, hub, cache, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}
@@ -220,7 +253,7 @@ func FindRecipients(hub *Hub, packet protocol.VoicePacket) ([]*Session, error) {
 	return hub.Recipients(senderSession.Channel, senderSession.ID), nil
 }
 
-func ServeUDP(conn *net.UDPConn, hub *Hub) error {
+func ServeUDP(conn *net.UDPConn, hub *Hub, cache *RequestCache) error {
 	for {
 		packet, addr, err := udp.ReadVoicePacket(conn)
 		if err != nil {
@@ -234,7 +267,7 @@ func ServeUDP(conn *net.UDPConn, hub *Hub) error {
 		//	packet.Sequence,
 		//	len(packet.Payload),
 		//)
-		if err := HandlePacket(conn, hub, packet, addr); err != nil {
+		if err := HandlePacket(conn, hub, cache, packet, addr); err != nil {
 			log.Printf("cannot handle packet: %v", err)
 			continue
 		}

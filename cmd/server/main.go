@@ -19,6 +19,7 @@ func main() {
 	log.Println("voice server listening on :9000")
 
 	hub := voice.NewHub()
+	cache := voice.NewRequestCache()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -34,7 +35,7 @@ func main() {
 		}
 	}()
 
-	if err := voice.ServeUDP(conn, hub); err != nil {
+	if err := voice.ServeUDP(conn, hub, cache); err != nil {
 		log.Fatalf("serve UDP: %v", err)
 	}
 }

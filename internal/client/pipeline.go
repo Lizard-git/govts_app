@@ -551,29 +551,35 @@ func DoRequest(
 	packet.SessionID = state.SessionID()
 	packet.RequestID = requestID
 
-	respomseCh := state.RegisterRequest(requestID)
+	responseCh := state.RegisterRequest(requestID)
+	defer state.CancelRequest(requestID)
 
-	if err := udp.SendPacket(conn, packet); err != nil {
-		state.CancelRequest(requestID)
-		return ControlResponse{}, fmt.Errorf("failed to send request %d: %v", requestID, err)
-	}
+	const attempts = 3
 
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case response := <-respomseCh:
-		if response.Type == protocol.PacketError {
-			return ControlResponse{}, fmt.Errorf("server returned error: %v", string(response.Payload))
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := udp.SendPacket(conn, packet); err != nil {
+			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
 		}
-		return response, nil
 
-	case <-timer.C:
-		state.CancelRequest(requestID)
-		return ControlResponse{}, fmt.Errorf("server timed out, request %d", requestID)
+		timer := time.NewTimer(timeout)
 
-	case <-ctx.Done():
-		state.CancelRequest(requestID)
-		return ControlResponse{}, ctx.Err()
+		select {
+		case response := <-responseCh:
+			timer.Stop()
+			if response.Type == protocol.PacketError {
+				return ControlResponse{}, fmt.Errorf("server error: %s", string(response.Payload))
+			}
+			return response, nil
+
+		case <-timer.C:
+			if attempt == attempts {
+				return ControlResponse{}, fmt.Errorf("request %d timed out after %d attempts", requestID, attempts)
+			}
+
+		case <-ctx.Done():
+			timer.Stop()
+			return ControlResponse{}, ctx.Err()
+		}
 	}
+	return ControlResponse{}, fmt.Errorf("request %d failed", requestID)
 }
