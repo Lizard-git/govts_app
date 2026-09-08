@@ -2,6 +2,7 @@ package voice
 
 import (
 	"bytes"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ const (
 type requestKey struct {
 	SessionID uint64
 	RequestID uint32
+	Endpoint  netip.AddrPort
 }
 
 type requestCacheEntry struct {
@@ -67,13 +69,26 @@ func (c *RequestCache) Get(
 	sessionID uint64,
 	requestID uint32,
 ) (protocol.VoicePacket, bool) {
+	return c.get(requestKey{
+		SessionID: sessionID,
+		RequestID: requestID,
+	})
+}
+
+func (c *RequestCache) GetHandshake(
+	endpoint netip.AddrPort,
+	requestID uint32,
+) (protocol.VoicePacket, bool) {
+	return c.get(requestKey{
+		RequestID: requestID,
+		Endpoint:  endpoint,
+	})
+}
+
+func (c *RequestCache) get(key requestKey) (protocol.VoicePacket, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := requestKey{
-		SessionID: sessionID,
-		RequestID: requestID,
-	}
 	entry, ok := c.responses[key]
 	if !ok {
 		return protocol.VoicePacket{}, false
@@ -91,16 +106,39 @@ func (c *RequestCache) Put(
 	requestID uint32,
 	response protocol.VoicePacket,
 ) {
+	c.put(
+		requestKey{
+			SessionID: sessionID,
+			RequestID: requestID,
+		},
+		response,
+	)
+}
+
+func (c *RequestCache) PutHandshake(
+	endpoint netip.AddrPort,
+	requestID uint32,
+	response protocol.VoicePacket,
+) {
+	c.put(
+		requestKey{
+			RequestID: requestID,
+			Endpoint:  endpoint,
+		},
+		response,
+	)
+}
+
+func (c *RequestCache) put(
+	key requestKey,
+	response protocol.VoicePacket,
+) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	now := c.now()
 	c.removeExpiredLocked(now)
 
-	key := requestKey{
-		SessionID: sessionID,
-		RequestID: requestID,
-	}
 	if _, exists := c.responses[key]; !exists && len(c.responses) >= c.maxEntries {
 		c.removeOldestLocked()
 	}

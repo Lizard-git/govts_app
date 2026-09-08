@@ -51,14 +51,39 @@ func UpdateSessionAddr(
 func HandleHelloPacket(
 	conn *net.UDPConn,
 	hub *Hub,
+	cache *RequestCache,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,
 ) error {
+	if addr == nil {
+		return fmt.Errorf("client UDP address is required")
+	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, 0, 0, "handshake request ID is required")
+	}
+
+	endpoint := addr.AddrPort()
+	if response, ok := cache.GetHandshake(endpoint, packet.RequestID); ok {
+		return udp.WriteVoicePacket(conn, addr, response)
+	}
+
 	if len(packet.Payload) == 0 {
-		return fmt.Errorf("client name is required")
+		return cacheAndSendHandshakeError(
+			conn,
+			cache,
+			packet.RequestID,
+			addr,
+			"client name is required",
+		)
 	}
 	if len(packet.Payload) > 64 {
-		return fmt.Errorf("client name too long: %d bytes", len(packet.Payload))
+		return cacheAndSendHandshakeError(
+			conn,
+			cache,
+			packet.RequestID,
+			addr,
+			fmt.Sprintf("client name too long: %d bytes", len(packet.Payload)),
+		)
 	}
 
 	name := string(packet.Payload)
@@ -67,7 +92,9 @@ func HandleHelloPacket(
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketHelloAck,
 		SessionID: session.ID,
+		RequestID: packet.RequestID,
 	}
+	cache.PutHandshake(endpoint, packet.RequestID, ack)
 	if err := SendToSession(conn, session, ack); err != nil {
 		return err
 	}
@@ -80,6 +107,18 @@ func HandleHelloPacket(
 	)
 
 	return nil
+}
+
+func cacheAndSendHandshakeError(
+	conn *net.UDPConn,
+	cache *RequestCache,
+	requestID uint32,
+	addr *net.UDPAddr,
+	message string,
+) error {
+	response := protocol.NewErrorPacket(0, requestID, message)
+	cache.PutHandshake(addr.AddrPort(), requestID, response)
+	return udp.WriteVoicePacket(conn, addr, response)
 }
 
 func HandleVoicePacket(
@@ -226,7 +265,7 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, cache *RequestCache, packet proto
 	case protocol.PacketVoice:
 		return HandleVoicePacket(conn, hub, packet, addr)
 	case protocol.PacketHello:
-		return HandleHelloPacket(conn, hub, packet, addr)
+		return HandleHelloPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(hub, packet, addr)
 	case protocol.PacketDisconnect:

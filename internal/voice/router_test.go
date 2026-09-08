@@ -173,6 +173,66 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	}
 }
 
+func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
+	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+
+	clientConn, err := net.DialUDP(
+		"udp4",
+		nil,
+		serverConn.LocalAddr().(*net.UDPAddr),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	hub := NewHub()
+	cache := NewRequestCache()
+	hello := protocol.VoicePacket{
+		Type:      protocol.PacketHello,
+		RequestID: 17,
+		Payload:   []byte("alice"),
+	}
+
+	if err := HandleHelloPacket(serverConn, hub, cache, hello, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	firstResponse := receiveTestPacket(t, clientConn)
+
+	if err := HandleHelloPacket(serverConn, hub, cache, hello, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	secondResponse := receiveTestPacket(t, clientConn)
+
+	if hub.Count() != 1 {
+		t.Fatalf("Hub.Count() = %d, want 1", hub.Count())
+	}
+	if firstResponse.SessionID == 0 {
+		t.Fatal("first response returned zero session ID")
+	}
+	if secondResponse.SessionID != firstResponse.SessionID {
+		t.Fatalf(
+			"duplicate hello returned session %d, want %d",
+			secondResponse.SessionID,
+			firstResponse.SessionID,
+		)
+	}
+	if secondResponse.RequestID != hello.RequestID {
+		t.Fatalf(
+			"duplicate hello response RequestID = %d, want %d",
+			secondResponse.RequestID,
+			hello.RequestID,
+		)
+	}
+}
+
 func receiveTestPacket(t *testing.T, conn *net.UDPConn) protocol.VoicePacket {
 	t.Helper()
 

@@ -3,6 +3,8 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +23,12 @@ import (
 
 const frameDuration = 20 * time.Millisecond
 
-const joinRequestTimeout = 3 * time.Second
+const (
+	handshakeRequestTimeout = 3 * time.Second
+	joinRequestTimeout      = 3 * time.Second
+	requestAttempts         = 3
+	maxClientNameBytes      = 64
+)
 
 type State struct {
 	mu sync.RWMutex
@@ -379,44 +386,130 @@ func RecordLoop(
 }
 
 func PerformHandshake(
+	ctx context.Context,
 	conn *net.UDPConn,
 	name string,
 ) (uint64, error) {
-	hello := protocol.VoicePacket{
-		Type:      protocol.PacketHello,
-		SessionID: 0,
-		Payload:   []byte(name),
+	if len(name) == 0 {
+		return 0, errors.New("client name is required")
+	}
+	if len([]byte(name)) > maxClientNameBytes {
+		return 0, fmt.Errorf(
+			"client name too long: %d bytes",
+			len([]byte(name)),
+		)
 	}
 
-	if err := conn.SetReadDeadline(
-		time.Now().Add(3 * time.Second),
-	); err != nil {
-		return 0, err
+	requestID, err := newHandshakeRequestID()
+	if err != nil {
+		return 0, fmt.Errorf("create handshake request ID: %w", err)
+	}
+
+	return performHandshakeWithRequestID(
+		ctx,
+		conn,
+		name,
+		requestID,
+		handshakeRequestTimeout,
+	)
+}
+
+func newHandshakeRequestID() (uint32, error) {
+	for {
+		var data [4]byte
+		if _, err := rand.Read(data[:]); err != nil {
+			return 0, err
+		}
+
+		requestID := binary.BigEndian.Uint32(data[:])
+		if requestID != 0 {
+			return requestID, nil
+		}
+	}
+}
+
+func performHandshakeWithRequestID(
+	ctx context.Context,
+	conn *net.UDPConn,
+	name string,
+	requestID uint32,
+	timeout time.Duration,
+) (uint64, error) {
+	if requestID == 0 {
+		return 0, errors.New("handshake request ID must not be zero")
+	}
+	if timeout <= 0 {
+		return 0, errors.New("handshake timeout must be positive")
+	}
+
+	hello := protocol.VoicePacket{
+		Type:      protocol.PacketHello,
+		RequestID: requestID,
+		Payload:   []byte(name),
 	}
 
 	defer conn.SetReadDeadline(time.Time{})
 
-	if err := udp.SendPacket(conn, hello); err != nil {
-		return 0, err
+	for attempt := 1; attempt <= requestAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+
+		deadline := time.Now().Add(timeout)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+			deadline = contextDeadline
+		}
+		if err := conn.SetReadDeadline(deadline); err != nil {
+			return 0, err
+		}
+
+		if err := udp.SendPacket(conn, hello); err != nil {
+			return 0, fmt.Errorf("send handshake request %d: %w", requestID, err)
+		}
+
+		ack, err := udp.ReceivePacket(conn)
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return 0, ctxErr
+				}
+				if attempt < requestAttempts {
+					continue
+				}
+				return 0, fmt.Errorf(
+					"handshake request %d timed out after %d attempts",
+					requestID,
+					requestAttempts,
+				)
+			}
+			return 0, err
+		}
+
+		if ack.RequestID != requestID {
+			return 0, fmt.Errorf(
+				"unexpected handshake request ID: got %d, want %d",
+				ack.RequestID,
+				requestID,
+			)
+		}
+		if ack.Type == protocol.PacketError {
+			return 0, fmt.Errorf("server error: %s", string(ack.Payload))
+		}
+		if ack.Type != protocol.PacketHelloAck {
+			return 0, fmt.Errorf(
+				"expected hello ack, got packet type %d",
+				ack.Type,
+			)
+		}
+		if ack.SessionID == 0 {
+			return 0, errors.New("server returned invalid session ID")
+		}
+
+		return ack.SessionID, nil
 	}
 
-	ack, err := udp.ReceivePacket(conn)
-	if err != nil {
-		return 0, err
-	}
-
-	if ack.Type != protocol.PacketHelloAck {
-		return 0, fmt.Errorf(
-			"expected hello ack, got packet type %d",
-			ack.Type,
-		)
-	}
-
-	if ack.SessionID == 0 {
-		return 0, fmt.Errorf("server returned invalid session ID")
-	}
-
-	return ack.SessionID, nil
+	return 0, errors.New("handshake failed")
 }
 
 func HeartbeatLoop(
@@ -577,9 +670,7 @@ func DoRequest(
 	responseCh := state.RegisterRequest(requestID)
 	defer state.CancelRequest(requestID)
 
-	const attempts = 3
-
-	for attempt := 1; attempt <= attempts; attempt++ {
+	for attempt := 1; attempt <= requestAttempts; attempt++ {
 		if err := udp.SendPacket(conn, packet); err != nil {
 			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
 		}
@@ -595,8 +686,8 @@ func DoRequest(
 			return response, nil
 
 		case <-timer.C:
-			if attempt == attempts {
-				return ControlResponse{}, fmt.Errorf("request %d timed out after %d attempts", requestID, attempts)
+			if attempt == requestAttempts {
+				return ControlResponse{}, fmt.Errorf("request %d timed out after %d attempts", requestID, requestAttempts)
 			}
 
 		case <-ctx.Done():

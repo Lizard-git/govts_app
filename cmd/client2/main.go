@@ -31,15 +31,19 @@ func main() {
 		log.Fatal("client name required")
 	}
 
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
 
-	sessionID, err := voiceclient.PerformHandshake(conn, *name)
+	sessionID, err := voiceclient.PerformHandshake(signalCtx, conn, *name)
 	if err != nil {
-		log.Fatalf("handshake failed: %v", err)
+		log.Printf("handshake failed: %v", err)
+		return
 	}
 
 	state := voiceclient.NewState(
@@ -50,9 +54,6 @@ func main() {
 
 	const loopCount = 8
 	errCh := make(chan error, loopCount)
-
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()

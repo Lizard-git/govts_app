@@ -92,6 +92,118 @@ func TestJoinChannelRejectsEmptyName(t *testing.T) {
 	}
 }
 
+func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
+	serverConn, clientConn := newHandshakeTestConnections(t)
+	serverErrCh := make(chan error, 1)
+
+	go func() {
+		if err := serverConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			serverErrCh <- err
+			return
+		}
+		first, _, err := udp.ReadVoicePacket(serverConn)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		second, addr, err := udp.ReadVoicePacket(serverConn)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		if second.RequestID != first.RequestID {
+			serverErrCh <- fmt.Errorf(
+				"retry RequestID = %d, want %d",
+				second.RequestID,
+				first.RequestID,
+			)
+			return
+		}
+		serverErrCh <- udp.WriteVoicePacket(serverConn, addr, protocol.VoicePacket{
+			Type:      protocol.PacketHelloAck,
+			SessionID: 99,
+			RequestID: second.RequestID,
+		})
+	}()
+
+	sessionID, err := performHandshakeWithRequestID(
+		context.Background(),
+		clientConn,
+		"alice",
+		17,
+		20*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serverErr := <-serverErrCh; serverErr != nil {
+		t.Fatal(serverErr)
+	}
+	if sessionID != 99 {
+		t.Fatalf("session ID = %d, want 99", sessionID)
+	}
+}
+
+func TestPerformHandshakeFinalTimeout(t *testing.T) {
+	serverConn, clientConn := newHandshakeTestConnections(t)
+	serverErrCh := make(chan error, 1)
+
+	go func() {
+		if err := serverConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			serverErrCh <- err
+			return
+		}
+		for range requestAttempts {
+			if _, _, err := udp.ReadVoicePacket(serverConn); err != nil {
+				serverErrCh <- err
+				return
+			}
+		}
+		serverErrCh <- nil
+	}()
+
+	_, err := performHandshakeWithRequestID(
+		context.Background(),
+		clientConn,
+		"alice",
+		17,
+		10*time.Millisecond,
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out after 3 attempts") {
+		t.Fatalf("performHandshakeWithRequestID() error = %v, want final timeout", err)
+	}
+	if serverErr := <-serverErrCh; serverErr != nil {
+		t.Fatal(serverErr)
+	}
+}
+
+func newHandshakeTestConnections(t *testing.T) (*net.UDPConn, *net.UDPConn) {
+	t.Helper()
+
+	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientConn, err := net.DialUDP(
+		"udp4",
+		nil,
+		serverConn.LocalAddr().(*net.UDPAddr),
+	)
+	if err != nil {
+		_ = serverConn.Close()
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	return serverConn, clientConn
+}
+
 func TestJoinChannelSuccess(t *testing.T) {
 	peer := newJoinTestPeer(t)
 	serverErrCh := make(chan error, 1)

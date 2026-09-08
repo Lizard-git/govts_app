@@ -45,8 +45,7 @@ microphone
 
 - один Opus decoder пока используется для всех удалённых пользователей;
 - нет jitter buffer, mixer и обработки потерь voice-пакетов;
-- handshake не имеет retry/deduplication;
-- `RequestCache` не имеет TTL и ограничения размера;
+- handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
 - нет аутентификации, шифрования и reconnect;
 - корректное завершение всех goroutine ещё требует доработки.
@@ -126,7 +125,8 @@ offset   field       type     size
 ```
 
 `Sequence` задаёт порядок voice-пакетов. `RequestID` связывает control request
-с response и остаётся одинаковым для всех retry одной логической операции.
+с response и остаётся одинаковым для всех retry одной логической операции. До
+создания session handshake использует ключ `(IP:port, RequestID)`.
 Transport принимает максимум 1217 байт: 17 байт заголовка и до 1200 байт
 payload. Буфер чтения имеет дополнительный байт, позволяющий обнаружить и
 отклонить слишком большой UDP datagram.
@@ -188,8 +188,8 @@ payload. Буфер чтения имеет дополнительный бай�
 - [x] Проверять размер при кодировании, чтении и декодировании пакета.
 - [x] Обнаруживать усечённые UDP datagram вместо передачи повреждённого payload
   в Opus decoder.
-- [ ] Добавить `RequestID` или отдельный nonce в handshake.
-- [ ] Сделать повторный `Hello` идемпотентным, чтобы потерянный `HelloAck` не
+- [x] Добавить `RequestID` или отдельный nonce в handshake.
+- [x] Сделать повторный `Hello` идемпотентным, чтобы потерянный `HelloAck` не
   создавал новую session.
 - [x] Добавить TTL и максимальный размер `RequestCache`.
 - [x] Удалять cache entries при disconnect и session timeout.
