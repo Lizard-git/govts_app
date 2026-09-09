@@ -30,6 +30,7 @@ func runSession(
 	audioCh := make(chan audio.Frame)
 	pcmCh := make(chan audio.PCMFrame)
 	encodedInCh := make(chan audio.MediaFrame)
+	orderedInCh := make(chan audio.MediaFrame)
 	controlCh := make(chan protocol.VoicePacket, 16)
 	pcmOutCh := make(chan audio.MediaPCMFrame)
 
@@ -64,10 +65,18 @@ func runSession(
 	// Receive and control loops must be running before JoinChannel: DoRequest
 	// receives its acknowledgement through this part of the pipeline.
 	supervisor.Go(func(ctx context.Context) error {
-		// UDP → receiveLoop → encodedInCh → decodeLoop → pcmOutCh
+		// UDP → receiveLoop → encodedInCh → jitterLoop → orderedInCh
 		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) {
 			return audio.NewOpusDecoder(codecConfig)
-		}, encodedInCh, pcmOutCh)
+		}, orderedInCh, pcmOutCh)
+	})
+	supervisor.Go(func(ctx context.Context) error {
+		return voiceclient.JitterLoop(
+			ctx,
+			encodedInCh,
+			orderedInCh,
+			voiceclient.DefaultJitterDepth,
+		)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.HeartbeatLoop(ctx, conn, sessionID)
