@@ -10,7 +10,24 @@ type Frame struct {
 	Duration time.Duration
 }
 
+// MediaFrame is an encoded frame received from a remote audio stream.
+// SenderID and Sequence identify the stream and the frame order within it.
+type MediaFrame struct {
+	SenderID uint64
+	Sequence uint32
+	Data     []byte
+	Duration time.Duration
+}
+
 type PCMFrame struct {
+	Samples  []int16
+	Duration time.Duration
+}
+
+// MediaPCMFrame is decoded PCM that still belongs to a remote audio stream.
+type MediaPCMFrame struct {
+	SenderID uint64
+	Sequence uint32
 	Samples  []int16
 	Duration time.Duration
 }

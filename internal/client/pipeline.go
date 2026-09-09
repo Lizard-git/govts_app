@@ -197,7 +197,7 @@ const receivePollInterval = 500 * time.Millisecond
 func ReceiveLoop(
 	ctx context.Context,
 	conn *net.UDPConn,
-	encodedCh chan<- audio.Frame,
+	encodedCh chan<- audio.MediaFrame,
 	controlCh chan<- protocol.VoicePacket,
 ) error {
 	defer close(encodedCh)
@@ -226,7 +226,9 @@ func ReceiveLoop(
 
 		switch packet.Type {
 		case protocol.PacketVoice:
-			frame := audio.Frame{
+			frame := audio.MediaFrame{
+				SenderID: packet.SessionID,
+				Sequence: packet.Sequence,
 				Data:     packet.Payload,
 				Duration: frameDuration,
 			}
@@ -295,40 +297,7 @@ func ControlLoop(
 	}
 }
 
-func DecodeLoop(
-	ctx context.Context,
-	decoder audio.Decoder,
-	encodedCh <-chan audio.Frame,
-	pcmOutCh chan<- audio.PCMFrame,
-) error {
-	defer close(pcmOutCh)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case frame, ok := <-encodedCh:
-			if !ok {
-				return nil
-			}
-			samples, err := decoder.Decode(frame.Data)
-			if err != nil {
-				return err
-			}
-			pcmFrame := audio.PCMFrame{
-				Samples:  samples,
-				Duration: frame.Duration,
-			}
-			select {
-			case pcmOutCh <- pcmFrame:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-}
-
-func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.PCMFrame) error {
+func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.MediaPCMFrame) error {
 	for {
 		select {
 		case <-ctx.Done():

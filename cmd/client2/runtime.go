@@ -29,9 +29,9 @@ func runSession(
 
 	audioCh := make(chan audio.Frame)
 	pcmCh := make(chan audio.PCMFrame)
-	encodedInCh := make(chan audio.Frame)
+	encodedInCh := make(chan audio.MediaFrame)
 	controlCh := make(chan protocol.VoicePacket, 16)
-	pcmOutCh := make(chan audio.PCMFrame)
+	pcmOutCh := make(chan audio.MediaPCMFrame)
 
 	codecConfig := audio.CodecConfig{
 		SampleRate:      sampleRate,
@@ -42,11 +42,6 @@ func runSession(
 	encoder, err := audio.NewOpusEncoder(codecConfig)
 	if err != nil {
 		return fmt.Errorf("create Opus encoder: %w", err)
-	}
-
-	decoder, err := audio.NewOpusDecoder(codecConfig)
-	if err != nil {
-		return fmt.Errorf("create Opus decoder: %w", err)
 	}
 
 	player, err := audio.NewOtoPlayer(codecConfig)
@@ -70,7 +65,9 @@ func runSession(
 	// receives its acknowledgement through this part of the pipeline.
 	supervisor.Go(func(ctx context.Context) error {
 		// UDP → receiveLoop → encodedInCh → decodeLoop → pcmOutCh
-		return voiceclient.DecodeLoop(ctx, decoder, encodedInCh, pcmOutCh)
+		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) {
+			return audio.NewOpusDecoder(codecConfig)
+		}, encodedInCh, pcmOutCh)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.HeartbeatLoop(ctx, conn, sessionID)

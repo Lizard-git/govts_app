@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -42,7 +43,7 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	state := NewState(42, "alice", "")
-	encodedCh := make(chan audio.Frame, 1)
+	encodedCh := make(chan audio.MediaFrame, 1)
 	controlCh := make(chan protocol.VoicePacket, 4)
 
 	go func() {
@@ -202,6 +203,54 @@ func newHandshakeTestConnections(t *testing.T) (*net.UDPConn, *net.UDPConn) {
 		_ = serverConn.Close()
 	})
 	return serverConn, clientConn
+}
+
+func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
+	serverConn, clientConn := newHandshakeTestConnections(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	encodedCh := make(chan audio.MediaFrame, 1)
+	controlCh := make(chan protocol.VoicePacket, 1)
+	resultCh := make(chan error, 1)
+
+	go func() {
+		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh)
+	}()
+
+	want := protocol.VoicePacket{
+		Type:      protocol.PacketVoice,
+		SessionID: 73,
+		Sequence:  19,
+		Payload:   []byte("encoded opus frame"),
+	}
+	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	if err := udp.WriteVoicePacket(serverConn, clientAddr, want); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-encodedCh:
+		if got.SenderID != want.SessionID {
+			t.Errorf("MediaFrame.SenderID = %d, want %d", got.SenderID, want.SessionID)
+		}
+		if got.Sequence != want.Sequence {
+			t.Errorf("MediaFrame.Sequence = %d, want %d", got.Sequence, want.Sequence)
+		}
+		if string(got.Data) != string(want.Payload) {
+			t.Errorf("MediaFrame.Data = %q, want %q", got.Data, want.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReceiveLoop() did not emit media frame")
+	}
+
+	cancel()
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReceiveLoop() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReceiveLoop() did not stop after cancellation")
+	}
 }
 
 func TestJoinChannelSuccess(t *testing.T) {
