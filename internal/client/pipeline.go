@@ -297,7 +297,7 @@ func ControlLoop(
 	}
 }
 
-func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.MediaPCMFrame) error {
+func PlaybackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.PCMFrame) error {
 	for {
 		select {
 		case <-ctx.Done():

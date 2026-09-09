@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
@@ -32,7 +33,8 @@ func runSession(
 	encodedInCh := make(chan audio.MediaFrame)
 	orderedInCh := make(chan audio.MediaFrame)
 	controlCh := make(chan protocol.VoicePacket, 16)
-	pcmOutCh := make(chan audio.MediaPCMFrame)
+	decodedCh := make(chan audio.MediaPCMFrame)
+	pcmOutCh := make(chan audio.PCMFrame)
 
 	codecConfig := audio.CodecConfig{
 		SampleRate:      sampleRate,
@@ -68,7 +70,7 @@ func runSession(
 		// UDP → receiveLoop → encodedInCh → jitterLoop → orderedInCh
 		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) {
 			return audio.NewOpusDecoder(codecConfig)
-		}, orderedInCh, pcmOutCh)
+		}, orderedInCh, decodedCh)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.JitterLoop(
@@ -83,6 +85,9 @@ func runSession(
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh)
+	})
+	supervisor.Go(func(ctx context.Context) error {
+		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
