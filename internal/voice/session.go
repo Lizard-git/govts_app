@@ -12,7 +12,3 @@ type Session struct {
 	Addr     *net.UDPAddr
 	LastSeen time.Time
 }
-
-func (s *Session) JoinChannel(name string) {
-	s.Channel = name
-}

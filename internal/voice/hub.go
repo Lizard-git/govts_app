@@ -30,22 +30,30 @@ func (h *Hub) Add(s *Session) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.sessions[s.ID] = s
+	h.sessions[s.ID] = cloneSession(s)
 }
 
-func (h *Hub) Remove(id uint64) {
+func (h *Hub) Remove(id uint64) (Session, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	session, ok := h.sessions[id]
+	if !ok {
+		return Session{}, false
+	}
 	delete(h.sessions, id)
+	return *cloneSession(session), true
 }
 
-func (h *Hub) Get(id uint64) (*Session, bool) {
+func (h *Hub) Get(id uint64) (Session, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	s, ok := h.sessions[id]
-	return s, ok
+	if !ok {
+		return Session{}, false
+	}
+	return *cloneSession(s), true
 }
 
 func (h *Hub) JoinChannel(id uint64, channel string) error {
@@ -56,7 +64,7 @@ func (h *Hub) JoinChannel(id uint64, channel string) error {
 	if !ok {
 		return ErrSessionNotFound
 	}
-	session.JoinChannel(channel)
+	session.Channel = channel
 	fmt.Printf("session %d joined channel %s\n", id, channel)
 	return nil
 }
@@ -93,33 +101,54 @@ func (h *Hub) Members(channel string) []string {
 	return members
 }
 
-func (h *Hub) SessionsInChannel(channel string) []*Session {
+func (h *Hub) SessionsInChannel(channel string) []Session {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	sessions := make([]*Session, 0)
+	sessions := make([]Session, 0)
 	for _, session := range h.sessions {
 		if session.Channel == channel {
-			sessions = append(sessions, session)
+			sessions = append(sessions, *cloneSession(session))
 		}
 	}
 	return sessions
 }
 
-func (h *Hub) Recipients(channel string, senderID uint64) []*Session {
+func (h *Hub) Recipients(channel string, senderID uint64) []Session {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	sessions := make([]*Session, 0)
+	sessions := make([]Session, 0)
 	for _, session := range h.sessions {
 		if session.Channel == channel && session.ID != senderID {
-			sessions = append(sessions, session)
+			sessions = append(sessions, *cloneSession(session))
 		}
 	}
 	return sessions
 }
 
-func (h *Hub) CreateSession(name string, addr *net.UDPAddr) *Session {
+func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	sender, ok := h.sessions[senderID]
+	if !ok {
+		return nil, fmt.Errorf("session %d not found", senderID)
+	}
+	if sender.Channel == "" {
+		return nil, fmt.Errorf("session %d: %w", senderID, ErrSessionNotInChannel)
+	}
+
+	recipients := make([]Session, 0)
+	for _, session := range h.sessions {
+		if session.Channel == sender.Channel && session.ID != senderID {
+			recipients = append(recipients, *cloneSession(session))
+		}
+	}
+	return recipients, nil
+}
+
+func (h *Hub) CreateSession(name string, addr *net.UDPAddr) Session {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -128,14 +157,18 @@ func (h *Hub) CreateSession(name string, addr *net.UDPAddr) *Session {
 	session := &Session{
 		ID:       id,
 		Name:     name,
-		Addr:     addr,
+		Addr:     cloneUDPAddr(addr),
 		LastSeen: time.Now(),
 	}
 	h.sessions[id] = session
-	return session
+	return *cloneSession(session)
 }
 
 func (h *Hub) Touch(sessionID uint64) error {
+	return h.touchAt(sessionID, time.Now())
+}
+
+func (h *Hub) touchAt(sessionID uint64, now time.Time) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -144,21 +177,54 @@ func (h *Hub) Touch(sessionID uint64) error {
 		return fmt.Errorf("session %d not found", sessionID)
 	}
 
-	session.LastSeen = time.Now()
+	session.LastSeen = now
 	return nil
 }
 
-func (h *Hub) RemoveInactive(now time.Time, timeout time.Duration) []*Session {
+func (h *Hub) UpdateAddr(sessionID uint64, addr *net.UDPAddr) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var removed []*Session
+	session, ok := h.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session %d not found", sessionID)
+	}
+
+	session.Addr = cloneUDPAddr(addr)
+	return nil
+}
+
+func (h *Hub) RemoveInactive(now time.Time, timeout time.Duration) []Session {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var removed []Session
 	for id, session := range h.sessions {
 		if now.Sub(session.LastSeen) < timeout {
 			continue
 		}
 		delete(h.sessions, id)
-		removed = append(removed, session)
+		removed = append(removed, *cloneSession(session))
 	}
 	return removed
+}
+
+func cloneSession(session *Session) *Session {
+	if session == nil {
+		return nil
+	}
+
+	clone := *session
+	clone.Addr = cloneUDPAddr(session.Addr)
+	return &clone
+}
+
+func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {
+	if addr == nil {
+		return nil
+	}
+
+	clone := *addr
+	clone.IP = append(net.IP(nil), addr.IP...)
+	return &clone
 }

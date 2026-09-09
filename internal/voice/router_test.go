@@ -163,7 +163,11 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	}
 	secondResponse := receiveTestPacket(t, clientConn)
 
-	if got := session.Channel; got != "music" {
+	updatedSession, ok := hub.Get(session.ID)
+	if !ok {
+		t.Fatalf("session %d not found", session.ID)
+	}
+	if got := updatedSession.Channel; got != "music" {
 		t.Fatalf("session channel = %q, want original channel %q", got, "music")
 	}
 	if got := string(firstResponse.Payload); got != "music" {

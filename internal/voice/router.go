@@ -12,7 +12,7 @@ import (
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
-func SendToSession(conn *net.UDPConn, session *Session, packet protocol.VoicePacket) error {
+func SendToSession(conn *net.UDPConn, session Session, packet protocol.VoicePacket) error {
 	addr := session.Addr
 	if addr == nil {
 		return fmt.Errorf("session %d has no UDP address", session.ID)
@@ -20,7 +20,7 @@ func SendToSession(conn *net.UDPConn, session *Session, packet protocol.VoicePac
 	return udp.WriteVoicePacket(conn, addr, packet)
 }
 
-func SendToSessions(conn *net.UDPConn, sessions []*Session, packet protocol.VoicePacket) error {
+func SendToSessions(conn *net.UDPConn, sessions []Session, packet protocol.VoicePacket) error {
 	for _, session := range sessions {
 		if err := SendToSession(conn, session, packet); err != nil {
 			return err
@@ -42,13 +42,7 @@ func UpdateSessionAddr(
 	sessionID uint64,
 	addr *net.UDPAddr,
 ) error {
-	session, ok := hub.Get(sessionID)
-	if !ok {
-		return fmt.Errorf("session %d not found", sessionID)
-	}
-
-	session.Addr = addr
-	return nil
+	return hub.UpdateAddr(sessionID, addr)
 }
 
 func HandleHelloPacket(
@@ -139,11 +133,16 @@ func HandleVoicePacket(
 }
 
 func ValidateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
+	if addr == nil {
+		return errors.New("client UDP address is required")
+	}
+
 	session, ok := hub.Get(sessionID)
 	if !ok {
 		return fmt.Errorf("session %d not found", sessionID)
 	}
-	if !session.Addr.IP.Equal(addr.IP) ||
+	if session.Addr == nil ||
+		!session.Addr.IP.Equal(addr.IP) ||
 		session.Addr.Port != addr.Port {
 		return fmt.Errorf("invalid session address: ip=%s port=%d", addr.IP, addr.Port)
 	}
@@ -179,10 +178,12 @@ func HandleDisconnectPacket(
 	if !ok {
 		return fmt.Errorf("session %d not found", packet.SessionID)
 	}
-	hub.Remove(session.ID)
+	removed, ok := hub.Remove(session.ID)
+	if !ok {
+		return fmt.Errorf("session %d not found", packet.SessionID)
+	}
 	cache.RemoveSession(session.ID)
-	log.Printf("client disconnected: id=%d, name=%s",
-		packet.SessionID, session.Name)
+	log.Printf("client disconnected: id=%d, name=%s", packet.SessionID, removed.Name)
 	return nil
 }
 
@@ -280,28 +281,8 @@ func HandlePacket(conn *net.UDPConn, hub *Hub, cache *RequestCache, packet proto
 	}
 }
 
-func FindSender(hub *Hub, packet protocol.VoicePacket) (*Session, error) {
-	id := packet.SessionID
-	session, ok := hub.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("session %d not found", packet.SessionID)
-	}
-	return session, nil
-}
-
-func FindRecipients(hub *Hub, packet protocol.VoicePacket) ([]*Session, error) {
-	senderSession, err := FindSender(hub, packet)
-	if err != nil {
-		return nil, err
-	}
-	if senderSession.Channel == "" {
-		return nil, fmt.Errorf(
-			"session %d: %w",
-			senderSession.ID,
-			ErrSessionNotInChannel,
-		)
-	}
-	return hub.Recipients(senderSession.Channel, senderSession.ID), nil
+func FindRecipients(hub *Hub, packet protocol.VoicePacket) ([]Session, error) {
+	return hub.RecipientsFor(packet.SessionID)
 }
 
 func ServeUDP(
