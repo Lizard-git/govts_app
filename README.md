@@ -47,8 +47,7 @@ microphone
 - нет jitter buffer, mixer и обработки потерь voice-пакетов;
 - handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
-- нет аутентификации, шифрования и reconnect;
-- корректное завершение всех goroutine ещё требует доработки.
+- нет аутентификации, шифрования и reconnect.
 
 ## Структура проекта
 
@@ -97,6 +96,17 @@ go test ./...
 go vet ./...
 go test -race ./...
 ```
+
+На Windows для `go test -race` нужен GCC с `mingw-w64` runtime 8 или новее.
+Проверить установленный compiler можно так:
+
+```powershell
+gcc --print-file-name libsynchronization.a
+```
+
+Команда должна вывести полный путь к существующему файлу, а не только имя
+`libsynchronization.a`. В текущем окружении используется WinLibs POSIX/UCRT,
+а Go настроен командами `go env -w CC=gcc CXX=g++`.
 
 ## Бинарный UDP-протокол
 
@@ -250,7 +260,7 @@ UDP-пакетов.
 - [x] Хранить изменение адреса, канала и `LastSeen` только за одной границей
   синхронизации.
 - [x] Добавить конкурентные тесты `JoinChannel`, `Touch`, routing и cleanup.
-- [ ] Настроить рабочий Windows toolchain и включить `go test -race ./...` в CI.
+- [x] Настроить рабочий Windows toolchain и включить `go test -race ./...` в CI.
 
 Критерий готовности: race detector проходит при параллельной маршрутизации,
 смене канала и очистке неактивных сессий.
