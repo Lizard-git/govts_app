@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 )
@@ -54,5 +55,44 @@ func TestDecodeLoopKeepsDecoderStatePerSender(t *testing.T) {
 	}
 	if created != 2 {
 		t.Fatalf("created decoders = %d, want 2", created)
+	}
+}
+
+func TestStreamDecodersRemoveInactive(t *testing.T) {
+	now := time.Now()
+	created := 0
+	decoders := newStreamDecoders(func() (audio.Decoder, error) {
+		created++
+		return decoderFunc(func([]byte) ([]int16, error) { return nil, nil }), nil
+	})
+
+	if _, err := decoders.decodeAt(
+		audio.MediaFrame{SenderID: 10},
+		now.Add(-DefaultStreamIdleTimeout),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoders.decodeAt(
+		audio.MediaFrame{SenderID: 20},
+		now.Add(-time.Second),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if removed := decoders.RemoveInactive(now, DefaultStreamIdleTimeout); removed != 1 {
+		t.Fatalf("RemoveInactive() = %d, want 1", removed)
+	}
+	if _, ok := decoders.bySender[10]; ok {
+		t.Fatal("inactive decoder was not removed")
+	}
+	if _, ok := decoders.bySender[20]; !ok {
+		t.Fatal("active decoder was removed")
+	}
+
+	if _, err := decoders.decodeAt(audio.MediaFrame{SenderID: 10}, now); err != nil {
+		t.Fatal(err)
+	}
+	if created != 3 {
+		t.Fatalf("created decoders = %d, want 3 after inactive sender returned", created)
 	}
 }

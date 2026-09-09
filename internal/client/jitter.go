@@ -10,6 +10,11 @@ import (
 
 const DefaultJitterDepth = 3
 
+const (
+	DefaultStreamIdleTimeout = 30 * time.Second
+	streamCleanupInterval    = 5 * time.Second
+)
+
 type jitterBufferStats struct {
 	Lost       uint64
 	Duplicates uint64
@@ -138,39 +143,64 @@ func sequenceBefore(left uint32, right uint32) bool {
 
 type streamJitterBuffers struct {
 	depth    int
-	bySender map[uint64]*jitterBuffer
+	bySender map[uint64]jitterStream
+}
+
+type jitterStream struct {
+	buffer   *jitterBuffer
+	lastSeen time.Time
 }
 
 func newStreamJitterBuffers(depth int) *streamJitterBuffers {
 	return &streamJitterBuffers{
 		depth:    depth,
-		bySender: make(map[uint64]*jitterBuffer),
+		bySender: make(map[uint64]jitterStream),
 	}
 }
 
 func (b *streamJitterBuffers) Push(frame audio.MediaFrame) []audio.MediaFrame {
-	buffer, ok := b.bySender[frame.SenderID]
+	return b.PushAt(frame, time.Now())
+}
+
+func (b *streamJitterBuffers) PushAt(
+	frame audio.MediaFrame,
+	now time.Time,
+) []audio.MediaFrame {
+	stream, ok := b.bySender[frame.SenderID]
 	if !ok {
-		buffer = newJitterBuffer(b.depth)
-		b.bySender[frame.SenderID] = buffer
+		stream.buffer = newJitterBuffer(b.depth)
 	}
-	return buffer.Push(frame)
+	stream.lastSeen = now
+	b.bySender[frame.SenderID] = stream
+	return stream.buffer.Push(frame)
 }
 
 func (b *streamJitterBuffers) Flush() []audio.MediaFrame {
 	var ready []audio.MediaFrame
-	for _, buffer := range b.bySender {
-		ready = append(ready, buffer.Flush()...)
+	for _, stream := range b.bySender {
+		ready = append(ready, stream.buffer.Flush()...)
 	}
 	return ready
 }
 
 func (b *streamJitterBuffers) Tick() []audio.MediaFrame {
 	var ready []audio.MediaFrame
-	for _, buffer := range b.bySender {
-		ready = append(ready, buffer.Tick()...)
+	for _, stream := range b.bySender {
+		ready = append(ready, stream.buffer.Tick()...)
 	}
 	return ready
+}
+
+func (b *streamJitterBuffers) RemoveInactive(now time.Time, timeout time.Duration) int {
+	removed := 0
+	for senderID, stream := range b.bySender {
+		if now.Sub(stream.lastSeen) < timeout {
+			continue
+		}
+		delete(b.bySender, senderID)
+		removed++
+	}
+	return removed
 }
 
 func JitterLoop(
@@ -188,7 +218,8 @@ func JitterLoop(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case now := <-ticker.C:
+			buffers.RemoveInactive(now, DefaultStreamIdleTimeout)
 			if err := sendOrderedFrames(ctx, orderedCh, buffers.Tick()); err != nil {
 				return err
 			}

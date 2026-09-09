@@ -4,6 +4,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 )
@@ -94,6 +95,23 @@ func TestStreamJitterBuffersKeepSendersIndependent(t *testing.T) {
 	}
 	if got := sequences(second); !reflect.DeepEqual(got, []uint32{10, 11}) {
 		t.Fatalf("sender 20 sequences = %v, want [10 11]", got)
+	}
+}
+
+func TestStreamJitterBuffersRemoveInactive(t *testing.T) {
+	now := time.Now()
+	buffers := newStreamJitterBuffers(3)
+	buffers.PushAt(senderFrame(10, 1), now.Add(-DefaultStreamIdleTimeout))
+	buffers.PushAt(senderFrame(20, 1), now.Add(-time.Second))
+
+	if removed := buffers.RemoveInactive(now, DefaultStreamIdleTimeout); removed != 1 {
+		t.Fatalf("RemoveInactive() = %d, want 1", removed)
+	}
+	if _, ok := buffers.bySender[10]; ok {
+		t.Fatal("inactive jitter buffer was not removed")
+	}
+	if _, ok := buffers.bySender[20]; !ok {
+		t.Fatal("active jitter buffer was removed")
 	}
 }
 

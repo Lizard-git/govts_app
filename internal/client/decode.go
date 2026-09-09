@@ -3,29 +3,41 @@ package client
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 )
 
 type DecoderFactory func() (audio.Decoder, error)
 
+type streamDecoder struct {
+	decoder  audio.Decoder
+	lastSeen time.Time
+}
+
 type streamDecoders struct {
 	newDecoder DecoderFactory
-	bySender   map[uint64]audio.Decoder
+	bySender   map[uint64]streamDecoder
 }
 
 func newStreamDecoders(newDecoder DecoderFactory) *streamDecoders {
 	return &streamDecoders{
 		newDecoder: newDecoder,
-		bySender:   make(map[uint64]audio.Decoder),
+		bySender:   make(map[uint64]streamDecoder),
 	}
 }
 
 func (d *streamDecoders) decode(frame audio.MediaFrame) (audio.MediaPCMFrame, error) {
-	decoder, ok := d.bySender[frame.SenderID]
+	return d.decodeAt(frame, time.Now())
+}
+
+func (d *streamDecoders) decodeAt(
+	frame audio.MediaFrame,
+	now time.Time,
+) (audio.MediaPCMFrame, error) {
+	stream, ok := d.bySender[frame.SenderID]
 	if !ok {
-		var err error
-		decoder, err = d.newDecoder()
+		decoder, err := d.newDecoder()
 		if err != nil {
 			return audio.MediaPCMFrame{}, fmt.Errorf(
 				"create decoder for sender %d: %w",
@@ -33,10 +45,12 @@ func (d *streamDecoders) decode(frame audio.MediaFrame) (audio.MediaPCMFrame, er
 				err,
 			)
 		}
-		d.bySender[frame.SenderID] = decoder
+		stream.decoder = decoder
 	}
+	stream.lastSeen = now
+	d.bySender[frame.SenderID] = stream
 
-	samples, err := decoder.Decode(frame.Data)
+	samples, err := stream.decoder.Decode(frame.Data)
 	if err != nil {
 		return audio.MediaPCMFrame{}, fmt.Errorf(
 			"decode frame from sender %d: %w",
@@ -53,6 +67,18 @@ func (d *streamDecoders) decode(frame audio.MediaFrame) (audio.MediaPCMFrame, er
 	}, nil
 }
 
+func (d *streamDecoders) RemoveInactive(now time.Time, timeout time.Duration) int {
+	removed := 0
+	for senderID, stream := range d.bySender {
+		if now.Sub(stream.lastSeen) < timeout {
+			continue
+		}
+		delete(d.bySender, senderID)
+		removed++
+	}
+	return removed
+}
+
 func DecodeLoop(
 	ctx context.Context,
 	newDecoder DecoderFactory,
@@ -61,11 +87,15 @@ func DecodeLoop(
 ) error {
 	defer close(pcmOutCh)
 	decoders := newStreamDecoders(newDecoder)
+	cleanupTicker := time.NewTicker(streamCleanupInterval)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case now := <-cleanupTicker.C:
+			decoders.RemoveInactive(now, DefaultStreamIdleTimeout)
 
 		case frame, ok := <-encodedCh:
 			if !ok {
