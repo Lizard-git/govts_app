@@ -1,0 +1,17 @@
+# IDE settings
+.idea/
+*.iml
+.vscode/
+
+# Go build and test artifacts
+*.exe
+*.test
+*.out
+bin/
+dist/
+coverage/
+
+# Archives and local temporary files
+*.zip
+*.tmp
+*.log

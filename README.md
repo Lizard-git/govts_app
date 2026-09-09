@@ -267,20 +267,37 @@ UDP-пакетов.
 
 ### Этап 6. Декомпозиция кода
 
-Сначала достаточно разделить крупные файлы внутри существующих пакетов:
+Клиентский pipeline разделён внутри существующего пакета по ответственности:
 
 ```text
 internal/client/
-    state.go
-    request.go
-    control.go
-    receive.go
-    capture.go
-    playback.go
-    command.go
+    state.go       конкурентное состояние client session и pending requests
+    request.go     handshake, request/retry и timeout
+    control.go     join, heartbeat и обработка control responses
+    receive.go     разделение входящих UDP media/control packets
+    capture.go     recorder, encoder и отправка voice packets
+    playback.go    запись готового PCM в audio player
+    command.go     команды из stdin
+    jitter.go      per-user переупорядочивание media frames
+    decode.go      per-user Opus decoders
+    mixer.go       смешивание PCM-потоков
 ```
 
-После реализации per-user audio имеет смысл выделить самостоятельные области:
+Серверный UDP router также разделён внутри `package voice` по ответственности:
+
+```text
+internal/voice/
+    server.go      чтение UDP datagram и диспетчеризация по типу пакета
+    control.go     hello, join, heartbeat, disconnect и ответы с ошибками
+    media.go       проверка и маршрутизация voice-пакетов получателям
+    delivery.go    отправка пакетов и проверка адреса сессии
+    hub.go         потокобезопасный реестр сессий и каналов
+    session.go     состояние отдельной сессии
+    cache.go       кэш ответов на повторные control requests
+```
+
+После стабилизации этих границ следующим архитектурным шагом можно выделить
+самостоятельные пакеты:
 
 ```text
 internal/session/          Session и Hub

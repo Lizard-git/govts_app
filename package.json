@@ -1,0 +1,11 @@
+{
+  "scripts": {
+
+    "dev:server": "go run ./cmd/server/main.go",
+
+
+    "dev:client-42": "go run ./cmd/client2/main.go -name G712",
+
+    "dev:client-43": "go run ./cmd/client2/main.go -name G712"
+  }
+}
