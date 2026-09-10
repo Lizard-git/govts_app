@@ -4,10 +4,11 @@ import (
 	"net"
 
 	"example.com/go-voice-mvp/internal/protocol"
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 func RouteVoicePacket(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	packet protocol.VoicePacket,
 ) error {
@@ -19,7 +20,7 @@ func RouteVoicePacket(
 }
 
 func HandleVoicePacket(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,

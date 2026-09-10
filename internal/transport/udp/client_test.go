@@ -26,20 +26,29 @@ func TestReceivePacketRejectsOversizedDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientConn.Close()
+	packetConn, err := NewClientPacketConn(clientConn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		_ = clientConn.Close()
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
 
-	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	clientAddr := packetConn.LocalAddr().(*net.UDPAddr)
 	if _, err := serverConn.WriteToUDP(
-		make([]byte, protocol.MaxDatagramSize+100),
+		make([]byte, protocol.MaxWireDatagramSize+100),
 		clientAddr,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := clientConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := packetConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := ReceivePacket(clientConn); !errors.Is(err, protocol.ErrPacketTooLarge) {
+	_, err = packetConn.ReceivePacket()
+	if !errors.Is(err, protocol.ErrPacketTooLarge) {
 		t.Fatalf("ReceivePacket() error = %v, want %v", err, protocol.ErrPacketTooLarge)
+	}
+	if !errors.Is(err, protocol.ErrRejectedDatagram) {
+		t.Fatalf("ReceivePacket() error = %v, want rejected datagram", err)
 	}
 }

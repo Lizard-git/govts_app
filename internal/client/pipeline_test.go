@@ -15,8 +15,8 @@ import (
 )
 
 type joinTestPeer struct {
-	serverConn *net.UDPConn
-	clientConn *net.UDPConn
+	serverConn *udp.ServerPacketConn
+	clientConn *udp.ClientPacketConn
 	state      *State
 	ctx        context.Context
 }
@@ -40,6 +40,11 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 		_ = serverConn.Close()
 		t.Fatal(err)
 	}
+	serverPacketConn := mustServerPacketConn(t, serverConn)
+	clientPacketConn := mustClientPacketConn(t, clientConn)
+	if err := clientPacketConn.BindSession(42); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	state := NewState(42, "alice", "")
@@ -47,7 +52,7 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 	controlCh := make(chan protocol.VoicePacket, 4)
 
 	go func() {
-		_ = ReceiveLoop(ctx, clientConn, encodedCh, controlCh)
+		_ = ReceiveLoop(ctx, clientPacketConn, encodedCh, controlCh)
 	}()
 	go func() {
 		_ = ControlLoop(ctx, state, controlCh)
@@ -55,13 +60,13 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 
 	t.Cleanup(func() {
 		cancel()
-		_ = clientConn.Close()
-		_ = serverConn.Close()
+		_ = clientPacketConn.Close()
+		_ = serverPacketConn.Close()
 	})
 
 	return &joinTestPeer{
-		serverConn: serverConn,
-		clientConn: clientConn,
+		serverConn: serverPacketConn,
+		clientConn: clientPacketConn,
 		state:      state,
 		ctx:        ctx,
 	}
@@ -71,14 +76,14 @@ func (p *joinTestPeer) receiveRequest() (protocol.VoicePacket, *net.UDPAddr, err
 	if err := p.serverConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		return protocol.VoicePacket{}, nil, err
 	}
-	return udp.ReadVoicePacket(p.serverConn)
+	return p.serverConn.ReadPacket()
 }
 
 func (p *joinTestPeer) sendResponse(
 	addr *net.UDPAddr,
 	response protocol.VoicePacket,
 ) error {
-	return udp.WriteVoicePacket(p.serverConn, addr, response)
+	return p.serverConn.WritePacket(response.SessionID, addr, response)
 }
 
 func TestJoinChannelRejectsEmptyName(t *testing.T) {
@@ -102,12 +107,12 @@ func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
 			serverErrCh <- err
 			return
 		}
-		first, _, err := udp.ReadVoicePacket(serverConn)
+		first, _, err := serverConn.ReadPacket()
 		if err != nil {
 			serverErrCh <- err
 			return
 		}
-		second, addr, err := udp.ReadVoicePacket(serverConn)
+		second, addr, err := serverConn.ReadPacket()
 		if err != nil {
 			serverErrCh <- err
 			return
@@ -120,7 +125,7 @@ func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
 			)
 			return
 		}
-		serverErrCh <- udp.WriteVoicePacket(serverConn, addr, protocol.VoicePacket{
+		serverErrCh <- serverConn.WritePacket(99, addr, protocol.VoicePacket{
 			Type:      protocol.PacketHelloAck,
 			SessionID: 99,
 			RequestID: second.RequestID,
@@ -155,7 +160,7 @@ func TestPerformHandshakeFinalTimeout(t *testing.T) {
 			return
 		}
 		for range requestAttempts {
-			if _, _, err := udp.ReadVoicePacket(serverConn); err != nil {
+			if _, _, err := serverConn.ReadPacket(); err != nil {
 				serverErrCh <- err
 				return
 			}
@@ -178,7 +183,68 @@ func TestPerformHandshakeFinalTimeout(t *testing.T) {
 	}
 }
 
-func newHandshakeTestConnections(t *testing.T) (*net.UDPConn, *net.UDPConn) {
+func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		_ = serverRaw.Close()
+		t.Fatal(err)
+	}
+	serverConn := mustServerPacketConn(t, serverRaw)
+	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{})
+	if err != nil {
+		_ = clientRaw.Close()
+		_ = serverConn.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		request, addr, err := serverConn.ReadPacket()
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		response := protocol.VoicePacket{
+			Type:      protocol.PacketHelloAck,
+			SessionID: 99,
+			RequestID: request.RequestID,
+		}
+		if err := serverConn.WritePacket(99, addr, response); err != nil {
+			serverErrCh <- err
+			return
+		}
+		serverErrCh <- serverConn.WritePacket(99, addr, response)
+	}()
+
+	sessionID, err := performHandshakeWithRequestID(
+		context.Background(),
+		clientConn,
+		"alice",
+		17,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != 99 {
+		t.Fatalf("session ID = %d, want 99", sessionID)
+	}
+	if err := <-serverErrCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newHandshakeTestConnections(
+	t *testing.T,
+) (*udp.ServerPacketConn, *udp.ClientPacketConn) {
 	t.Helper()
 
 	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
@@ -197,16 +263,41 @@ func newHandshakeTestConnections(t *testing.T) (*net.UDPConn, *net.UDPConn) {
 		_ = serverConn.Close()
 		t.Fatal(err)
 	}
+	serverPacketConn := mustServerPacketConn(t, serverConn)
+	clientPacketConn := mustClientPacketConn(t, clientConn)
 
 	t.Cleanup(func() {
-		_ = clientConn.Close()
-		_ = serverConn.Close()
+		_ = clientPacketConn.Close()
+		_ = serverPacketConn.Close()
 	})
-	return serverConn, clientConn
+	return serverPacketConn, clientPacketConn
+}
+
+func mustClientPacketConn(t *testing.T, conn *net.UDPConn) *udp.ClientPacketConn {
+	t.Helper()
+
+	packetConn, err := udp.NewClientPacketConn(conn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		t.Fatalf("NewClientPacketConn() error = %v", err)
+	}
+	return packetConn
+}
+
+func mustServerPacketConn(t *testing.T, conn *net.UDPConn) *udp.ServerPacketConn {
+	t.Helper()
+
+	packetConn, err := udp.NewServerPacketConn(conn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		t.Fatalf("NewServerPacketConn() error = %v", err)
+	}
+	return packetConn
 }
 
 func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 	serverConn, clientConn := newHandshakeTestConnections(t)
+	if err := clientConn.BindSession(42); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	encodedCh := make(chan audio.MediaFrame, 1)
 	controlCh := make(chan protocol.VoicePacket, 1)
@@ -223,7 +314,7 @@ func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 		Payload:   []byte("encoded opus frame"),
 	}
 	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
-	if err := udp.WriteVoicePacket(serverConn, clientAddr, want); err != nil {
+	if err := serverConn.WritePacket(42, clientAddr, want); err != nil {
 		t.Fatal(err)
 	}
 
@@ -250,6 +341,100 @@ func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("ReceiveLoop() did not stop after cancellation")
+	}
+}
+
+type rejectOnceCodec struct {
+	rejected bool
+}
+
+func (c *rejectOnceCodec) Encode(
+	ctx protocol.DatagramContext,
+	packet protocol.VoicePacket,
+) ([]byte, error) {
+	return (protocol.PlainDatagramCodec{}).Encode(ctx, packet)
+}
+
+func (c *rejectOnceCodec) Decode(
+	ctx protocol.DatagramContext,
+	datagram []byte,
+) (protocol.VoicePacket, error) {
+	if !c.rejected {
+		c.rejected = true
+		return protocol.VoicePacket{}, fmt.Errorf(
+			"%w: simulated authentication failure",
+			protocol.ErrRejectedDatagram,
+		)
+	}
+	return (protocol.PlainDatagramCodec{}).Decode(ctx, datagram)
+}
+
+func TestReceiveLoopSkipsRejectedDatagram(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		_ = serverRaw.Close()
+		t.Fatal(err)
+	}
+
+	serverConn := mustServerPacketConn(t, serverRaw)
+	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{})
+	if err != nil {
+		_ = clientRaw.Close()
+		_ = serverConn.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	if err := clientConn.BindSession(42); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	encodedCh := make(chan audio.MediaFrame, 1)
+	controlCh := make(chan protocol.VoicePacket, 1)
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh)
+	}()
+
+	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	for sequence := uint32(1); sequence <= 2; sequence++ {
+		if err := serverConn.WritePacket(42, clientAddr, protocol.VoicePacket{
+			Type:      protocol.PacketVoice,
+			SessionID: 73,
+			Sequence:  sequence,
+			Payload:   []byte{byte(sequence)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	select {
+	case frame := <-encodedCh:
+		if frame.Sequence != 2 {
+			t.Fatalf("received sequence = %d, want 2", frame.Sequence)
+		}
+	case err := <-resultCh:
+		t.Fatalf("ReceiveLoop() stopped after rejected datagram: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("ReceiveLoop() did not receive packet after rejected datagram")
+	}
+
+	cancel()
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReceiveLoop() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReceiveLoop() did not stop")
 	}
 }
 

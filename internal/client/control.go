@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/protocol"
@@ -58,7 +57,7 @@ func ControlLoop(
 
 func HeartbeatLoop(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	sessionID uint64,
 ) error {
 	ticker := time.NewTicker(5 * time.Second)
@@ -73,24 +72,24 @@ func HeartbeatLoop(
 				Type:      protocol.PacketHeartbeat,
 				SessionID: sessionID,
 			}
-			if err := udp.SendPacket(conn, packet); err != nil {
+			if err := conn.SendPacket(packet); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func Disconnect(conn *net.UDPConn, sessionID uint64) error {
+func Disconnect(conn *udp.ClientPacketConn, sessionID uint64) error {
 	packet := protocol.VoicePacket{
 		Type:      protocol.PacketDisconnect,
 		SessionID: sessionID,
 	}
-	return udp.SendPacket(conn, packet)
+	return conn.SendPacket(packet)
 }
 
 func JoinChannel(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	state *State,
 	channel string,
 ) error {
@@ -99,7 +98,7 @@ func JoinChannel(
 
 func joinChannelWithTimeout(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	state *State,
 	channel string,
 	timeout time.Duration,

@@ -110,6 +110,88 @@ func TestFindRecipientsReturnsOnlySameChannel(t *testing.T) {
 	}
 }
 
+type contextRecordingCodec struct {
+	encodedContext protocol.DatagramContext
+	encodedPacket  protocol.VoicePacket
+}
+
+func (c *contextRecordingCodec) Encode(
+	ctx protocol.DatagramContext,
+	packet protocol.VoicePacket,
+) ([]byte, error) {
+	c.encodedContext = ctx
+	c.encodedPacket = packet
+	return (protocol.PlainDatagramCodec{}).Encode(ctx, packet)
+}
+
+func (c *contextRecordingCodec) Decode(
+	ctx protocol.DatagramContext,
+	datagram []byte,
+) (protocol.VoicePacket, error) {
+	return (protocol.PlainDatagramCodec{}).Decode(ctx, datagram)
+}
+
+func TestSendToSessionUsesRecipientAsKeyOwner(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		_ = serverRaw.Close()
+		t.Fatal(err)
+	}
+
+	codec := &contextRecordingCodec{}
+	serverConn, err := udp.NewServerPacketConn(serverRaw, codec)
+	if err != nil {
+		_ = serverRaw.Close()
+		_ = clientRaw.Close()
+		t.Fatal(err)
+	}
+	clientConn := mustClientPacketConn(t, clientRaw)
+	t.Cleanup(func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	})
+
+	const (
+		senderID    = 41
+		recipientID = 73
+	)
+	packet := protocol.VoicePacket{
+		Type:      protocol.PacketVoice,
+		SessionID: senderID,
+		Sequence:  9,
+		Payload:   []byte("voice"),
+	}
+	recipient := Session{
+		ID:   recipientID,
+		Addr: clientConn.LocalAddr().(*net.UDPAddr),
+	}
+	if err := SendToSession(serverConn, recipient, packet); err != nil {
+		t.Fatal(err)
+	}
+
+	if codec.encodedContext.Direction != protocol.DirectionServerToClient {
+		t.Fatalf("direction = %d, want server to client", codec.encodedContext.Direction)
+	}
+	if codec.encodedContext.KeyOwnerID != recipientID {
+		t.Fatalf(
+			"key owner = %d, want recipient %d",
+			codec.encodedContext.KeyOwnerID,
+			recipientID,
+		)
+	}
+	if codec.encodedPacket.SessionID != senderID {
+		t.Fatalf(
+			"packet session ID = %d, want sender %d",
+			codec.encodedPacket.SessionID,
+			senderID,
+		)
+	}
+}
+
 func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) {
 	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
 		IP: net.ParseIP("127.0.0.1"),
@@ -117,7 +199,8 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverConn.Close()
+	serverPacketConn := mustPacketConn(t, serverConn)
+	defer serverPacketConn.Close()
 
 	clientConn, err := net.DialUDP(
 		"udp4",
@@ -127,11 +210,15 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientConn.Close()
+	clientPacketConn := mustClientPacketConn(t, clientConn)
+	defer clientPacketConn.Close()
 
-	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
 	hub := NewHub()
 	session := mustCreateSession(t, hub, "alice", clientAddr)
+	if err := clientPacketConn.BindSession(session.ID); err != nil {
+		t.Fatal(err)
+	}
 	cache := NewRequestCache()
 	request := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
@@ -141,7 +228,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	}
 
 	if err := HandleJoinChannelPacket(
-		serverConn,
+		serverPacketConn,
 		hub,
 		cache,
 		request,
@@ -149,11 +236,11 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
-	firstResponse := receiveTestPacket(t, clientConn)
+	firstResponse := receiveTestPacket(t, clientPacketConn)
 
 	request.Payload = []byte("gaming")
 	if err := HandleJoinChannelPacket(
-		serverConn,
+		serverPacketConn,
 		hub,
 		cache,
 		request,
@@ -161,7 +248,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
-	secondResponse := receiveTestPacket(t, clientConn)
+	secondResponse := receiveTestPacket(t, clientPacketConn)
 
 	updatedSession, ok := hub.Get(session.ID)
 	if !ok {
@@ -185,7 +272,8 @@ func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverConn.Close()
+	serverPacketConn := mustPacketConn(t, serverConn)
+	defer serverPacketConn.Close()
 
 	clientConn, err := net.DialUDP(
 		"udp4",
@@ -195,9 +283,10 @@ func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientConn.Close()
+	clientPacketConn := mustClientPacketConn(t, clientConn)
+	defer clientPacketConn.Close()
 
-	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
 	hub := NewHub()
 	cache := NewRequestCache()
 	hello := protocol.VoicePacket{
@@ -206,15 +295,15 @@ func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
 		Payload:   []byte("alice"),
 	}
 
-	if err := HandleHelloPacket(serverConn, hub, cache, hello, clientAddr); err != nil {
+	if err := HandleHelloPacket(serverPacketConn, hub, cache, hello, clientAddr); err != nil {
 		t.Fatal(err)
 	}
-	firstResponse := receiveTestPacket(t, clientConn)
+	firstResponse := receiveTestPacket(t, clientPacketConn)
 
-	if err := HandleHelloPacket(serverConn, hub, cache, hello, clientAddr); err != nil {
+	if err := HandleHelloPacket(serverPacketConn, hub, cache, hello, clientAddr); err != nil {
 		t.Fatal(err)
 	}
-	secondResponse := receiveTestPacket(t, clientConn)
+	secondResponse := receiveTestPacket(t, clientPacketConn)
 
 	if hub.Count() != 1 {
 		t.Fatalf("Hub.Count() = %d, want 1", hub.Count())
@@ -238,17 +327,37 @@ func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
 	}
 }
 
-func receiveTestPacket(t *testing.T, conn *net.UDPConn) protocol.VoicePacket {
+func receiveTestPacket(t *testing.T, conn *udp.ClientPacketConn) protocol.VoicePacket {
 	t.Helper()
 
 	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	packet, err := udp.ReceivePacket(conn)
+	packet, err := conn.ReceivePacket()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return packet
+}
+
+func mustClientPacketConn(t *testing.T, conn *net.UDPConn) *udp.ClientPacketConn {
+	t.Helper()
+
+	packetConn, err := udp.NewClientPacketConn(conn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		t.Fatalf("NewClientPacketConn() error = %v", err)
+	}
+	return packetConn
+}
+
+func mustPacketConn(t *testing.T, conn *net.UDPConn) *udp.ServerPacketConn {
+	t.Helper()
+
+	packetConn, err := udp.NewServerPacketConn(conn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		t.Fatalf("NewServerPacketConn() error = %v", err)
+	}
+	return packetConn
 }
 
 func TestServeUDPStopsOnContextCancellation(t *testing.T) {
@@ -258,12 +367,13 @@ func TestServeUDPStopsOnContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	packetConn := mustPacketConn(t, conn)
+	defer packetConn.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan error, 1)
 	go func() {
-		resultCh <- ServeUDP(ctx, conn, NewHub(), NewRequestCache())
+		resultCh <- ServeUDP(ctx, packetConn, NewHub(), NewRequestCache())
 	}()
 
 	cancel()
@@ -284,11 +394,12 @@ func TestServeUDPReturnsClosedConnectionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.Close(); err != nil {
+	packetConn := mustPacketConn(t, conn)
+	if err := packetConn.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	err = ServeUDP(context.Background(), conn, NewHub(), NewRequestCache())
+	err = ServeUDP(context.Background(), packetConn, NewHub(), NewRequestCache())
 	if !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("ServeUDP() error = %v, want %v", err, net.ErrClosed)
 	}
@@ -301,7 +412,8 @@ func TestServeUDPSkipsMalformedPacket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverConn.Close()
+	serverPacketConn := mustPacketConn(t, serverConn)
+	defer serverPacketConn.Close()
 
 	clientConn, err := net.DialUDP(
 		"udp4",
@@ -311,18 +423,19 @@ func TestServeUDPSkipsMalformedPacket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientConn.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan error, 1)
 	go func() {
-		resultCh <- ServeUDP(ctx, serverConn, NewHub(), NewRequestCache())
+		resultCh <- ServeUDP(ctx, serverPacketConn, NewHub(), NewRequestCache())
 	}()
 
 	if _, err := clientConn.Write([]byte{protocol.PacketHello}); err != nil {
 		t.Fatal(err)
 	}
-	if err := udp.SendPacket(clientConn, protocol.VoicePacket{
+	clientPacketConn := mustClientPacketConn(t, clientConn)
+	defer clientPacketConn.Close()
+	if err := clientPacketConn.SendPacket(protocol.VoicePacket{
 		Type:      protocol.PacketHello,
 		RequestID: 17,
 		Payload:   []byte("alice"),
@@ -330,7 +443,7 @@ func TestServeUDPSkipsMalformedPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response := receiveTestPacket(t, clientConn)
+	response := receiveTestPacket(t, clientPacketConn)
 	if response.Type != protocol.PacketHelloAck {
 		t.Fatalf("response type = %d, want %d", response.Type, protocol.PacketHelloAck)
 	}

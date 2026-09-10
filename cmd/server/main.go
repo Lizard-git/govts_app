@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/server"
 	"example.com/go-voice-mvp/internal/transport/udp"
 	"example.com/go-voice-mvp/internal/voice"
@@ -21,9 +22,14 @@ func main() {
 }
 
 func run() error {
-	conn, err := udp.ListenUDP(9000)
+	rawConn, err := udp.ListenUDP(9000)
 	if err != nil {
 		return fmt.Errorf("listen UDP: %w", err)
+	}
+	conn, err := udp.NewServerPacketConn(rawConn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		_ = rawConn.Close()
+		return fmt.Errorf("configure UDP packet connection: %w", err)
 	}
 	defer conn.Close()
 

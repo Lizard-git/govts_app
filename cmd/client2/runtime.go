@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
 	"example.com/go-voice-mvp/internal/protocol"
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 
 func runSession(
 	parent context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	sessionID uint64,
 	name string,
 	channel string,

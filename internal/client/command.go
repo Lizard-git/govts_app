@@ -4,14 +4,15 @@ import (
 	"bufio"
 	"context"
 	"log"
-	"net"
 	"os"
 	"strings"
+
+	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
 func CommandLoop(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	state *State,
 	cancel context.CancelFunc,
 ) {
@@ -36,7 +37,7 @@ func CommandLoop(
 
 func handleJoin(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	state *State,
 	parts []string,
 ) {

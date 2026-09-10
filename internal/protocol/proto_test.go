@@ -79,8 +79,12 @@ func TestEncodeDecodePacket(t *testing.T) {
 
 func TestDecodePacketTooShort(t *testing.T) {
 	data := []byte{1, 2, 3}
-	if _, err := decodePacket(data); !errors.Is(err, ErrPacketTooShort) {
+	_, err := decodePacket(data)
+	if !errors.Is(err, ErrPacketTooShort) {
 		t.Fatalf("expected ErrPacketTooShort, got %v", err)
+	}
+	if !errors.Is(err, ErrRejectedDatagram) {
+		t.Fatalf("expected ErrRejectedDatagram, got %v", err)
 	}
 }
 
@@ -128,7 +132,7 @@ func TestEncodePacketRejectsOversizedPayload(t *testing.T) {
 }
 
 func TestDecodePacketRejectsOversizedDatagram(t *testing.T) {
-	data := make([]byte, MaxDatagramSize+1)
+	data := make([]byte, MaxWireDatagramSize+1)
 	data[0] = PacketVoice
 
 	if _, err := DecodePacket(data); !errors.Is(err, ErrPacketTooLarge) {
@@ -148,8 +152,8 @@ func TestEncodeDecodeMaximumPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != MaxDatagramSize {
-		t.Fatalf("encoded size = %d, want %d", len(data), MaxDatagramSize)
+	if len(data) != MaxWireDatagramSize {
+		t.Fatalf("encoded size = %d, want %d", len(data), MaxWireDatagramSize)
 	}
 	if _, err := DecodePacket(data); err != nil {
 		t.Fatal(err)
@@ -157,7 +161,24 @@ func TestEncodeDecodeMaximumPayload(t *testing.T) {
 }
 
 func TestEncodePacketRejectsInvalidType(t *testing.T) {
-	if _, err := EncodePacket(VoicePacket{}); !errors.Is(err, ErrInvalidPacketType) {
+	_, err := EncodePacket(VoicePacket{})
+	if !errors.Is(err, ErrInvalidPacketType) {
 		t.Fatalf("EncodePacket() error = %v, want %v", err, ErrInvalidPacketType)
+	}
+	if errors.Is(err, ErrRejectedDatagram) {
+		t.Fatalf("local encode error unexpectedly classified as rejected datagram: %v", err)
+	}
+}
+
+func TestDecodePacketClassifiesInvalidTypeAsRejectedDatagram(t *testing.T) {
+	data := make([]byte, HeaderSize)
+	data[0] = PacketEnd
+
+	_, err := DecodePacket(data)
+	if !errors.Is(err, ErrInvalidPacketType) {
+		t.Fatalf("DecodePacket() error = %v, want %v", err, ErrInvalidPacketType)
+	}
+	if !errors.Is(err, ErrRejectedDatagram) {
+		t.Fatalf("DecodePacket() error = %v, want %v", err, ErrRejectedDatagram)
 	}
 }

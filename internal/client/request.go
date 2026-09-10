@@ -22,7 +22,7 @@ const (
 
 func PerformHandshake(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	name string,
 ) (uint64, error) {
 	if len(name) == 0 {
@@ -62,7 +62,7 @@ func newHandshakeRequestID() (uint32, error) {
 
 func performHandshakeWithRequestID(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	name string,
 	requestID uint32,
 	timeout time.Duration,
@@ -95,47 +95,52 @@ func performHandshakeWithRequestID(
 			return 0, err
 		}
 
-		if err := udp.SendPacket(conn, hello); err != nil {
+		if err := conn.SendPacket(hello); err != nil {
 			return 0, fmt.Errorf("send handshake request %d: %w", requestID, err)
 		}
 
-		ack, err := udp.ReceivePacket(conn)
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return 0, ctxErr
-				}
-				if attempt < requestAttempts {
+		for {
+			ack, err := conn.ReceivePacket()
+			if err != nil {
+				if errors.Is(err, protocol.ErrRejectedDatagram) {
 					continue
 				}
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return 0, ctxErr
+					}
+					if attempt < requestAttempts {
+						break
+					}
+					return 0, fmt.Errorf(
+						"handshake request %d timed out after %d attempts",
+						requestID,
+						requestAttempts,
+					)
+				}
+				return 0, err
+			}
+
+			if ack.RequestID != requestID {
 				return 0, fmt.Errorf(
-					"handshake request %d timed out after %d attempts",
+					"unexpected handshake request ID: got %d, want %d",
+					ack.RequestID,
 					requestID,
-					requestAttempts,
 				)
 			}
-			return 0, err
-		}
+			if ack.Type == protocol.PacketError {
+				return 0, fmt.Errorf("server error: %s", string(ack.Payload))
+			}
+			if ack.Type != protocol.PacketHelloAck {
+				return 0, fmt.Errorf("expected hello ack, got packet type %d", ack.Type)
+			}
+			if ack.SessionID == 0 {
+				return 0, errors.New("server returned invalid session ID")
+			}
 
-		if ack.RequestID != requestID {
-			return 0, fmt.Errorf(
-				"unexpected handshake request ID: got %d, want %d",
-				ack.RequestID,
-				requestID,
-			)
+			return ack.SessionID, nil
 		}
-		if ack.Type == protocol.PacketError {
-			return 0, fmt.Errorf("server error: %s", string(ack.Payload))
-		}
-		if ack.Type != protocol.PacketHelloAck {
-			return 0, fmt.Errorf("expected hello ack, got packet type %d", ack.Type)
-		}
-		if ack.SessionID == 0 {
-			return 0, errors.New("server returned invalid session ID")
-		}
-
-		return ack.SessionID, nil
 	}
 
 	return 0, errors.New("handshake failed")
@@ -143,7 +148,7 @@ func performHandshakeWithRequestID(
 
 func DoRequest(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	state *State,
 	packet protocol.VoicePacket,
 	timeout time.Duration,
@@ -156,7 +161,7 @@ func DoRequest(
 	defer state.CancelRequest(requestID)
 
 	for attempt := 1; attempt <= requestAttempts; attempt++ {
-		if err := udp.SendPacket(conn, packet); err != nil {
+		if err := conn.SendPacket(packet); err != nil {
 			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
 		}
 

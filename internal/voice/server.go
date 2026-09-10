@@ -13,7 +13,7 @@ import (
 )
 
 func HandlePacket(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
 	packet protocol.VoicePacket,
@@ -37,7 +37,7 @@ func HandlePacket(
 
 func ServeUDP(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
 ) error {
@@ -51,7 +51,7 @@ func ServeUDP(
 	defer stopWakeup()
 
 	for {
-		packet, addr, err := udp.ReadVoicePacket(conn)
+		packet, addr, err := conn.ReadPacket()
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
@@ -60,7 +60,6 @@ func ServeUDP(
 				return fmt.Errorf("read UDP packet: %w", err)
 			}
 			if isMalformedPacket(err) {
-				log.Printf("bad packet: %v", err)
 				continue
 			}
 			return fmt.Errorf("read UDP packet: %w", err)
@@ -74,7 +73,5 @@ func ServeUDP(
 }
 
 func isMalformedPacket(err error) bool {
-	return errors.Is(err, protocol.ErrPacketTooShort) ||
-		errors.Is(err, protocol.ErrPacketTooLarge) ||
-		errors.Is(err, protocol.ErrInvalidPacketType)
+	return errors.Is(err, protocol.ErrRejectedDatagram)
 }

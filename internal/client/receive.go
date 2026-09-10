@@ -15,7 +15,7 @@ const receivePollInterval = 500 * time.Millisecond
 
 func ReceiveLoop(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	encodedCh chan<- audio.MediaFrame,
 	controlCh chan<- protocol.VoicePacket,
 ) error {
@@ -27,7 +27,7 @@ func ReceiveLoop(
 			return err
 		}
 
-		packet, err := udp.ReceivePacket(conn)
+		packet, err := conn.ReceivePacket()
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
@@ -37,6 +37,9 @@ func ReceiveLoop(
 				default:
 					continue
 				}
+			}
+			if errors.Is(err, protocol.ErrRejectedDatagram) {
+				continue
 			}
 			return err
 		}

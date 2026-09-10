@@ -16,26 +16,35 @@ func TestReadVoicePacketRejectsOversizedDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverConn.Close()
+	packetConn, err := NewServerPacketConn(serverConn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		_ = serverConn.Close()
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
 
 	clientConn, err := net.DialUDP(
 		"udp4",
 		nil,
-		serverConn.LocalAddr().(*net.UDPAddr),
+		packetConn.LocalAddr().(*net.UDPAddr),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clientConn.Close()
 
-	if _, err := clientConn.Write(make([]byte, protocol.MaxDatagramSize+100)); err != nil {
+	if _, err := clientConn.Write(make([]byte, protocol.MaxWireDatagramSize+100)); err != nil {
 		t.Fatal(err)
 	}
-	if err := serverConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := packetConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, _, err := ReadVoicePacket(serverConn); !errors.Is(err, protocol.ErrPacketTooLarge) {
+	_, _, err = packetConn.ReadPacket()
+	if !errors.Is(err, protocol.ErrPacketTooLarge) {
 		t.Fatalf("ReadVoicePacket() error = %v, want %v", err, protocol.ErrPacketTooLarge)
+	}
+	if !errors.Is(err, protocol.ErrRejectedDatagram) {
+		t.Fatalf("ReadVoicePacket() error = %v, want rejected datagram", err)
 	}
 }

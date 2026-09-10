@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -46,7 +45,7 @@ func EncodeLoop(
 
 func SendLoop(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn *udp.ClientPacketConn,
 	sessionID uint64,
 	audioCh <-chan audio.Frame,
 ) error {
@@ -61,7 +60,7 @@ func SendLoop(
 				return nil
 			}
 			sent := protocol.NewVoicePacket(sessionID, sequence, frame.Data)
-			if err := udp.SendPacket(conn, sent); err != nil {
+			if err := conn.SendPacket(sent); err != nil {
 				return err
 			}
 			sequence++

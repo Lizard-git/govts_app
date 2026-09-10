@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	voiceclient "example.com/go-voice-mvp/internal/client"
+	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
@@ -32,9 +33,14 @@ func run(name string, channel string) (runErr error) {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	conn, err := udp.ConnectUDP("127.0.0.1", 9000)
+	rawConn, err := udp.ConnectUDP("127.0.0.1", 9000)
 	if err != nil {
 		return fmt.Errorf("connect UDP: %w", err)
+	}
+	conn, err := udp.NewClientPacketConn(rawConn, protocol.PlainDatagramCodec{})
+	if err != nil {
+		_ = rawConn.Close()
+		return fmt.Errorf("configure UDP packet connection: %w", err)
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -45,6 +51,9 @@ func run(name string, channel string) (runErr error) {
 	sessionID, err := voiceclient.PerformHandshake(signalCtx, conn, name)
 	if err != nil {
 		return fmt.Errorf("handshake: %w", err)
+	}
+	if err := conn.BindSession(sessionID); err != nil {
+		return fmt.Errorf("bind UDP session: %w", err)
 	}
 
 	return runSession(signalCtx, conn, sessionID, name, channel)

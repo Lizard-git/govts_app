@@ -11,6 +11,7 @@ var (
 	ErrPacketTooLarge    = errors.New("packet too large")
 	ErrPayloadTooLarge   = errors.New("packet payload too large")
 	ErrInvalidPacketType = errors.New("invalid packet type")
+	ErrRejectedDatagram  = errors.New("rejected datagram")
 )
 
 const (
@@ -72,9 +73,13 @@ func encodeSessionID(id uint64) []byte {
 // 17..N     Payload
 
 const (
-	HeaderSize      = 17
-	MaxPayloadSize  = 1200
-	MaxDatagramSize = HeaderSize + MaxPayloadSize
+	HeaderSize          = 17
+	MaxPayloadSize      = 1200
+	MaxWireDatagramSize = HeaderSize + MaxPayloadSize
+
+	// MaxDatagramSize is kept as a compatibility alias. New transport code
+	// must use MaxWireDatagramSize as the protocol-wide hard wire limit.
+	MaxDatagramSize = MaxWireDatagramSize
 )
 
 func encodeHeader(packet VoicePacket) []byte {
@@ -113,19 +118,23 @@ func DecodePacket(data []byte) (VoicePacket, error) {
 
 func decodePacket(data []byte) (VoicePacket, error) {
 	if len(data) < HeaderSize {
-		return VoicePacket{}, ErrPacketTooShort
+		return VoicePacket{}, rejectDatagram(ErrPacketTooShort)
 	}
-	if len(data) > MaxDatagramSize {
-		return VoicePacket{}, fmt.Errorf(
+	if len(data) > MaxWireDatagramSize {
+		return VoicePacket{}, rejectDatagram(fmt.Errorf(
 			"%w: got %d bytes, max %d",
 			ErrPacketTooLarge,
 			len(data),
-			MaxDatagramSize,
-		)
+			MaxWireDatagramSize,
+		))
 	}
 	packetType := data[0]
 	if !validPacketType(packetType) {
-		return VoicePacket{}, fmt.Errorf("%w: %d", ErrInvalidPacketType, packetType)
+		return VoicePacket{}, rejectDatagram(fmt.Errorf(
+			"%w: %d",
+			ErrInvalidPacketType,
+			packetType,
+		))
 	}
 	packet := VoicePacket{
 		Type:      packetType,
@@ -135,6 +144,10 @@ func decodePacket(data []byte) (VoicePacket, error) {
 		Payload:   data[17:],
 	}
 	return packet, nil
+}
+
+func rejectDatagram(err error) error {
+	return fmt.Errorf("%w: %w", ErrRejectedDatagram, err)
 }
 
 func validPacketType(packetType uint8) bool {

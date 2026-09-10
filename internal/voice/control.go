@@ -10,7 +10,7 @@ import (
 )
 
 func HandleHelloPacket(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
 	packet protocol.VoicePacket,
@@ -25,7 +25,7 @@ func HandleHelloPacket(
 
 	endpoint := addr.AddrPort()
 	if response, ok := cache.GetHandshake(endpoint, packet.RequestID); ok {
-		return udp.WriteVoicePacket(conn, addr, response)
+		return conn.WritePacket(response.SessionID, addr, response)
 	}
 
 	if len(packet.Payload) == 0 {
@@ -72,7 +72,7 @@ func HandleHelloPacket(
 }
 
 func cacheAndSendHandshakeError(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	cache *RequestCache,
 	requestID uint32,
 	addr *net.UDPAddr,
@@ -80,7 +80,7 @@ func cacheAndSendHandshakeError(
 ) error {
 	response := protocol.NewErrorPacket(0, requestID, message)
 	cache.PutHandshake(addr.AddrPort(), requestID, response)
-	return udp.WriteVoicePacket(conn, addr, response)
+	return conn.WritePacket(0, addr, response)
 }
 
 func HandleHeartbeatPacket(
@@ -117,7 +117,7 @@ func HandleDisconnectPacket(
 }
 
 func HandleJoinChannelPacket(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
 	packet protocol.VoicePacket,
@@ -127,7 +127,7 @@ func HandleJoinChannelPacket(
 		return err
 	}
 	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
-		return udp.WriteVoicePacket(conn, addr, response)
+		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 
 	if len(packet.Payload) == 0 {
@@ -137,7 +137,7 @@ func HandleJoinChannelPacket(
 			"channel name is required",
 		)
 		cache.Put(packet.SessionID, packet.RequestID, response)
-		return udp.WriteVoicePacket(conn, addr, response)
+		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 	if len(packet.Payload) > 64 {
 		response := protocol.NewErrorPacket(
@@ -146,7 +146,7 @@ func HandleJoinChannelPacket(
 			"channel name too long",
 		)
 		cache.Put(packet.SessionID, packet.RequestID, response)
-		return udp.WriteVoicePacket(conn, addr, response)
+		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 
 	channel := string(packet.Payload)
@@ -168,7 +168,7 @@ func HandleJoinChannelPacket(
 }
 
 func SendError(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	addr *net.UDPAddr,
 	sessionID uint64,
 	requestID uint32,
@@ -180,5 +180,5 @@ func SendError(
 		RequestID: requestID,
 		Payload:   []byte(message),
 	}
-	return udp.WriteVoicePacket(conn, addr, packet)
+	return conn.WritePacket(sessionID, addr, packet)
 }

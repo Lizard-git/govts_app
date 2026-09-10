@@ -10,7 +10,7 @@ import (
 )
 
 func SendToSession(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	session Session,
 	packet protocol.VoicePacket,
 ) error {
@@ -18,11 +18,11 @@ func SendToSession(
 	if addr == nil {
 		return fmt.Errorf("session %d has no UDP address", session.ID)
 	}
-	return udp.WriteVoicePacket(conn, addr, packet)
+	return conn.WritePacket(session.ID, addr, packet)
 }
 
 func SendToSessions(
-	conn *net.UDPConn,
+	conn *udp.ServerPacketConn,
 	sessions []Session,
 	packet protocol.VoicePacket,
 ) error {
