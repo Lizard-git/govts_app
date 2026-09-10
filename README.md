@@ -1,7 +1,8 @@
 # Go Voice MVP
 
-Учебный проект голосовой связи на Go. Итоговая цель — программный комплекс с
-голосовыми каналами, похожий по назначению на TeamSpeak.
+Полноценное приложение голосовой связи на Go. Цель проекта — современная
+платформа с качественными голосовыми каналами и новыми сценариями совместной
+работы, а не упрощённая копия TeamSpeak.
 
 Подробная продуктовая дорожная карта находится в
 [`go-voice-roadmap.md`](go-voice-roadmap.md). Этот README описывает фактическое
@@ -16,8 +17,9 @@
 microphone
     -> PCM frames
     -> Opus encoder
-    -> UDP client
-    -> UDP server
+    -> VoicePacket
+    -> ClientPacketConn -> DatagramCodec -> UDP
+    -> UDP -> ServerPacketConn -> DatagramCodec
     -> участники того же канала
     -> Opus decoder
     -> audio player
@@ -40,6 +42,11 @@ microphone
 - `RequestID`, ожидание ответа и повтор control-запроса;
 - server-side deduplication через `RequestCache`;
 - явный disconnect клиента.
+- единая codec-граница для всех логических пакетов с явным направлением,
+  endpoint и владельцем будущего ключа;
+- разные transport-типы для connected client socket и unconnected server
+  socket;
+- безопасный drop повреждённых/rejected датаграмм без остановки receive loop.
 
 ### Известные ограничения
 
@@ -137,9 +144,17 @@ offset   field       type     size
 `Sequence` задаёт порядок voice-пакетов. `RequestID` связывает control request
 с response и остаётся одинаковым для всех retry одной логической операции. До
 создания session handshake использует ключ `(IP:port, RequestID)`.
-Transport принимает максимум 1217 байт: 17 байт заголовка и до 1200 байт
-payload. Буфер чтения имеет дополнительный байт, позволяющий обнаружить и
-отклонить слишком большой UDP datagram.
+Transport принимает максимум `MaxWireDatagramSize == 1217` байт: 17 байт
+заголовка и до 1200 байт payload. Этот предел принадлежит протоколу и не может
+быть увеличен реализацией codec. Буфер чтения имеет дополнительный байт,
+позволяющий обнаружить и отклонить слишком большой UDP datagram.
+
+Все пакеты проходят через `DatagramCodec`. Его `DatagramContext` отдельно
+передаёт направление, endpoint и `KeyOwnerID`. Поэтому при серверной пересылке
+`VoicePacket.SessionID` продолжает обозначать говорящего, а `KeyOwnerID` —
+конкретного получателя. Некорректный вход классифицируется как
+`ErrRejectedDatagram` и тихо отбрасывается; ошибки socket и внутренние ошибки
+transport остаются фатальными.
 
 Текущие и целевые параметры протокола:
 
@@ -193,8 +208,8 @@ payload. Буфер чтения имеет дополнительный бай�
 
 ### Этап 2. Ограничить протокол и сделать control-запросы надёжными
 
-- [x] Ввести общие константы `MaxDatagramSize` и `MaxPayloadSize` в пакете
-  `protocol`.
+- [x] Ввести общие константы `MaxWireDatagramSize` и `MaxPayloadSize` в пакете
+  `protocol` (`MaxDatagramSize` временно сохранён как совместимый alias).
 - [x] Проверять размер при кодировании, чтении и декодировании пакета.
 - [x] Обнаруживать усечённые UDP datagram вместо передачи повреждённого payload
   в Opus decoder.
@@ -315,8 +330,11 @@ internal/transport/udp/    только UDP I/O
 
 - [x] Заменить последовательные session ID на криптографически случайные
   идентификаторы или session token.
-- [ ] Добавить аутентификацию и защиту UDP-пакетов от подмены и повторного
-  воспроизведения (AEAD либо HMAC с nonce/sequence window).
+- [x] Отделить UDP I/O от кодирования датаграмм через внедряемый codec и
+  сохранить текущий wire format в `PlainDatagramCodec`.
+- [x] Укрепить контракт codec/transport: передавать recipient context,
+  соблюдать общий wire limit, безопасно отбрасывать rejected datagrams и
+  разделить connected/unconnected API типами.
 - [ ] Добавить rate limiting для `Hello`, control requests и некорректных
   пакетов.
 - [ ] Добавить структурированные метрики: активные sessions, packet loss,
