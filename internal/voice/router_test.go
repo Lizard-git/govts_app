@@ -19,7 +19,7 @@ func TestValidateSessionAddr(t *testing.T) {
 		Port: 5000,
 	}
 
-	session := hub.CreateSession("alice", originalAddr)
+	session := mustCreateSession(t, hub, "alice", originalAddr)
 
 	t.Run("same address", func(t *testing.T) {
 		addr := &net.UDPAddr{
@@ -60,7 +60,7 @@ func TestValidateSessionAddr(t *testing.T) {
 
 func TestFindRecipientsRejectsSenderWithoutChannel(t *testing.T) {
 	hub := NewHub()
-	sender := hub.CreateSession("alice", nil)
+	sender := mustCreateSession(t, hub, "alice", nil)
 
 	_, err := FindRecipients(hub, protocol.VoicePacket{
 		Type:      protocol.PacketVoice,
@@ -77,9 +77,9 @@ func TestFindRecipientsRejectsSenderWithoutChannel(t *testing.T) {
 
 func TestFindRecipientsReturnsOnlySameChannel(t *testing.T) {
 	hub := NewHub()
-	sender := hub.CreateSession("alice", nil)
-	sameChannel := hub.CreateSession("bob", nil)
-	otherChannel := hub.CreateSession("carol", nil)
+	sender := mustCreateSession(t, hub, "alice", nil)
+	sameChannel := mustCreateSession(t, hub, "bob", nil)
+	otherChannel := mustCreateSession(t, hub, "carol", nil)
 
 	if err := hub.JoinChannel(sender.ID, "music"); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 
 	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
 	hub := NewHub()
-	session := hub.CreateSession("alice", clientAddr)
+	session := mustCreateSession(t, hub, "alice", clientAddr)
 	cache := NewRequestCache()
 	request := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,

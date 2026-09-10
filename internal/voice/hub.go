@@ -1,6 +1,8 @@
 package voice
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -13,16 +15,26 @@ var (
 	ErrSessionNotInChannel = errors.New("session has not joined a channel")
 )
 
+type sessionIDGenerator func() (uint64, error)
+
 type Hub struct {
-	mu       sync.RWMutex
-	sessions map[uint64]*Session
-	nextID   uint64
+	mu           sync.RWMutex
+	sessions     map[uint64]*Session
+	newSessionID sessionIDGenerator
 }
 
 func NewHub() *Hub {
+	return newHub(randomSessionID)
+}
+
+func newHub(newSessionID sessionIDGenerator) *Hub {
+	if newSessionID == nil {
+		panic("session ID generator is required")
+	}
+
 	return &Hub{
-		sessions: make(map[uint64]*Session),
-		nextID:   1,
+		sessions:     make(map[uint64]*Session),
+		newSessionID: newSessionID,
 	}
 }
 
@@ -148,12 +160,14 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 	return recipients, nil
 }
 
-func (h *Hub) CreateSession(name string, addr *net.UDPAddr) Session {
+func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	id := h.nextID
-	h.nextID++
+	id, err := h.availableSessionID()
+	if err != nil {
+		return Session{}, err
+	}
 	session := &Session{
 		ID:       id,
 		Name:     name,
@@ -161,7 +175,30 @@ func (h *Hub) CreateSession(name string, addr *net.UDPAddr) Session {
 		LastSeen: time.Now(),
 	}
 	h.sessions[id] = session
-	return *cloneSession(session)
+	return *cloneSession(session), nil
+}
+
+func (h *Hub) availableSessionID() (uint64, error) {
+	for {
+		id, err := h.newSessionID()
+		if err != nil {
+			return 0, fmt.Errorf("generate session ID: %w", err)
+		}
+		if id == 0 {
+			continue
+		}
+		if _, exists := h.sessions[id]; !exists {
+			return id, nil
+		}
+	}
+}
+
+func randomSessionID() (uint64, error) {
+	var data [8]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(data[:]), nil
 }
 
 func (h *Hub) Touch(sessionID uint64) error {

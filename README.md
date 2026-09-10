@@ -29,7 +29,7 @@ microphone
 ### Уже реализовано
 
 - UDP handshake `Hello` / `HelloAck`;
-- server-side sessions с последовательным `SessionID`;
+- server-side sessions с криптографически случайным `SessionID`;
 - heartbeat каждые 5 секунд;
 - удаление session после 30 секунд неактивности;
 - подключение и переключение канала через `JoinChannel`;
@@ -313,7 +313,7 @@ internal/transport/udp/    только UDP I/O
 
 ### Этап 7. Безопасность и эксплуатация
 
-- [ ] Заменить последовательные session ID на криптографически случайные
+- [x] Заменить последовательные session ID на криптографически случайные
   идентификаторы или session token.
 - [ ] Добавить аутентификацию и защиту UDP-пакетов от подмены и повторного
   воспроизведения (AEAD либо HMAC с nonce/sequence window).

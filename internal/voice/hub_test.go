@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -14,7 +15,7 @@ func TestHubReturnsIndependentSessionSnapshots(t *testing.T) {
 		Port: 5000,
 	}
 
-	created := hub.CreateSession("alice", originalAddr)
+	created := mustCreateSession(t, hub, "alice", originalAddr)
 	originalAddr.Port = 6000
 	created.Name = "changed outside Hub"
 	created.Addr.IP[0]++
@@ -46,8 +47,8 @@ func TestHubRemoveInactive(t *testing.T) {
 
 	now := time.Now()
 
-	active := hub.CreateSession("alice", nil)
-	inactive := hub.CreateSession("bob", nil)
+	active := mustCreateSession(t, hub, "alice", nil)
+	inactive := mustCreateSession(t, hub, "bob", nil)
 
 	if err := hub.touchAt(active.ID, now.Add(-5*time.Second)); err != nil {
 		t.Fatal(err)
@@ -87,8 +88,8 @@ func TestHubRemoveInactive(t *testing.T) {
 
 func TestHubConcurrentJoinTouchRoutingAndCleanup(t *testing.T) {
 	hub := NewHub()
-	sender := hub.CreateSession("sender", nil)
-	recipient := hub.CreateSession("recipient", nil)
+	sender := mustCreateSession(t, hub, "sender", nil)
+	recipient := mustCreateSession(t, hub, "recipient", nil)
 
 	if err := hub.JoinChannel(sender.ID, "music"); err != nil {
 		t.Fatal(err)
@@ -146,4 +147,68 @@ func TestHubConcurrentJoinTouchRoutingAndCleanup(t *testing.T) {
 
 	close(start)
 	wg.Wait()
+}
+
+func TestHubCreatesNonZeroUniqueSessionIDs(t *testing.T) {
+	hub := NewHub()
+	const sessionCount = 1000
+
+	seen := make(map[uint64]struct{}, sessionCount)
+	for i := 0; i < sessionCount; i++ {
+		session := mustCreateSession(t, hub, "client", nil)
+		if session.ID == 0 {
+			t.Fatal("CreateSession() returned reserved session ID 0")
+		}
+		if _, exists := seen[session.ID]; exists {
+			t.Fatalf("CreateSession() returned duplicate session ID %d", session.ID)
+		}
+		seen[session.ID] = struct{}{}
+	}
+}
+
+func TestHubRetriesReservedAndCollidingSessionIDs(t *testing.T) {
+	ids := []uint64{7, 0, 7, 9}
+	next := 0
+	hub := newHub(func() (uint64, error) {
+		id := ids[next]
+		next++
+		return id, nil
+	})
+
+	first := mustCreateSession(t, hub, "alice", nil)
+	second := mustCreateSession(t, hub, "bob", nil)
+
+	if first.ID != 7 || second.ID != 9 {
+		t.Fatalf("session IDs = (%d, %d), want (7, 9)", first.ID, second.ID)
+	}
+}
+
+func TestHubReturnsSessionIDGeneratorError(t *testing.T) {
+	wantErr := errors.New("random source unavailable")
+	hub := newHub(func() (uint64, error) {
+		return 0, wantErr
+	})
+
+	_, err := hub.CreateSession("alice", nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("CreateSession() error = %v, want %v", err, wantErr)
+	}
+	if hub.Count() != 0 {
+		t.Fatalf("Hub.Count() = %d, want 0", hub.Count())
+	}
+}
+
+func mustCreateSession(
+	t *testing.T,
+	hub *Hub,
+	name string,
+	addr *net.UDPAddr,
+) Session {
+	t.Helper()
+
+	session, err := hub.CreateSession(name, addr)
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	return session
 }

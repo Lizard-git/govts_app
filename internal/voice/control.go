@@ -48,7 +48,10 @@ func HandleHelloPacket(
 	}
 
 	name := string(packet.Payload)
-	session := hub.CreateSession(name, addr)
+	session, err := hub.CreateSession(name, addr)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketHelloAck,
 		SessionID: session.ID,
