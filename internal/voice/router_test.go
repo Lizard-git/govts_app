@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
+	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -80,14 +82,16 @@ func TestFindRecipientsReturnsOnlySameChannel(t *testing.T) {
 	sender := mustCreateSession(t, hub, "alice", nil)
 	sameChannel := mustCreateSession(t, hub, "bob", nil)
 	otherChannel := mustCreateSession(t, hub, "carol", nil)
+	music := mustCreateChannel(t, hub, domain.Channel{Name: "music"})
+	gaming := mustCreateChannel(t, hub, domain.Channel{Name: "gaming"})
 
-	if err := hub.JoinChannel(sender.ID, "music"); err != nil {
+	if err := hub.JoinChannel(sender.ID, music.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.JoinChannel(sameChannel.ID, "music"); err != nil {
+	if err := hub.JoinChannel(sameChannel.ID, music.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.JoinChannel(otherChannel.ID, "gaming"); err != nil {
+	if err := hub.JoinChannel(otherChannel.ID, gaming.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,6 +219,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 
 	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
 	hub := NewHub()
+	music := mustCreateChannel(t, hub, domain.Channel{Name: "music"})
 	session := mustCreateSession(t, hub, "alice", clientAddr)
 	if err := clientPacketConn.BindSession(session.ID); err != nil {
 		t.Fatal(err)
@@ -254,14 +259,80 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if !ok {
 		t.Fatalf("session %d not found", session.ID)
 	}
-	if got := updatedSession.Channel; got != "music" {
-		t.Fatalf("session channel = %q, want original channel %q", got, "music")
+	if got := updatedSession.ChannelID; got != music.ID {
+		t.Fatalf("session channel = %d, want original channel %d", got, music.ID)
 	}
 	if got := string(firstResponse.Payload); got != "music" {
 		t.Fatalf("first response channel = %q, want %q", got, "music")
 	}
 	if got := string(secondResponse.Payload); got != "music" {
 		t.Fatalf("cached response channel = %q, want %q", got, "music")
+	}
+}
+
+func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
+	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPacketConn := mustPacketConn(t, serverConn)
+	defer serverPacketConn.Close()
+
+	clientConn, err := net.DialUDP("udp4", nil, serverConn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPacketConn := mustClientPacketConn(t, clientConn)
+	defer clientPacketConn.Close()
+
+	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
+	hub := NewHub()
+	full := mustCreateChannel(t, hub, domain.Channel{Name: "full", MaxUsers: 1})
+	occupant := mustCreateSession(t, hub, "occupant", nil)
+	if err := hub.JoinChannel(occupant.ID, full.ID); err != nil {
+		t.Fatal(err)
+	}
+	session := mustCreateSession(t, hub, "alice", clientAddr)
+	if err := clientPacketConn.BindSession(session.ID); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewRequestCache()
+
+	request := protocol.VoicePacket{
+		Type:      protocol.PacketJoinChannel,
+		SessionID: session.ID,
+		RequestID: 8,
+		Payload:   []byte("missing"),
+	}
+	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	unknownResponse := receiveTestPacket(t, clientPacketConn)
+	if unknownResponse.Type != protocol.PacketError ||
+		!strings.Contains(string(unknownResponse.Payload), ErrChannelNotFound.Error()) {
+		t.Fatalf("unknown channel response = %+v", unknownResponse)
+	}
+	if len(hub.ListChannels()) != 2 {
+		t.Fatal("unknown join created a channel")
+	}
+
+	request.RequestID++
+	request.Payload = []byte(full.Name)
+	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	fullResponse := receiveTestPacket(t, clientPacketConn)
+	if fullResponse.Type != protocol.PacketError ||
+		!strings.Contains(string(fullResponse.Payload), ErrChannelFull.Error()) {
+		t.Fatalf("full channel response = %+v", fullResponse)
+	}
+
+	stored, ok := hub.Get(session.ID)
+	if !ok {
+		t.Fatal("joining session disappeared")
+	}
+	if stored.ChannelID != 0 {
+		t.Fatalf("failed joins moved session to channel %d", stored.ChannelID)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 
+	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -37,7 +38,7 @@ func HandleHelloPacket(
 			"client name is required",
 		)
 	}
-	if len(packet.Payload) > 64 {
+	if len(packet.Payload) > domain.MaxParticipantNameBytes {
 		return cacheAndSendHandshakeError(
 			conn,
 			cache,
@@ -139,7 +140,7 @@ func HandleJoinChannelPacket(
 		cache.Put(packet.SessionID, packet.RequestID, response)
 		return conn.WritePacket(packet.SessionID, addr, response)
 	}
-	if len(packet.Payload) > 64 {
+	if len(packet.Payload) > domain.MaxChannelNameBytes {
 		response := protocol.NewErrorPacket(
 			packet.SessionID,
 			packet.RequestID,
@@ -149,9 +150,15 @@ func HandleJoinChannelPacket(
 		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 
-	channel := string(packet.Payload)
-	if err := hub.JoinChannel(packet.SessionID, channel); err != nil {
-		return err
+	channel, err := hub.JoinChannelByName(packet.SessionID, string(packet.Payload))
+	if err != nil {
+		response := protocol.NewErrorPacket(
+			packet.SessionID,
+			packet.RequestID,
+			fmt.Sprintf("cannot join channel: %v", err),
+		)
+		cache.Put(packet.SessionID, packet.RequestID, response)
+		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 	session, ok := hub.Get(packet.SessionID)
 	if !ok {
@@ -161,7 +168,7 @@ func HandleJoinChannelPacket(
 		Type:      protocol.PacketJoinChannelAck,
 		SessionID: packet.SessionID,
 		RequestID: packet.RequestID,
-		Payload:   []byte(channel),
+		Payload:   []byte(channel.Name),
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	return SendToSession(conn, session, ack)

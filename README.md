@@ -32,6 +32,10 @@ microphone
 
 - UDP handshake `Hello` / `HelloAck`;
 - server-side sessions с криптографически случайным `SessionID`;
+- самостоятельная доменная модель каналов со стабильным в пределах запуска
+  `ChannelID`, иерархией, метаданными и фиксированным Opus-профилем;
+- потокобезопасный server-side registry каналов, участников и
+  `StateRevision`;
 - heartbeat каждые 5 секунд;
 - удаление session после 30 секунд неактивности;
 - подключение и переключение канала через `JoinChannel`;
@@ -41,9 +45,9 @@ microphone
 - воспроизведение через Oto;
 - `RequestID`, ожидание ответа и повтор control-запроса;
 - server-side deduplication через `RequestCache`;
-- явный disconnect клиента.
+- явный disconnect клиента;
 - единая codec-граница для всех логических пакетов с явным направлением,
-  endpoint и владельцем будущего ключа;
+  endpoint и отдельным контекстом получателя (`KeyOwnerID`);
 - разные transport-типы для connected client socket и unconnected server
   socket;
 - безопасный drop повреждённых/rejected датаграмм без остановки receive loop.
@@ -55,6 +59,8 @@ microphone
 - handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
 - нет аутентификации, шифрования и reconnect.
+- сервер пока создаёт только постоянный канал `default`; сетевого API создания
+  каналов, persistence и синхронизации полного состояния с клиентом ещё нет.
 
 ## Структура проекта
 
@@ -63,6 +69,7 @@ cmd/server/              запуск UDP-сервера
 cmd/client2/             запуск голосового клиента
 internal/audio/          устройства, PCM и Opus
 internal/client/         состояние и goroutine клиента
+internal/domain/         общие модели каналов, участников и ревизии
 internal/protocol/       бинарный формат пакета
 internal/server/         фоновые процессы сервера
 internal/transport/udp/  чтение и запись UDP
@@ -85,14 +92,14 @@ go run ./cmd/server
 Запустить клиентов в отдельных терминалах:
 
 ```bash
-go run ./cmd/client2 -name alice -channel general
-go run ./cmd/client2 -name bob   -channel general
+go run ./cmd/client2 -name alice -channel default
+go run ./cmd/client2 -name bob   -channel default
 ```
 
 Команды клиента:
 
 ```text
-/join music
+/join default
 /quit
 ```
 
@@ -163,17 +170,19 @@ transport остаются фатальными.
 | UDP read buffer | 1218 bytes | дополнительный байт обнаруживает превышение |
 | Максимальный datagram | 1217 bytes | реализовано |
 | Максимальный payload | 1200 bytes | реализовано |
-| Handshake timeout | 3 секунды | реализовано без retry |
+| Handshake timeout | 3 секунды на попытку | реализовано |
 | Control request timeout | 3 секунды на попытку | реализовано |
 | Control request attempts | 3 | реализовано |
 | Heartbeat interval | 5 секунд | реализовано |
 | Session timeout | 30 секунд | реализовано |
 | Session cleanup interval | 5 секунд | реализовано |
 
-## План исправлений
+## Завершённые технические этапы
 
-Исправления лучше вносить небольшими этапами. После каждого этапа проект должен
-собираться, а новые сценарии должны быть закреплены тестами.
+Ниже сохранён список уже выполненных крупных исправлений. Актуальный порядок
+дальнейшей разработки находится в
+[`readme_docs/development-plan.md`](readme_docs/development-plan.md), а
+отложенные направления — в [`readme_docs/backlog.md`](readme_docs/backlog.md).
 
 ### Этап 0. Привести документацию и окружение в актуальное состояние
 
@@ -183,7 +192,7 @@ transport остаются фатальными.
   `/burst`.
 - [x] Зафиксировать ограничения протокола: максимальный payload, допустимые
   типы пакетов, timeout и количество повторных запросов.
-- [ ] Исправить локальный `GOROOT`: он должен указывать на корень Go SDK, а не
+- [x] Исправить локальный `GOROOT`: он должен указывать на корень Go SDK, а не
   на каталог `bin`.
 - [x] Добавить корневой `.gitignore` для `.idea`, `*.iml`, `*.exe`, архивов и
   других локальных артефактов.
@@ -335,18 +344,38 @@ internal/transport/udp/    только UDP I/O
 - [x] Укрепить контракт codec/transport: передавать recipient context,
   соблюдать общий wire limit, безопасно отбрасывать rejected datagrams и
   разделить connected/unconnected API типами.
-- [ ] Добавить rate limiting для `Hello`, control requests и некорректных
-  пакетов.
-- [ ] Добавить структурированные метрики: активные sessions, packet loss,
-  dropped frames, cache size и ошибки декодирования.
-- [ ] Рассматривать QUIC/WebSocket только после измерения реальных ограничений
-  UDP-реализации.
+- Отложенные security, rate limiting, metrics и альтернативные transport-задачи
+  ведутся отдельно в [`readme_docs/backlog.md`](readme_docs/backlog.md).
 
-## Рекомендуемый порядок выполнения
+### Следующий активный этап. Модель каналов и синхронизация состояния
+
+- [x] Ввести самостоятельную server-side модель `Channel` со стабильным ID и
+  иерархией для будущего UI.
+- [ ] Добавить snapshot каналов, пользователей и их текущего размещения.
+- [ ] Хранить полученные snapshots в клиентском `State`.
+- [ ] Добавить server events `UserJoined`, `UserLeft` и `UserMoved` после
+  стабилизации начальной синхронизации.
+
+Сначала следует реализовать snapshots через существующий надёжный
+request/response-контур. События добавляются вторым шагом, чтобы не смешивать
+формат данных, начальную синхронизацию и live updates в одном изменении.
+Требования, полученные из целевого интерфейса каналов, описаны в
+[`readme_docs/channel-ui.md`](readme_docs/channel-ui.md).
+
+## Дальнейшая разработка
 
 ```text
-Этап 0 -> Этап 1 -> Этап 2 -> Этап 4 -> Этап 5 -> Этап 3 -> Этап 6 -> Этап 7
+Channel domain model
+    -> paged state snapshot
+    -> revisioned server events
+    -> UI-facing client service
+    -> voice controls
+    -> first GUI
 ```
 
-Этап 3 функционально самый крупный, поэтому его безопаснее начинать после того,
-как control plane, lifecycle и конкурентный доступ уже закреплены тестами.
+Доменная модель и переход server routing на `ChannelID` выполнены в Patch 2.
+Следующее небольшое изменение — конфигурация стартового дерева каналов из
+[`readme_docs/patch-3.md`](readme_docs/patch-3.md). После неё отдельным Patch 4
+начнётся paged state snapshot через существующий request/response-контур.
+Полный порядок и критерии готовности описаны в
+[`readme_docs/development-plan.md`](readme_docs/development-plan.md).

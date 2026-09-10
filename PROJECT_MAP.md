@@ -4,7 +4,7 @@
 
 ## 1. Назначение проекта
 
-`govots` — полноценное развиваемое приложение для голосового общения и совместной работы в реальном времени. Проект создаёт самостоятельную современную платформу, которая должна превзойти традиционные голосовые клиенты качеством связи, удобством и набором новых возможностей. Текущая UDP-реализация является фундаментом продукта: несколько клиентов уже могут проходить handshake, входить в именованные каналы и обмениваться Opus-аудио.
+`govots` — полноценное развиваемое приложение для голосового общения и совместной работы в реальном времени. Проект создаёт самостоятельную современную платформу, которая должна превзойти традиционные голосовые клиенты качеством связи, удобством и набором новых возможностей. Текущая UDP-реализация является фундаментом продукта: несколько клиентов уже могут проходить handshake, входить в зарегистрированные сервером каналы и обмениваться Opus-аудио.
 
 Цели проекта:
 
@@ -206,7 +206,32 @@ ClientPacketConn.ReceivePacket
 
 #### `readme_docs/patch-1.md`
 
-Завершённый технический патч укрепления границы `DatagramCodec`/UDP transport. Фиксирует исходные риски, целевые контракты context, размера, ошибок и владения socket, выполненные шаги, тестовую матрицу и границы следующего versioned-envelope патча.
+Завершённый технический патч укрепления границы `DatagramCodec`/UDP transport. Фиксирует исходные риски, целевые контракты context, размера, ошибок и владения socket, выполненные шаги и тестовую матрицу. Не реализованные security-идеи из него перенесены в backlog без назначения следующим патчем.
+
+#### `readme_docs/patch-2.md`
+
+Завершённый чеклист доменной модели каналов: общие channel domain types, server-side registry и revision, миграция server routing с имени канала на `ChannelID`, сохранение текущего wire format и тесты контрактов.
+
+#### `readme_docs/patch-3.md`
+
+Короткий исполняемый план конфигурации стартового дерева каналов: нейтральный
+`ChannelSource`, строгий bounded JSON как его первая внешняя реализация,
+атомарный bootstrap Hub, встроенный канал `main`, server CLI flag, fail-fast
+validation и тесты без изменения wire format. SQLite сможет заменить источник
+чтения для bootstrap, но стабильные ID и writable repository остаются отдельным
+этапом persistence. Paged state snapshot выделен в следующий патч.
+
+#### `readme_docs/backlog.md`
+
+Единый список направлений, которые сознательно не входят в ближайшую разработку: security и шифрование, защита от нагрузки, наблюдаемость, альтернативные transports и поздние продуктовые расширения. Активные этапы из этого файла исключены.
+
+#### `readme_docs/channel-ui.md`
+
+Требования к backend-модели, полученные из визуального ориентира будущего интерфейса каналов: иерархия, метаданные, участники, производные counters, аудиопрофиль и границы ещё не реализованных UI-действий. Определяет влияние UI на следующий state-synchronization patch без преждевременного выбора GUI framework.
+
+#### `readme_docs/development-plan.md`
+
+Единственный источник порядка активной разработки. Ведёт проект от authoritative channel domain model через paged snapshots, revisioned events и UI-facing client API к voice controls и первой версии GUI; для каждого этапа фиксирует границы и критерии готовности.
 
 #### `package.json`
 
@@ -516,19 +541,41 @@ Control plane после handshake.
 - Receive-тест доказывает сохранение `SenderID` и `Sequence` из voice packet.
 - Отдельно проверяется строгая валидация join response.
 
+### `internal/domain/` — общая модель состояния сервера
+
+#### `internal/domain/channel.go`
+
+Определяет не зависящие от transport и runtime типы для дерева каналов и
+будущих snapshots: `ChannelID`, `StateRevision`, `Channel`, `ChannelType`,
+`AudioProfile`, `Participant` и `ServerInfo`. Здесь же зафиксированы пределы
+имени, темы, описания и глубины дерева, а также единственный текущий профиль
+Opus: 48 кГц, mono, frame 20 мс, bitrate 24 кбит/с. `ChannelID == 0` означает,
+что участник ещё не присоединился к каналу.
+
 ### `internal/voice/` — серверные сессии, control и media routing
 
 #### `internal/voice/session.go`
 
-Модель одной серверной сессии: `ID`, отображаемое `Name`, текущий `Channel`, последний UDP `Addr` и время `LastSeen`. Изменяемые экземпляры принадлежат `Hub`; наружу выдаются глубокие snapshots.
+Модель одной серверной сессии: `ID`, отображаемое `Name`, текущий
+`ChannelID`, последний UDP `Addr` и время `LastSeen`. Изменяемые экземпляры
+принадлежат `Hub`; наружу выдаются глубокие snapshots.
 
 #### `internal/voice/hub.go`
 
-Потокобезопасный in-memory реестр сессий и каналов.
+Потокобезопасный authoritative in-memory реестр сессий и каналов.
 
-- `sync.RWMutex` защищает map; новые ненулевые ID генерируются через `crypto/rand`, а крайне маловероятные коллизии проверяются по map и повторяются.
+- `sync.RWMutex` защищает обе map; session ID генерируются через `crypto/rand`,
+  channel ID монотонны и ненулевые в пределах запуска.
+- При создании Hub регистрируется постоянный корневой канал `default`.
+- `CreateChannel`, `GetChannel`, `ListChannels` и `FindChannelByName` управляют
+  registry; проверяются metadata, parent, глубина, дубли sibling-имён и
+  `MaxUsers`, а список сортируется по `(ParentID, Position, ID)`.
+- `StateRevision` меняется только для видимого состояния: lifecycle/rename/move
+  участника и создание канала; heartbeat и смена UDP endpoint её не меняют.
 - `CreateSession`, `Add`, `Remove`, `Get` управляют lifecycle.
-- `JoinChannel`, `Rename`, `Touch`, `UpdateAddr` изменяют данные только под write lock.
+- `JoinChannel` и routing используют `ChannelID`; временный
+  `JoinChannelByName` только находит уже существующий канал для CLI wire-формата.
+- `Rename`, `Touch`, `UpdateAddr` изменяют данные только под write lock.
 - `Members`, `SessionsInChannel`, `Recipients`, `RecipientsFor` строят независимые snapshots для чтения/доставки.
 - `RecipientsFor` не позволяет маршрутизировать от неизвестной сессии или до join.
 - `RemoveInactive` атомарно удаляет просроченные сессии.
@@ -537,6 +584,13 @@ Control plane после handshake.
 #### `internal/voice/hub_test.go`
 
 Проверяет независимость возвращаемых snapshots, удаление сессий по времени, генерацию ненулевых уникальных ID, повтор генерации при нуле/коллизии, обработку ошибки источника случайности и конкурентную работу join/touch/routing/cleanup. Последний сценарий особенно важен для запуска под race detector.
+
+#### `internal/voice/channel_test.go`
+
+Проверяет стартовый канал, монотонность и порядок `ChannelID`, независимость
+domain snapshots, пределы metadata, parent hierarchy, sibling names, циклы,
+глубину, `MaxUsers`, семантику `StateRevision`, сортировку участников и
+параллельные join/remove/list операции.
 
 #### `internal/voice/cache.go`
 
@@ -560,7 +614,10 @@ Control plane после handshake.
 - `HandleHelloPacket` валидирует request ID и имя до 64 байт, обеспечивает handshake deduplication и создаёт session.
 - `HandleHeartbeatPacket` валидирует адрес и обновляет `LastSeen`.
 - `HandleDisconnectPacket` удаляет session и её cache entries.
-- `HandleJoinChannelPacket` валидирует endpoint, возвращает cached response для duplicate request, проверяет имя канала до 64 байт, меняет Hub и кэширует ACK/Error.
+- `HandleJoinChannelPacket` валидирует endpoint, возвращает cached response для
+  duplicate request, ищет уже существующий канал по имени и кэширует ACK/Error.
+  Неизвестный, неоднозначный или заполненный канал отклоняется и не создаётся;
+  успешный ACK сохраняет прежний plain payload с именем канала.
 - `SendError` и `cacheAndSendHandshakeError` формируют protocol error responses.
 
 #### `internal/voice/delivery.go`
@@ -589,7 +646,7 @@ Control plane после handshake.
 
 #### `internal/voice/router_test.go`
 
-Интеграционные тесты серверного dispatcher/routing слоя. Покрывают защиту endpoint binding, запрет voice до join, выбор только получателей того же канала, различие sender и recipient/key-owner, deduplication join и hello, остановку `ServeUDP` по context, ошибку закрытого socket и продолжение работы после malformed packet. Вспомогательный `receiveTestPacket` читает реальные ответы через codec-границу.
+Интеграционные тесты серверного dispatcher/routing слоя. Покрывают защиту endpoint binding, запрет voice до join, выбор только получателей того же `ChannelID`, различие sender и recipient/key-owner, deduplication join и hello, ошибки неизвестного/заполненного канала без автоматического создания, остановку `ServeUDP` по context, ошибку закрытого socket и продолжение работы после malformed packet. Вспомогательный `receiveTestPacket` читает реальные ответы через codec-границу.
 
 ### `internal/server/` — фоновые процессы серверного приложения
 
@@ -662,7 +719,7 @@ PowerShell-скрипт, записывающий пользовательски
 | Jitter | `internal/client/jitter_test.go` | reorder, loss, duplicate, old, wraparound, stream isolation |
 | Decode | `internal/client/decode_test.go` | decoder-per-sender и cleanup |
 | Mixer | `internal/client/mixer_test.go` | суммирование, saturation, очереди sender-ов |
-| Server state | `internal/voice/hub_test.go` | snapshots, expiry, concurrent access |
+| Server state | `internal/voice/hub_test.go`, `channel_test.go` | snapshots, channel hierarchy/limits/revision, expiry, concurrent access |
 | Request cache | `internal/voice/cache_test.go` | TTL, capacity, copies, session/endpoint keys |
 | Server routing | `internal/voice/router_test.go` | endpoint validation, channel routing, dedup, server lifecycle |
 | Client lifecycle | `cmd/client2/supervisor_test.go` | cancellation, shutdown order, отсутствие зависания |
@@ -683,7 +740,7 @@ go test -race ./...
 |---|---|---|
 | Wire format или новый packet type | `internal/protocol/packet.go` | transport, `voice.HandlePacket`, `client.ReceiveLoop`, protocol tests |
 | Handshake/retry | `internal/client/request.go` | `internal/voice/control.go`, cache, pipeline/router tests |
-| Каналы и выбор получателей | `internal/voice/hub.go` | control/media handlers и hub/router tests |
+| Каналы и выбор получателей | `internal/domain/channel.go`, `internal/voice/hub.go` | control/media handlers и channel/hub/router tests |
 | Захват микрофона | `internal/audio/malgo.go` | `client.RecordLoop`, runtime shutdown |
 | Opus-параметры | `cmd/client2/runtime.go`, `internal/audio/opus.go` | frame size, payload limit, decoder-per-sender |
 | Обработку потерь/порядка | `internal/client/jitter.go` | jitter tests и Opus PLC roadmap |
@@ -714,15 +771,15 @@ go test -race ./...
 go run ./cmd/server
 
 # Терминал 2
-go run ./cmd/client2 -name alice -channel general
+go run ./cmd/client2 -name alice -channel default
 
 # Терминал 3
-go run ./cmd/client2 -name bob -channel general
+go run ./cmd/client2 -name bob -channel default
 ```
 
 Во время работы клиента доступны:
 
 ```text
-/join music
+/join default
 /quit
 ```

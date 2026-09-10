@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"example.com/go-voice-mvp/internal/domain"
 )
 
 func TestHubReturnsIndependentSessionSnapshots(t *testing.T) {
@@ -31,13 +33,13 @@ func TestHubReturnsIndependentSessionSnapshots(t *testing.T) {
 		t.Fatalf("session address = %v, want 127.0.0.1:5000", first.Addr)
 	}
 
-	first.Channel = "changed snapshot"
+	first.ChannelID = 999
 	first.Addr.Port = 7000
 	second, ok := hub.Get(created.ID)
 	if !ok {
 		t.Fatalf("session %d not found", created.ID)
 	}
-	if second.Channel != "" || second.Addr.Port != 5000 {
+	if second.ChannelID != 0 || second.Addr.Port != 5000 {
 		t.Fatalf("mutating snapshot changed Hub session: %+v", second)
 	}
 }
@@ -90,11 +92,12 @@ func TestHubConcurrentJoinTouchRoutingAndCleanup(t *testing.T) {
 	hub := NewHub()
 	sender := mustCreateSession(t, hub, "sender", nil)
 	recipient := mustCreateSession(t, hub, "recipient", nil)
+	music := mustCreateChannel(t, hub, domain.Channel{Name: "music"})
 
-	if err := hub.JoinChannel(sender.ID, "music"); err != nil {
+	if err := hub.JoinChannel(sender.ID, music.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.JoinChannel(recipient.ID, "music"); err != nil {
+	if err := hub.JoinChannel(recipient.ID, music.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +113,7 @@ func TestHubConcurrentJoinTouchRoutingAndCleanup(t *testing.T) {
 			for i := 0; i < iterations; i++ {
 				switch worker {
 				case 0:
-					if err := hub.JoinChannel(sender.ID, "music"); err != nil {
+					if err := hub.JoinChannel(sender.ID, music.ID); err != nil {
 						t.Errorf("JoinChannel() error = %v", err)
 						return
 					}
@@ -147,6 +150,16 @@ func TestHubConcurrentJoinTouchRoutingAndCleanup(t *testing.T) {
 
 	close(start)
 	wg.Wait()
+}
+
+func mustCreateChannel(t *testing.T, hub *Hub, channel domain.Channel) domain.Channel {
+	t.Helper()
+
+	created, err := hub.CreateChannel(channel)
+	if err != nil {
+		t.Fatalf("CreateChannel() error = %v", err)
+	}
+	return created
 }
 
 func TestHubCreatesNonZeroUniqueSessionIDs(t *testing.T) {
