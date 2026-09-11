@@ -131,9 +131,6 @@ func TestHubValidatesChannelParentDepthAndNames(t *testing.T) {
 	right := mustCreateChannel(t, hub, domain.Channel{Name: "right"})
 	mustCreateChannel(t, hub, domain.Channel{ParentID: left.ID, Name: "room"})
 	mustCreateChannel(t, hub, domain.Channel{ParentID: right.ID, Name: "room"})
-	if _, err := hub.FindChannelByName("ROOM"); !errors.Is(err, ErrChannelNameAmbiguous) {
-		t.Fatalf("FindChannelByName() error = %v, want %v", err, ErrChannelNameAmbiguous)
-	}
 
 	parentID := DefaultChannelID
 	for depth := 2; depth <= domain.MaxChannelDepth; depth++ {

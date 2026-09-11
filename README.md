@@ -373,13 +373,19 @@ internal/transport/udp/    только UDP I/O
 
 - [x] Ввести самостоятельную server-side модель `Channel` со стабильным ID и
   иерархией для будущего UI.
-- [ ] Добавить snapshot каналов, пользователей и их текущего размещения.
-- [ ] Хранить полученные snapshots в клиентском `State`.
+- [x] Добавить versioned paged snapshot информации о сервере, каналов,
+  пользователей и их текущего размещения.
+- [x] Хранить только полностью загруженный и проверенный snapshot в клиентском
+  `State`; при смене revision выполнять bounded restart.
+- [x] Перевести wire-контракт join на `ChannelID`, разрешая имя только локально
+  по уже полученному snapshot.
+- [ ] Реализовать обнаружение потери сервера, автоматический reconnect и
+  консольное дерево каналов/участников по плану Patch 5.
 - [ ] Добавить server events `UserJoined`, `UserLeft` и `UserMoved` после
-  стабилизации начальной синхронизации.
+  стабилизации lifecycle соединения.
 
-Сначала следует реализовать snapshots через существующий надёжный
-request/response-контур. События добавляются вторым шагом, чтобы не смешивать
+Snapshots реализованы через существующий надёжный request/response-контур.
+События добавляются следующим шагом, чтобы не смешивать
 формат данных, начальную синхронизацию и live updates в одном изменении.
 Требования, полученные из целевого интерфейса каналов, описаны в
 [`readme_docs/channel-ui.md`](readme_docs/channel-ui.md).
@@ -388,7 +394,7 @@ request/response-контур. События добавляются вторы�
 
 ```text
 Channel domain model
-    -> paged state snapshot
+    -> paged state snapshot (готово)
     -> revisioned server events
     -> UI-facing client service
     -> voice controls
@@ -397,8 +403,8 @@ Channel domain model
 
 Доменная модель и переход server routing на `ChannelID` выполнены в Patch 2.
 [`Patch 3`](readme_docs/patch-3.md) добавил конфигурацию стартового дерева и
-локальную read-only консоль сервера. Следующее отдельное изменение — paged
-state snapshot и ID-based join по плану
-[`Patch 4`](readme_docs/patch-4.md) через существующий request/response-контур.
+локальную read-only консоль сервера. [`Patch 4`](readme_docs/patch-4.md)
+добавил paged state snapshot, атомарное клиентское состояние и ID-based join
+через существующий request/response-контур.
 Полный порядок и критерии готовности описаны в
 [`readme_docs/development-plan.md`](readme_docs/development-plan.md).

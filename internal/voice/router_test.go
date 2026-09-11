@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -225,11 +226,15 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 		t.Fatal(err)
 	}
 	cache := NewRequestCache()
+	joinPayload, err := protocol.EncodeJoinChannelRequest(music.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
 		SessionID: session.ID,
 		RequestID: 7,
-		Payload:   []byte("music"),
+		Payload:   joinPayload,
 	}
 
 	if err := HandleJoinChannelPacket(
@@ -243,7 +248,10 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	}
 	firstResponse := receiveTestPacket(t, clientPacketConn)
 
-	request.Payload = []byte("gaming")
+	request.Payload, err = protocol.EncodeJoinChannelRequest(DefaultChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := HandleJoinChannelPacket(
 		serverPacketConn,
 		hub,
@@ -262,11 +270,12 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if got := updatedSession.ChannelID; got != music.ID {
 		t.Fatalf("session channel = %d, want original channel %d", got, music.ID)
 	}
-	if got := string(firstResponse.Payload); got != "music" {
-		t.Fatalf("first response channel = %q, want %q", got, "music")
+	firstID, _, err := protocol.DecodeJoinChannelAck(firstResponse.Payload)
+	if err != nil || firstID != music.ID {
+		t.Fatalf("first response = (%d, %v), want channel %d", firstID, err, music.ID)
 	}
-	if got := string(secondResponse.Payload); got != "music" {
-		t.Fatalf("cached response channel = %q, want %q", got, "music")
+	if !bytes.Equal(secondResponse.Payload, firstResponse.Payload) {
+		t.Fatal("cached response payload differs")
 	}
 }
 
@@ -297,12 +306,16 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := NewRequestCache()
+	missingPayload, err := protocol.EncodeJoinChannelRequest(999)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	request := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannel,
 		SessionID: session.ID,
 		RequestID: 8,
-		Payload:   []byte("missing"),
+		Payload:   missingPayload,
 	}
 	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
 		t.Fatal(err)
@@ -317,7 +330,10 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 	}
 
 	request.RequestID++
-	request.Payload = []byte(full.Name)
+	request.Payload, err = protocol.EncodeJoinChannelRequest(full.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
 		t.Fatal(err)
 	}

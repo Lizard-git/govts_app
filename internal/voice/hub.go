@@ -16,18 +16,19 @@ import (
 )
 
 var (
-	ErrSessionNotFound      = errors.New("session not found")
-	ErrSessionNotInChannel  = errors.New("session has not joined a channel")
-	ErrChannelNotFound      = errors.New("channel not found")
-	ErrChannelFull          = errors.New("channel is full")
-	ErrChannelNameTaken     = errors.New("channel name is already in use")
-	ErrChannelNameAmbiguous = errors.New("channel name is ambiguous")
-	ErrInvalidChannel       = errors.New("invalid channel")
+	ErrSessionNotFound     = errors.New("session not found")
+	ErrSessionNotInChannel = errors.New("session has not joined a channel")
+	ErrChannelNotFound     = errors.New("channel not found")
+	ErrChannelFull         = errors.New("channel is full")
+	ErrChannelNameTaken    = errors.New("channel name is already in use")
+	ErrInvalidChannel      = errors.New("invalid channel")
+	ErrInvalidServerInfo   = errors.New("invalid server info")
 )
 
 const (
 	DefaultChannelID   domain.ChannelID = 1
 	DefaultChannelName                  = "default"
+	DefaultServerName                   = "ReCon Server"
 )
 
 type sessionIDGenerator func() (uint64, error)
@@ -39,24 +40,45 @@ type Hub struct {
 	newSessionID  sessionIDGenerator
 	nextChannelID domain.ChannelID
 	revision      domain.StateRevision
+	serverInfo    domain.ServerInfo
 }
 
 // OperationalSnapshot is a point-in-time copy for local server diagnostics.
 // Unlike the future client state snapshot, it intentionally contains runtime
 // session data such as UDP endpoints and LastSeen.
 type OperationalSnapshot struct {
-	Revision domain.StateRevision
-	Channels []domain.Channel
-	Sessions []Session
+	Revision   domain.StateRevision
+	ServerInfo domain.ServerInfo
+	Channels   []domain.Channel
+	Sessions   []Session
 }
 
 func NewHub() *Hub {
-	return newHub(randomSessionID)
+	hub, err := newHubWithServerInfo(randomSessionID, domain.ServerInfo{Name: DefaultServerName})
+	if err != nil {
+		panic(err)
+	}
+	return hub
 }
 
 func newHub(newSessionID sessionIDGenerator) *Hub {
+	hub, err := newHubWithServerInfo(newSessionID, domain.ServerInfo{Name: DefaultServerName})
+	if err != nil {
+		panic(err)
+	}
+	return hub
+}
+
+func NewHubWithServerInfo(info domain.ServerInfo) (*Hub, error) {
+	return newHubWithServerInfo(randomSessionID, info)
+}
+
+func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInfo) (*Hub, error) {
 	if newSessionID == nil {
 		panic("session ID generator is required")
+	}
+	if !utf8.ValidString(info.Name) || info.Name == "" || len(info.Name) > domain.MaxServerNameBytes || strings.TrimSpace(info.Name) != info.Name {
+		return nil, fmt.Errorf("%w: server name must be valid UTF-8, trimmed, and 1..%d bytes", ErrInvalidServerInfo, domain.MaxServerNameBytes)
 	}
 
 	defaultChannel := domain.Channel{
@@ -72,7 +94,8 @@ func newHub(newSessionID sessionIDGenerator) *Hub {
 		newSessionID:  newSessionID,
 		nextChannelID: DefaultChannelID + 1,
 		revision:      1,
-	}
+		serverInfo:    info,
+	}, nil
 }
 
 func (h *Hub) Add(s *Session) {
@@ -108,24 +131,18 @@ func (h *Hub) Get(id uint64) (Session, bool) {
 }
 
 func (h *Hub) JoinChannel(id uint64, channelID domain.ChannelID) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return h.joinChannelLocked(id, channelID)
+	_, err := h.JoinChannelWithRevision(id, channelID)
+	return err
 }
 
-func (h *Hub) JoinChannelByName(id uint64, name string) (domain.Channel, error) {
+func (h *Hub) JoinChannelWithRevision(id uint64, channelID domain.ChannelID) (domain.StateRevision, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	channel, err := h.findChannelByNameLocked(name)
-	if err != nil {
-		return domain.Channel{}, err
+	if err := h.joinChannelLocked(id, channelID); err != nil {
+		return 0, err
 	}
-	if err := h.joinChannelLocked(id, channel.ID); err != nil {
-		return domain.Channel{}, err
-	}
-	return *channel, nil
+	return h.revision, nil
 }
 
 func (h *Hub) joinChannelLocked(id uint64, channelID domain.ChannelID) error {
@@ -159,6 +176,9 @@ func (h *Hub) Rename(id uint64, name string) error {
 	}
 	if session.Name == name {
 		return nil
+	}
+	if err := validateParticipantName(name); err != nil {
+		return err
 	}
 	session.Name = name
 	h.revision++
@@ -248,21 +268,22 @@ func (h *Hub) Inspect() OperationalSnapshot {
 	sortSessionsByID(sessions)
 
 	return OperationalSnapshot{
-		Revision: h.revision,
-		Channels: h.channelsSnapshotLocked(),
-		Sessions: sessions,
+		Revision:   h.revision,
+		ServerInfo: h.serverInfo,
+		Channels:   h.channelsSnapshotLocked(),
+		Sessions:   sessions,
 	}
 }
 
-func (h *Hub) FindChannelByName(name string) (domain.Channel, error) {
+func (h *Hub) ClientSnapshot() domain.ServerSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-
-	channel, err := h.findChannelByNameLocked(name)
-	if err != nil {
-		return domain.Channel{}, err
+	participants := make([]domain.Participant, 0, len(h.sessions))
+	for _, session := range h.sessions {
+		participants = append(participants, domain.Participant{SessionID: session.ID, DisplayName: session.Name, ChannelID: session.ChannelID})
 	}
-	return *cloneChannel(*channel), nil
+	sort.Slice(participants, func(i, j int) bool { return participants[i].SessionID < participants[j].SessionID })
+	return domain.ServerSnapshot{Revision: h.revision, Info: h.serverInfo, Channels: h.channelsSnapshotLocked(), Participants: participants}
 }
 
 func (h *Hub) Participants() []domain.Participant {
@@ -350,6 +371,9 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := validateParticipantName(name); err != nil {
+		return Session{}, err
+	}
 
 	id, err := h.availableSessionID()
 	if err != nil {
@@ -364,6 +388,13 @@ func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
 	h.sessions[id] = session
 	h.revision++
 	return *cloneSession(session), nil
+}
+
+func validateParticipantName(name string) error {
+	if !utf8.ValidString(name) || name == "" || len(name) > domain.MaxParticipantNameBytes || strings.TrimSpace(name) != name {
+		return fmt.Errorf("invalid participant name: must be valid UTF-8, trimmed, and 1..%d bytes", domain.MaxParticipantNameBytes)
+	}
+	return nil
 }
 
 func (h *Hub) availableSessionID() (uint64, error) {
@@ -508,23 +539,6 @@ func (h *Hub) channelNameExistsLocked(parentID domain.ChannelID, name string) bo
 		}
 	}
 	return false
-}
-
-func (h *Hub) findChannelByNameLocked(name string) (*domain.Channel, error) {
-	var found *domain.Channel
-	for _, channel := range h.channels {
-		if !strings.EqualFold(channel.Name, name) {
-			continue
-		}
-		if found != nil {
-			return nil, fmt.Errorf("%w: %q", ErrChannelNameAmbiguous, name)
-		}
-		found = channel
-	}
-	if found == nil {
-		return nil, fmt.Errorf("%w: %q", ErrChannelNotFound, name)
-	}
-	return found, nil
 }
 
 func (h *Hub) channelMemberCountLocked(channelID domain.ChannelID) uint32 {

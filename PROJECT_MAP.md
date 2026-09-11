@@ -97,7 +97,7 @@ internal/transport/udp → internal/protocol.DatagramCodec
 2. `JoinChannel` вызывает общий `DoRequest`: регистрирует ожидающий ответ в `State.pending`, присваивает новый `RequestID` и до трёх раз отправляет один логический запрос.
 3. Сервер валидирует соответствие `SessionID` исходному `IP:port`, проверяет request cache и меняет канал в `Hub` только при cache miss.
 4. `PacketJoinChannelAck` проходит через `ReceiveLoop → controlCh → ControlLoop → State.CompleteRequest`.
-5. Клиент сверяет подтверждённое имя канала с запрошенным и только после успеха запускает захват микрофона. Поэтому voice-пакеты не отправляются до подтверждённого join.
+5. Клиент сверяет подтверждённый `ChannelID`, повторно загружает полный snapshot и только после успеха запускает захват микрофона. Поэтому voice-пакеты не отправляются до подтверждённого join и финальной синхронизации.
 
 ### 3.3. Исходящий звук
 
@@ -170,9 +170,11 @@ ClientPacketConn.ReceivePacket
 | 3 | `PacketHelloAck` | сервер → клиент; назначенный `SessionID` |
 | 4 | `PacketHeartbeat` | клиент → сервер; обновление `LastSeen` |
 | 5 | `PacketDisconnect` | клиент → сервер; явное удаление сессии |
-| 6 | `PacketJoinChannel` | клиент → сервер; имя канала в payload |
-| 7 | `PacketJoinChannelAck` | сервер → клиент; подтверждённый канал |
+| 6 | `PacketJoinChannel` | клиент → сервер; big-endian `ChannelID` |
+| 7 | `PacketJoinChannelAck` | сервер → клиент; `ChannelID` и `StateRevision` |
 | 8 | `PacketError` | сервер → клиент; текст ошибки в payload |
+| 9 | `PacketStateSnapshotRequest` | клиент → сервер; metadata/page request |
+| 10 | `PacketStateSnapshotAck` | сервер → клиент; versioned snapshot response |
 
 ## 5. Карта каталогов и файлов
 
@@ -215,7 +217,7 @@ ClientPacketConn.ReceivePacket
 #### `readme_docs/patch-3.md`
 
 Завершённый план конфигурации стартового дерева каналов: нейтральный
-`ChannelSource`, строгий bounded JSON как его первая внешняя реализация,
+`BootstrapSource`, строгий bounded JSON как его первая внешняя реализация,
 атомарный bootstrap Hub, встроенный канал `main`, server CLI flag, fail-fast
 validation, локальную read-only консоль состояния и тесты без изменения wire
 format. SQLite сможет заменить источник чтения для bootstrap, но стабильные ID
@@ -227,9 +229,8 @@ format. SQLite сможет заменить источник чтения дл�
 
 Исполняемый план initial state synchronization: versioned binary metadata,
 paged channels/participants, проверка одной `StateRevision`, атомарная
-публикация client snapshot и основной join по `ChannelID`. Старый name-based
-join остаётся отдельным wire-совместимым адаптером; live events и GUI в патч не
-входят.
+публикация client snapshot и полный перевод join payload на `ChannelID` без
+name-based compatibility layer. Live events и GUI в патч не входят.
 
 #### `readme_docs/backlog.md`
 
@@ -242,6 +243,12 @@ join остаётся отдельным wire-совместимым адапт�
 #### `readme_docs/development-plan.md`
 
 Единственный источник порядка активной разработки. Ведёт проект от authoritative channel domain model через paged snapshots, revisioned events и UI-facing client API к voice controls и первой версии GUI; для каждого этапа фиксирует границы и критерии готовности.
+
+#### `readme_docs/patch-5.md`
+
+Исполняемый план следующего изменения: подтверждаемый heartbeat, автоматический
+reconnect с задержками `1s → 2s → 4s → 4s...`, безопасная смена session binding
+и временное консольное дерево каналов/участников поверх `ServerSnapshot`.
 
 #### `package.json`
 
@@ -286,7 +293,7 @@ CI workflow `Go checks`, запускаемый на push, pull request и вр�
 
 - `main` разбирает `-config` и остаётся единственным местом с `log.Fatal`.
 - `run` создаёт signal-aware context и до открытия UDP socket атомарно строит
-  Hub через выбранный `ChannelSource`.
+  Hub через выбранный `BootstrapSource`.
 - Без файла используется встроенный канал `main`; с файлом загружается строгое
   пользовательское дерево поверх системного `default`.
 - Параллельно запускает `server.CleanupLoop` и локальную read-only консоль, а в
@@ -383,13 +390,26 @@ Composition root одной активной клиентской сессии �
 Единственный источник истины для бинарного формата UDP-пакета.
 
 - Объявляет конкретные ошибки формата и верхнеуровневую категорию `ErrRejectedDatagram` для безопасно отбрасываемого входа.
-- Задаёт восемь packet types и границу `PacketEnd` для валидации.
+- Задаёт десять packet types и границу `PacketEnd` для валидации.
 - `VoicePacket` — универсальный envelope control и voice сообщений.
 - `HeaderSize`, `MaxPayloadSize`, `MaxWireDatagramSize` фиксируют сетевые лимиты; `MaxDatagramSize` временно оставлен совместимым alias.
 - `EncodePacket` проверяет type и payload, затем пишет big-endian header.
 - `DecodePacket` проверяет полный размер и type до разбора полей и сохраняет через `errors.Is` одновременно категорию rejected input и конкретную причину.
 - `NewVoicePacket` и `NewErrorPacket` — конструкторы двух частых вариантов.
 - `packetName`, `makePayload`, `encodeSessionID` — внутренние вспомогательные функции; основной encode path использует `encodeHeader`.
+
+#### `internal/protocol/join.go`
+
+Строгий ID-based payload-контракт join: request содержит ровно один big-endian
+`ChannelID`, ACK — `ChannelID` и `StateRevision`. Нулевые значения, усечённый и
+расширенный payload отклоняются.
+
+#### `internal/protocol/snapshot.go`
+
+Versioned бинарный контракт metadata/channels/participants. Запрос содержит
+kind, ожидаемую revision, offset и limit; ответ — статус `OK` или
+`RevisionChanged`, progression страницы и типизированные items. Codec проверяет
+каноническую структуру, UTF-8/лимиты строк, enum-поля и предел payload 1200 байт.
 
 #### `internal/protocol/codec.go`
 
@@ -457,12 +477,14 @@ Windows-only реализация, выбранная build tag `windows`. Ра�
 
 Потокобезопасное состояние активной клиентской сессии.
 
-- Под mutex хранит `sessionID`, имя, текущий канал и map ожидающих control-запросов.
+- Под mutex хранит `sessionID`, имя, текущий `ChannelID`, глубокую копию
+  последнего полного `ServerSnapshot` и map ожидающих control-запросов.
 - `atomic.Uint32` выдаёт монотонные request IDs для запросов после handshake.
 - `RegisterRequest` создаёт одноэлементный response channel.
 - `CompleteRequest` атомарно извлекает pending request, затем вне lock доставляет ответ и закрывает канал.
 - `CancelRequest` очищает запись при timeout/cancel.
-- В текущем API доступны геттеры session/channel и setter канала; имя сохраняется, но пока наружу не читается.
+- `Snapshot` возвращает глубокую копию, а `ReplaceSnapshot` атомарно публикует
+  только полностью собранное состояние.
 
 #### `internal/client/request.go`
 
@@ -474,18 +496,29 @@ Windows-only реализация, выбранная build tag `windows`. Ра�
 - Один `RequestID` сохраняется на всех попытках, что вместе с серверным cache даёт идемпотентность.
 - `PacketError`, timeout и context cancellation превращаются в осмысленные ошибки.
 
+#### `internal/client/snapshot.go`
+
+Загружает metadata, затем все страницы каналов и участников одной revision.
+Проверяет totals до allocation, progression offset, сортировку, уникальность ID,
+иерархию и ссылки участников. При `RevisionChanged` полностью повторяет загрузку
+не более трёх раз. Здесь же имя или числовой selector локально разрешается в
+однозначный `ChannelID`.
+
 #### `internal/client/control.go`
 
 Control plane после handshake.
 
-- `ControlLoop` принимает демультиплексированные control-пакеты, игнорирует чужой `SessionID` и завершает pending join/error requests.
+- `ControlLoop` принимает демультиплексированные control-пакеты, игнорирует чужой `SessionID` и завершает pending join/snapshot/error requests.
 - `HeartbeatLoop` каждые пять секунд отправляет session heartbeat.
 - `Disconnect` посылает одноразовый пакет без ожидания ACK.
-- `JoinChannel` использует `DoRequest`, проверяет type и точное имя подтверждённого канала, затем обновляет `State`.
+- `JoinChannel` использует `DoRequest`, отправляет только `ChannelID`, проверяет
+  ID и revision строгого ACK, затем обновляет `State`.
 
 #### `internal/client/command.go`
 
-Простой интерактивный CLI поверх stdin. Поддерживает `/join <channel>` для синхронного перехода в другой канал и `/quit` для отмены общего context. Неизвестные команды и неправильное число аргументов логируются. Завершение stdin само по себе не отменяет клиент.
+Простой интерактивный CLI поверх stdin. `/join <id|name>` разрешает канал по
+локальному snapshot, выполняет ID-join и после ACK обновляет snapshot; `/quit`
+отменяет общий context. Завершение stdin само по себе не отменяет клиент.
 
 #### `internal/client/capture.go`
 
@@ -570,7 +603,7 @@ Control plane после handshake.
 
 Определяет не зависящие от transport и runtime типы для дерева каналов и
 будущих snapshots: `ChannelID`, `StateRevision`, `Channel`, `ChannelType`,
-`AudioProfile`, `Participant` и `ServerInfo`. Здесь же зафиксированы пределы
+`AudioProfile`, `Participant`, `ServerInfo` и client-safe `ServerSnapshot`. Здесь же зафиксированы пределы
 имени, темы, описания и глубины дерева, а также единственный текущий профиль
 Opus: 48 кГц, mono, frame 20 мс, bitrate 24 кбит/с. `ChannelID == 0` означает,
 что участник ещё не присоединился к каналу.
@@ -590,17 +623,18 @@ Opus: 48 кГц, mono, frame 20 мс, bitrate 24 кбит/с. `ChannelID == 0` �
 - `sync.RWMutex` защищает обе map; session ID генерируются через `crypto/rand`,
   channel ID монотонны и ненулевые в пределах запуска.
 - При создании Hub регистрируется постоянный корневой канал `default`.
-- `CreateChannel`, `GetChannel`, `ListChannels` и `FindChannelByName` управляют
+- `CreateChannel`, `GetChannel` и `ListChannels` управляют
   registry; проверяются metadata, parent, глубина, дубли sibling-имён и
   `MaxUsers`, а список сортируется по `(ParentID, Position, ID)`.
 - `StateRevision` меняется только для видимого состояния: lifecycle/rename/move
   участника и создание канала; heartbeat и смена UDP endpoint её не меняют.
 - `Inspect` под одним `RLock` возвращает независимый operational snapshot
-  revision/channels/sessions для локальной консоли; в отличие от будущего
-  client snapshot он намеренно содержит endpoint и `LastSeen`.
+  server info/revision/channels/sessions для локальной консоли и намеренно
+  содержит endpoint и `LastSeen`; `ClientSnapshot` возвращает отдельную
+  безопасную копию только с каналами и участниками.
 - `CreateSession`, `Add`, `Remove`, `Get` управляют lifecycle.
-- `JoinChannel` и routing используют `ChannelID`; временный
-  `JoinChannelByName` только находит уже существующий канал для CLI wire-формата.
+- `JoinChannel` и routing используют только `ChannelID`; name-based server API
+  и name-based wire payload отсутствуют.
 - `Rename`, `Touch`, `UpdateAddr` изменяют данные только под write lock.
 - `Members`, `SessionsInChannel`, `Recipients`, `RecipientsFor` строят независимые snapshots для чтения/доставки.
 - `RecipientsFor` не позволяет маршрутизировать от неизвестной сессии или до join.
@@ -640,11 +674,16 @@ domain snapshots, пределы metadata, parent hierarchy, sibling names, ци
 - `HandleHelloPacket` валидирует request ID и имя до 64 байт, обеспечивает handshake deduplication и создаёт session.
 - `HandleHeartbeatPacket` валидирует адрес и обновляет `LastSeen`.
 - `HandleDisconnectPacket` удаляет session и её cache entries.
-- `HandleJoinChannelPacket` валидирует endpoint, возвращает cached response для
-  duplicate request, ищет уже существующий канал по имени и кэширует ACK/Error.
-  Неизвестный, неоднозначный или заполненный канал отклоняется и не создаётся;
-  успешный ACK сохраняет прежний plain payload с именем канала.
+- `HandleJoinChannelPacket` валидирует endpoint и request ID, декодирует
+  `ChannelID`, возвращает cached response для duplicate request и кэширует
+  ACK/Error. Неизвестный или заполненный канал отклоняется и не создаётся.
 - `SendError` и `cacheAndSendHandshakeError` формируют protocol error responses.
+
+#### `internal/voice/snapshot.go`
+
+Обрабатывает metadata/page requests из client-safe копии Hub. Сравнивает
+revision, формирует bounded страницы по limit и byte budget, поддерживает
+каноническую пустую финальную страницу и использует общий request cache.
 
 #### `internal/voice/delivery.go`
 
@@ -678,9 +717,9 @@ domain snapshots, пределы metadata, parent hierarchy, sibling names, ци
 
 #### `internal/server/config.go`
 
-Граница загрузки стартовых каналов. Нейтральный `ChannelSource` отделяет
-bootstrap от формата хранения; `BuiltinChannelSource` возвращает `main`, а
-`JSONChannelSource` строго декодирует файл размером до 64 КиБ. Bootstrap
+Граница загрузки стартового состояния. Нейтральный `BootstrapSource` отделяет
+bootstrap от формата хранения; `BuiltinBootstrapSource` возвращает имя сервера
+и `main`, а `JSONBootstrapSource` строго декодирует файл размером до 64 КиБ. Bootstrap
 ограничивает дерево 256 каналами, создаёт parent-first через `Hub.CreateChannel`
 и возвращает Hub только после полного успеха. JSON не назначает runtime ID.
 
@@ -814,12 +853,13 @@ go test -race ./...
 - Нет аутентификации, шифрования, HMAC/AEAD и защиты от replay; проверка `IP:port` — лишь базовая привязка endpoint.
 - `SessionID` является криптографически случайным 64-битным идентификатором, но до появления аутентификации и защиты пакетов его всё равно нельзя считать полноценным session token или единственным средством авторизации.
 - Клиентский host/port и серверный port пока зашиты в коде; server config
-  описывает только стартовые каналы.
+  описывает имя сервера и стартовые каналы.
 - Один UDP socket переносит control и media; при нагрузке они конкурируют за одну очередь.
 - Сервер выполняет рассылку последовательно и прекращает `SendToSessions` после первой ошибки отправки.
 - Jitter buffer фиксированный; нет adaptive jitter, PLC и детальной наружной телеметрии loss/duplicate/drop.
 - Mixer использует простое суммирование с saturation; нет master/per-user volume, limiter, mute/deafen, PTT или VAD.
-- Нет reconnect/session recovery и синхронизации полного списка пользователей/каналов.
+- Нет reconnect/session recovery, live events и периодического revision check;
+  полный список пользователей/каналов синхронизируется при подключении и join.
 - Нет persistent storage: все sessions/channels/cache существуют только в памяти процесса.
 - Серверная консоль локальная и read-only; удалённого RCON пока нет.
 - CLI-команда `/join` может выполняться параллельно с shutdown; полноценного GUI пока нет.

@@ -178,7 +178,8 @@ func (console *Console) writeStatus(
 	uptime := nonNegativeDuration(now.Sub(console.info.StartedAt)).Truncate(time.Second)
 	_, err := fmt.Fprintf(
 		console.output,
-		"status uptime=%s listen=%q config=%q revision=%d channels=%d users=%d unjoined=%d\n",
+		"status server=%q uptime=%s listen=%q config=%q revision=%d channels=%d users=%d unjoined=%d\n",
+		snapshot.ServerInfo.Name,
 		uptime,
 		console.info.ListenAddress,
 		console.info.ConfigSource,

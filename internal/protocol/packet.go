@@ -23,6 +23,8 @@ const (
 	PacketJoinChannel
 	PacketJoinChannelAck
 	PacketError
+	PacketStateSnapshotRequest
+	PacketStateSnapshotAck
 
 	PacketEnd
 )

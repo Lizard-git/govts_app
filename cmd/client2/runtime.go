@@ -26,7 +26,7 @@ func runSession(
 	name string,
 	channel string,
 ) (runErr error) {
-	state := voiceclient.NewState(sessionID, name, "")
+	state := voiceclient.NewState(sessionID, name)
 
 	audioCh := make(chan audio.Frame)
 	pcmCh := make(chan audio.PCMFrame)
@@ -95,22 +95,32 @@ func runSession(
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.ControlLoop(ctx, state, controlCh)
 	})
-
-	log.Printf("client connected: id=%d name=%s", sessionID, name)
-	if err := voiceclient.JoinChannel(ctx, conn, state, channel); err != nil {
+	failBeforeCapture := func(cause error) error {
 		shutdownErr := supervisor.Shutdown(func() error {
 			closeErr := player.Close()
 			playerClosed = true
 			return wrapError("close audio player", closeErr)
 		})
 		disconnectErr := voiceclient.Disconnect(conn, sessionID)
-		return errors.Join(
-			fmt.Errorf("join channel: %w", err),
-			shutdownErr,
-			wrapError("send disconnect", disconnectErr),
-		)
+		return errors.Join(cause, shutdownErr, wrapError("send disconnect", disconnectErr))
 	}
-	log.Printf("join confirmed: %s", channel)
+
+	log.Printf("client connected: id=%d name=%s", sessionID, name)
+	snapshot, err := voiceclient.LoadServerSnapshot(ctx, conn, state)
+	if err != nil {
+		return failBeforeCapture(fmt.Errorf("load server snapshot: %w", err))
+	}
+	channelID, err := voiceclient.ResolveChannel(snapshot, channel)
+	if err != nil {
+		return failBeforeCapture(fmt.Errorf("resolve initial channel: %w", err))
+	}
+	if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
+		return failBeforeCapture(fmt.Errorf("join channel: %w", err))
+	}
+	if _, err := voiceclient.LoadServerSnapshot(ctx, conn, state); err != nil {
+		return failBeforeCapture(fmt.Errorf("refresh server snapshot after join: %w", err))
+	}
+	log.Printf("join confirmed: %s (id=%d)", channel, channelID)
 
 	// Capture starts only after the server has confirmed the channel. Therefore
 	// no microphone frames can enter SendLoop before a successful join.

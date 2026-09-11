@@ -46,10 +46,19 @@ func handleJoin(
 		return
 	}
 
-	channel := parts[0]
-	if err := JoinChannel(ctx, conn, state, channel); err != nil {
+	selector := parts[0]
+	channelID, err := ResolveChannel(state.Snapshot(), selector)
+	if err != nil {
 		log.Printf("join channel: %v", err)
 		return
 	}
-	log.Printf("join confirmed: %s", channel)
+	if err := JoinChannel(ctx, conn, state, channelID); err != nil {
+		log.Printf("join channel: %v", err)
+		return
+	}
+	if _, err := LoadServerSnapshot(ctx, conn, state); err != nil {
+		log.Printf("refresh server state after join: %v", err)
+		return
+	}
+	log.Printf("join confirmed: %s (id=%d)", selector, channelID)
 }

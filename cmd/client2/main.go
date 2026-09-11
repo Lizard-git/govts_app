@@ -17,7 +17,7 @@ import (
 
 func main() {
 	name := flag.String("name", "", "client name")
-	channel := flag.String("channel", "default", "channel name")
+	channel := flag.String("channel", "default", "channel ID or name")
 	flag.Parse()
 
 	if err := run(*name, *channel); err != nil {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -47,7 +48,7 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	state := NewState(42, "alice", "")
+	state := NewState(42, "alice")
 	encodedCh := make(chan audio.MediaFrame, 1)
 	controlCh := make(chan protocol.VoicePacket, 4)
 
@@ -86,15 +87,15 @@ func (p *joinTestPeer) sendResponse(
 	return p.serverConn.WritePacket(response.SessionID, addr, response)
 }
 
-func TestJoinChannelRejectsEmptyName(t *testing.T) {
-	state := NewState(42, "alice", "")
+func TestJoinChannelRejectsZeroID(t *testing.T) {
+	state := NewState(42, "alice")
 
-	err := JoinChannel(context.Background(), nil, state, "")
+	err := JoinChannel(context.Background(), nil, state, 0)
 	if err == nil {
 		t.Fatal("JoinChannel() error = nil, want empty channel error")
 	}
-	if !strings.Contains(err.Error(), "channel name is required") {
-		t.Fatalf("JoinChannel() error = %q, want empty channel error", err)
+	if !strings.Contains(err.Error(), "must not be zero") {
+		t.Fatalf("JoinChannel() error = %q, want zero ID error", err)
 	}
 }
 
@@ -448,22 +449,27 @@ func TestJoinChannelSuccess(t *testing.T) {
 			serverErrCh <- err
 			return
 		}
+		payload, err := protocol.EncodeJoinChannelAck(7, 2)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
 		serverErrCh <- peer.sendResponse(addr, protocol.VoicePacket{
 			Type:      protocol.PacketJoinChannelAck,
 			SessionID: request.SessionID,
 			RequestID: request.RequestID,
-			Payload:   request.Payload,
+			Payload:   payload,
 		})
 	}()
 
-	if err := JoinChannel(peer.ctx, peer.clientConn, peer.state, "music"); err != nil {
+	if err := JoinChannel(peer.ctx, peer.clientConn, peer.state, 7); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-serverErrCh; err != nil {
 		t.Fatal(err)
 	}
-	if got := peer.state.Channel(); got != "music" {
-		t.Fatalf("State.Channel() = %q, want %q", got, "music")
+	if got := peer.state.ChannelID(); got != 7 {
+		t.Fatalf("State.ChannelID() = %d, want 7", got)
 	}
 }
 
@@ -487,15 +493,15 @@ func TestJoinChannelServerError(t *testing.T) {
 		)
 	}()
 
-	err := JoinChannel(peer.ctx, peer.clientConn, peer.state, "music")
+	err := JoinChannel(peer.ctx, peer.clientConn, peer.state, 7)
 	if err == nil || !strings.Contains(err.Error(), "channel is unavailable") {
 		t.Fatalf("JoinChannel() error = %v, want server error", err)
 	}
 	if serverErr := <-serverErrCh; serverErr != nil {
 		t.Fatal(serverErr)
 	}
-	if got := peer.state.Channel(); got != "" {
-		t.Fatalf("State.Channel() = %q after server error, want empty", got)
+	if got := peer.state.ChannelID(); got != 0 {
+		t.Fatalf("State.ChannelID() = %d after server error, want zero", got)
 	}
 }
 
@@ -524,11 +530,16 @@ func TestJoinChannelRetriesLostAcknowledgement(t *testing.T) {
 			return
 		}
 
+		payload, err := protocol.EncodeJoinChannelAck(7, 2)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
 		serverErrCh <- peer.sendResponse(addr, protocol.VoicePacket{
 			Type:      protocol.PacketJoinChannelAck,
 			SessionID: second.SessionID,
 			RequestID: second.RequestID,
-			Payload:   second.Payload,
+			Payload:   payload,
 		})
 	}()
 
@@ -536,7 +547,7 @@ func TestJoinChannelRetriesLostAcknowledgement(t *testing.T) {
 		peer.ctx,
 		peer.clientConn,
 		peer.state,
-		"music",
+		7,
 		20*time.Millisecond,
 	)
 	if err != nil {
@@ -565,7 +576,7 @@ func TestJoinChannelFinalTimeout(t *testing.T) {
 		peer.ctx,
 		peer.clientConn,
 		peer.state,
-		"music",
+		7,
 		10*time.Millisecond,
 	)
 	if err == nil || !strings.Contains(err.Error(), "timed out after 3 attempts") {
@@ -577,7 +588,7 @@ func TestJoinChannelFinalTimeout(t *testing.T) {
 	if completed := peer.state.CompleteRequest(ControlResponse{
 		Type:      protocol.PacketJoinChannelAck,
 		RequestID: 1,
-		Payload:   []byte("music"),
+		Payload:   mustJoinAckPayload(t, 7),
 	}); completed {
 		t.Fatal("late acknowledgement completed an already timed-out request")
 	}
@@ -587,32 +598,32 @@ func TestValidateJoinResponse(t *testing.T) {
 	tests := []struct {
 		name      string
 		response  ControlResponse
-		requested string
+		requested domain.ChannelID
 		wantError string
 	}{
 		{
 			name: "matching acknowledgement",
 			response: ControlResponse{
 				Type:    protocol.PacketJoinChannelAck,
-				Payload: []byte("music"),
+				Payload: mustJoinAckPayload(t, 7),
 			},
-			requested: "music",
+			requested: 7,
 		},
 		{
 			name: "unexpected response type",
 			response: ControlResponse{
 				Type: protocol.PacketHeartbeat,
 			},
-			requested: "music",
+			requested: 7,
 			wantError: "unexpected join response",
 		},
 		{
 			name: "different channel",
 			response: ControlResponse{
 				Type:    protocol.PacketJoinChannelAck,
-				Payload: []byte("gaming"),
+				Payload: mustJoinAckPayload(t, 8),
 			},
-			requested: "music",
+			requested: 7,
 			wantError: "channel mismatch",
 		},
 	}
@@ -635,4 +646,13 @@ func TestValidateJoinResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustJoinAckPayload(t *testing.T, channelID domain.ChannelID) []byte {
+	t.Helper()
+	payload, err := protocol.EncodeJoinChannelAck(channelID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }

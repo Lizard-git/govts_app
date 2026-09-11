@@ -5,6 +5,7 @@ const (
 	MaxChannelTopicBytes       = 128
 	MaxChannelDescriptionBytes = 512
 	MaxParticipantNameBytes    = 64
+	MaxServerNameBytes         = 128
 	MaxChannelDepth            = 8
 )
 
@@ -71,4 +72,18 @@ type Participant struct {
 
 type ServerInfo struct {
 	Name string
+}
+
+// ServerSnapshot is the immutable, client-safe view of authoritative server state.
+type ServerSnapshot struct {
+	Revision     StateRevision
+	Info         ServerInfo
+	Channels     []Channel
+	Participants []Participant
+}
+
+func (snapshot ServerSnapshot) Clone() ServerSnapshot {
+	snapshot.Channels = append([]Channel(nil), snapshot.Channels...)
+	snapshot.Participants = append([]Participant(nil), snapshot.Participants...)
+	return snapshot
 }

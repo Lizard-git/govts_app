@@ -32,7 +32,7 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 		{
 			name:    "status",
 			command: "status",
-			want:    "status uptime=1m0s listen=\":9000\" config=\"test.json\" revision=5 channels=2 users=2 unjoined=1\n",
+			want:    "status server=\"GoVots Server\" uptime=1m0s listen=\":9000\" config=\"test.json\" revision=5 channels=2 users=2 unjoined=1\n",
 		},
 		{
 			name:    "channels",
@@ -193,7 +193,7 @@ func TestConsoleRunRejectsOversizedCommandAndContinues(t *testing.T) {
 		t.Fatalf("Run() stopped after oversized command: %v", err)
 	}
 	if !strings.Contains(output.String(), "command exceeds 4096 bytes") ||
-		!strings.Contains(output.String(), "status uptime=") {
+		!strings.Contains(output.String(), "status server=") {
 		t.Fatalf("output = %q", output.String())
 	}
 }

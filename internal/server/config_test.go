@@ -11,14 +11,14 @@ import (
 	"example.com/go-voice-mvp/internal/domain"
 )
 
-type channelSourceFunc func(context.Context) ([]ChannelDefinition, error)
+type channelSourceFunc func(context.Context) (ServerDefinition, error)
 
-func (function channelSourceFunc) Load(ctx context.Context) ([]ChannelDefinition, error) {
+func (function channelSourceFunc) Load(ctx context.Context) (ServerDefinition, error) {
 	return function(ctx)
 }
 
 func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
-	hub, err := BootstrapHub(context.Background(), BuiltinChannelSource{})
+	hub, err := BootstrapHub(context.Background(), BuiltinBootstrapSource{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,10 +26,7 @@ func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
 	if len(channels) != 2 {
 		t.Fatalf("channel count = %d, want 2", len(channels))
 	}
-	main, err := hub.FindChannelByName("main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	main := testChannelNamed(t, hub.ListChannels(), "main")
 	if main.ID != 2 || main.ParentID != 0 || main.Position != 10 {
 		t.Fatalf("main channel = %+v", main)
 	}
@@ -42,10 +39,10 @@ func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hub.JoinChannelByName(alice.ID, "main"); err != nil {
+	if err := hub.JoinChannel(alice.ID, main.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hub.JoinChannelByName(bob.ID, "main"); err != nil {
+	if err := hub.JoinChannel(bob.ID, main.ID); err != nil {
 		t.Fatal(err)
 	}
 	recipients, err := hub.RecipientsFor(alice.ID)
@@ -57,8 +54,9 @@ func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
 	}
 }
 
-func TestJSONChannelSourceBuildsParentFirstTree(t *testing.T) {
+func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	path := writeTestConfig(t, `{
+  "server": {"name": "Test Server"},
   "channels": [
     {
       "name": "main",
@@ -75,26 +73,14 @@ func TestJSONChannelSourceBuildsParentFirstTree(t *testing.T) {
   ]
 }`)
 
-	hub, err := BootstrapHub(context.Background(), JSONChannelSource{Path: path})
+	hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	main, err := hub.FindChannelByName("main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gaming, err := hub.FindChannelByName("gaming")
-	if err != nil {
-		t.Fatal(err)
-	}
-	music, err := hub.FindChannelByName("music")
-	if err != nil {
-		t.Fatal(err)
-	}
-	afk, err := hub.FindChannelByName("afk")
-	if err != nil {
-		t.Fatal(err)
-	}
+	main := testChannelNamed(t, hub.ListChannels(), "main")
+	gaming := testChannelNamed(t, hub.ListChannels(), "gaming")
+	music := testChannelNamed(t, hub.ListChannels(), "music")
+	afk := testChannelNamed(t, hub.ListChannels(), "afk")
 
 	if main.ID != 2 || gaming.ID != 3 || music.ID != 4 || afk.ID != 5 {
 		t.Fatalf("parent-first IDs = main:%d gaming:%d music:%d afk:%d", main.ID, gaming.ID, music.ID, afk.ID)
@@ -115,9 +101,9 @@ func TestJSONChannelSourceBuildsParentFirstTree(t *testing.T) {
 	}
 }
 
-func TestJSONChannelSourceAcceptsEmptyChannelList(t *testing.T) {
-	path := writeTestConfig(t, `{"channels": []}`)
-	hub, err := BootstrapHub(context.Background(), JSONChannelSource{Path: path})
+func TestJSONBootstrapSourceAcceptsEmptyChannelList(t *testing.T) {
+	path := writeTestConfig(t, `{"server":{"name":"Test Server"},"channels": []}`)
+	hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +112,7 @@ func TestJSONChannelSourceAcceptsEmptyChannelList(t *testing.T) {
 	}
 }
 
-func TestJSONChannelSourceRejectsInvalidDocuments(t *testing.T) {
+func TestJSONBootstrapSourceRejectsInvalidDocuments(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -136,6 +122,8 @@ func TestJSONChannelSourceRejectsInvalidDocuments(t *testing.T) {
 		{name: "malformed", content: `{`, want: "decode server config"},
 		{name: "unknown root field", content: `{"unknown": true}`, want: "unknown field"},
 		{name: "unknown channel field", content: `{"channels":[{"name":"main","unknown":true}]}`, want: "unknown field"},
+		{name: "missing server name", content: `{"channels":[]}`, want: "server name"},
+		{name: "untrimmed server name", content: `{"server":{"name":" test "},"channels":[]}`, want: "server name"},
 		{name: "second document", content: `{"channels":[]} {"channels":[]}`, want: "multiple JSON documents"},
 		{name: "trailing garbage", content: `{"channels":[]} trailing`, want: "trailing data"},
 	}
@@ -143,7 +131,7 @@ func TestJSONChannelSourceRejectsInvalidDocuments(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			path := writeTestConfig(t, test.content)
-			_, err := (JSONChannelSource{Path: path}).Load(context.Background())
+			_, err := (JSONBootstrapSource{Path: path}).Load(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Load() error = %v, want substring %q", err, test.want)
 			}
@@ -151,9 +139,9 @@ func TestJSONChannelSourceRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
-func TestJSONChannelSourceRejectsOversizedFile(t *testing.T) {
+func TestJSONBootstrapSourceRejectsOversizedFile(t *testing.T) {
 	path := writeTestConfig(t, strings.Repeat(" ", MaxServerConfigBytes+1))
-	_, err := (JSONChannelSource{Path: path}).Load(context.Background())
+	_, err := (JSONBootstrapSource{Path: path}).Load(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("Load() error = %v, want size error", err)
 	}
@@ -192,8 +180,8 @@ func TestBootstrapHubRejectsInvalidDefinitionsAtomically(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source := channelSourceFunc(func(context.Context) ([]ChannelDefinition, error) {
-				return test.definitions, nil
+			source := channelSourceFunc(func(context.Context) (ServerDefinition, error) {
+				return ServerDefinition{Info: domain.ServerInfo{Name: "Test Server"}, Channels: test.definitions}, nil
 			})
 			hub, err := BootstrapHub(context.Background(), source)
 			if hub != nil {
@@ -209,17 +197,28 @@ func TestBootstrapHubRejectsInvalidDefinitionsAtomically(t *testing.T) {
 func TestBootstrapHubPropagatesContextAndSourceErrors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if hub, err := BootstrapHub(ctx, BuiltinChannelSource{}); hub != nil || !errors.Is(err, context.Canceled) {
+	if hub, err := BootstrapHub(ctx, BuiltinBootstrapSource{}); hub != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled BootstrapHub() = (%v, %v)", hub, err)
 	}
 
 	wantErr := errors.New("source failed")
-	source := channelSourceFunc(func(context.Context) ([]ChannelDefinition, error) {
-		return nil, wantErr
+	source := channelSourceFunc(func(context.Context) (ServerDefinition, error) {
+		return ServerDefinition{}, wantErr
 	})
 	if hub, err := BootstrapHub(context.Background(), source); hub != nil || !errors.Is(err, wantErr) {
 		t.Fatalf("failed BootstrapHub() = (%v, %v)", hub, err)
 	}
+}
+
+func testChannelNamed(t *testing.T, channels []domain.Channel, name string) domain.Channel {
+	t.Helper()
+	for _, channel := range channels {
+		if channel.Name == name {
+			return channel
+		}
+	}
+	t.Fatalf("channel %q not found", name)
+	return domain.Channel{}
 }
 
 func writeTestConfig(t *testing.T, content string) string {

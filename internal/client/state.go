@@ -3,6 +3,8 @@ package client
 import (
 	"sync"
 	"sync/atomic"
+
+	"example.com/go-voice-mvp/internal/domain"
 )
 
 type State struct {
@@ -10,7 +12,8 @@ type State struct {
 
 	sessionID uint64
 	name      string
-	channel   string
+	channelID domain.ChannelID
+	snapshot  domain.ServerSnapshot
 
 	nextRequestID atomic.Uint32
 	pending       map[uint32]chan ControlResponse
@@ -22,25 +25,35 @@ type ControlResponse struct {
 	Payload   []byte
 }
 
-func NewState(sessionID uint64, name string, channel string) *State {
+func NewState(sessionID uint64, name string) *State {
 	return &State{
 		sessionID: sessionID,
 		name:      name,
-		channel:   channel,
 		pending:   make(map[uint32]chan ControlResponse),
 	}
 }
 
-func (s *State) Channel() string {
+func (s *State) ChannelID() domain.ChannelID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.channel
+	return s.channelID
 }
 
-func (s *State) SetChannel(channel string) {
+func (s *State) SetChannelID(channelID domain.ChannelID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.channel = channel
+	s.channelID = channelID
+}
+
+func (s *State) Snapshot() domain.ServerSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshot.Clone()
+}
+func (s *State) ReplaceSnapshot(snapshot domain.ServerSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot = snapshot.Clone()
 }
 
 func (s *State) SessionID() uint64 {
@@ -82,5 +95,10 @@ func (s *State) CancelRequest(requestID uint32) {
 }
 
 func (s *State) NextRequestID() uint32 {
-	return s.nextRequestID.Add(1)
+	for {
+		requestID := s.nextRequestID.Add(1)
+		if requestID != 0 {
+			return requestID
+		}
+	}
 }

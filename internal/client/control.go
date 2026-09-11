@@ -2,11 +2,11 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -30,7 +30,7 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
-			case protocol.PacketJoinChannelAck:
+			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck:
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,
@@ -91,46 +91,50 @@ func JoinChannel(
 	ctx context.Context,
 	conn *udp.ClientPacketConn,
 	state *State,
-	channel string,
+	channelID domain.ChannelID,
 ) error {
-	return joinChannelWithTimeout(ctx, conn, state, channel, joinRequestTimeout)
+	return joinChannelWithTimeout(ctx, conn, state, channelID, joinRequestTimeout)
 }
 
 func joinChannelWithTimeout(
 	ctx context.Context,
 	conn *udp.ClientPacketConn,
 	state *State,
-	channel string,
+	channelID domain.ChannelID,
 	timeout time.Duration,
 ) error {
-	if channel == "" {
-		return errors.New("channel name is required")
+	payload, err := protocol.EncodeJoinChannelRequest(channelID)
+	if err != nil {
+		return err
 	}
 
 	packet := protocol.VoicePacket{
 		Type:    protocol.PacketJoinChannel,
-		Payload: []byte(channel),
+		Payload: payload,
 	}
 	response, err := DoRequest(ctx, conn, state, packet, timeout)
 	if err != nil {
-		return fmt.Errorf("join channel %q: %w", channel, err)
+		return fmt.Errorf("join channel %d: %w", channelID, err)
 	}
-	if err := validateJoinResponse(response, channel); err != nil {
+	if err := validateJoinResponse(response, channelID); err != nil {
 		return err
 	}
 
-	state.SetChannel(channel)
+	state.SetChannelID(channelID)
 	return nil
 }
 
-func validateJoinResponse(response ControlResponse, requestedChannel string) error {
+func validateJoinResponse(response ControlResponse, requestedChannel domain.ChannelID) error {
 	if response.Type != protocol.PacketJoinChannelAck {
 		return fmt.Errorf("unexpected join response: type=%d", response.Type)
 	}
-	confirmedChannel := string(response.Payload)
+	confirmedChannel, _, err := protocol.DecodeJoinChannelAck(response.Payload)
+	if err != nil {
+		return fmt.Errorf("invalid join response: %w", err)
+	}
 	if confirmedChannel != requestedChannel {
 		return fmt.Errorf(
-			"join response channel mismatch: got %q, want %q",
+			"join response channel mismatch: got %d, want %d",
 			confirmedChannel,
 			requestedChannel,
 		)

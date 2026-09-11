@@ -35,10 +35,10 @@ func run(configPath string) error {
 	)
 	defer cancel()
 
-	var source server.ChannelSource = server.BuiltinChannelSource{}
+	var source server.BootstrapSource = server.BuiltinBootstrapSource{}
 	configSource := "builtin"
 	if configPath != "" {
-		source = server.JSONChannelSource{Path: configPath}
+		source = server.JSONBootstrapSource{Path: configPath}
 		configSource = configPath
 	}
 	hub, err := server.BootstrapHub(ctx, source)

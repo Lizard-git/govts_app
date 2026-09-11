@@ -49,6 +49,9 @@ func HandleHelloPacket(
 	}
 
 	name := string(packet.Payload)
+	if err := validateParticipantName(name); err != nil {
+		return cacheAndSendHandshakeError(conn, cache, packet.RequestID, addr, err.Error())
+	}
 	session, err := hub.CreateSession(name, addr)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -127,51 +130,43 @@ func HandleJoinChannelPacket(
 	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		return err
 	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, packet.SessionID, 0, "join request ID is required")
+	}
 	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
 		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 
-	if len(packet.Payload) == 0 {
-		response := protocol.NewErrorPacket(
-			packet.SessionID,
-			packet.RequestID,
-			"channel name is required",
-		)
-		cache.Put(packet.SessionID, packet.RequestID, response)
-		return conn.WritePacket(packet.SessionID, addr, response)
-	}
-	if len(packet.Payload) > domain.MaxChannelNameBytes {
-		response := protocol.NewErrorPacket(
-			packet.SessionID,
-			packet.RequestID,
-			"channel name too long",
-		)
-		cache.Put(packet.SessionID, packet.RequestID, response)
-		return conn.WritePacket(packet.SessionID, addr, response)
-	}
-
-	channel, err := hub.JoinChannelByName(packet.SessionID, string(packet.Payload))
+	channelID, err := protocol.DecodeJoinChannelRequest(packet.Payload)
 	if err != nil {
-		response := protocol.NewErrorPacket(
-			packet.SessionID,
-			packet.RequestID,
-			fmt.Sprintf("cannot join channel: %v", err),
-		)
-		cache.Put(packet.SessionID, packet.RequestID, response)
-		return conn.WritePacket(packet.SessionID, addr, response)
+		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("invalid join request: %v", err))
+	}
+	revision, err := hub.JoinChannelWithRevision(packet.SessionID, channelID)
+	if err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("cannot join channel: %v", err))
 	}
 	session, ok := hub.Get(packet.SessionID)
 	if !ok {
 		return fmt.Errorf("session %d not found", packet.SessionID)
 	}
+	payload, err := protocol.EncodeJoinChannelAck(channelID, revision)
+	if err != nil {
+		return fmt.Errorf("encode join acknowledgement: %w", err)
+	}
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketJoinChannelAck,
 		SessionID: packet.SessionID,
 		RequestID: packet.RequestID,
-		Payload:   []byte(channel.Name),
+		Payload:   payload,
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	return SendToSession(conn, session, ack)
+}
+
+func cacheAndSendSessionError(conn *udp.ServerPacketConn, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr, message string) error {
+	response := protocol.NewErrorPacket(packet.SessionID, packet.RequestID, message)
+	cache.Put(packet.SessionID, packet.RequestID, response)
+	return conn.WritePacket(packet.SessionID, addr, response)
 }
 
 func SendError(
