@@ -214,12 +214,22 @@ ClientPacketConn.ReceivePacket
 
 #### `readme_docs/patch-3.md`
 
-Короткий исполняемый план конфигурации стартового дерева каналов: нейтральный
+Завершённый план конфигурации стартового дерева каналов: нейтральный
 `ChannelSource`, строгий bounded JSON как его первая внешняя реализация,
 атомарный bootstrap Hub, встроенный канал `main`, server CLI flag, fail-fast
-validation и тесты без изменения wire format. SQLite сможет заменить источник
-чтения для bootstrap, но стабильные ID и writable repository остаются отдельным
-этапом persistence. Paged state snapshot выделен в следующий патч.
+validation, локальную read-only консоль состояния и тесты без изменения wire
+format. SQLite сможет заменить источник чтения для bootstrap, но стабильные ID
+и writable repository остаются отдельным этапом persistence. Удалённый RCON
+отложен до security/permissions, а paged state snapshot выделен в следующий
+патч.
+
+#### `readme_docs/patch-4.md`
+
+Исполняемый план initial state synchronization: versioned binary metadata,
+paged channels/participants, проверка одной `StateRevision`, атомарная
+публикация client snapshot и основной join по `ChannelID`. Старый name-based
+join остаётся отдельным wire-совместимым адаптером; live events и GUI в патч не
+входят.
 
 #### `readme_docs/backlog.md`
 
@@ -253,6 +263,15 @@ validation и тесты без изменения wire format. SQLite смож�
 
 Локальный Windows-бинарник. Исходный Go-код его не импортирует и команды запуска на него не ссылаются; для сборки, тестов и работы текущих `cmd/server`/`cmd/client2` он не требуется.
 
+### `configs/` — примеры конфигурации сервера
+
+#### `configs/server.example.json`
+
+Строгий пример стартового дерева: корневой `main` и дочерние `gaming`/`music`
+с position, topic и `max_users`. Runtime `ChannelID`, channel type и
+аудиопрофиль намеренно не задаются в JSON. Файл можно передать серверу через
+`-config configs/server.example.json`.
+
 ### `.github/`
 
 #### `.github/workflows/test.yml`
@@ -265,9 +284,13 @@ CI workflow `Go checks`, запускаемый на push, pull request и вр�
 
 Точка входа UDP-сервера.
 
-- `main` — единственное место с `log.Fatal`; преобразует возвращённую ошибку в код завершения процесса.
-- `run` — слушает `:9000`, создаёт signal-aware context, `voice.Hub` и `voice.RequestCache`.
-- Параллельно запускает `server.CleanupLoop`, а в основном потоке — `voice.ServeUDP`.
+- `main` разбирает `-config` и остаётся единственным местом с `log.Fatal`.
+- `run` создаёт signal-aware context и до открытия UDP socket атомарно строит
+  Hub через выбранный `ChannelSource`.
+- Без файла используется встроенный канал `main`; с файлом загружается строгое
+  пользовательское дерево поверх системного `default`.
+- Параллельно запускает `server.CleanupLoop` и локальную read-only консоль, а в
+  основном потоке — `voice.ServeUDP`.
 - После завершения одного контура отменяет контекст, ждёт cleanup goroutine и объединяет независимые ошибки через `errors.Join`.
 
 Файл отвечает только за composition root и lifecycle процесса; протокол и бизнес-логика вынесены в `internal`.
@@ -572,6 +595,9 @@ Opus: 48 кГц, mono, frame 20 мс, bitrate 24 кбит/с. `ChannelID == 0` �
   `MaxUsers`, а список сортируется по `(ParentID, Position, ID)`.
 - `StateRevision` меняется только для видимого состояния: lifecycle/rename/move
   участника и создание канала; heartbeat и смена UDP endpoint её не меняют.
+- `Inspect` под одним `RLock` возвращает независимый operational snapshot
+  revision/channels/sessions для локальной консоли; в отличие от будущего
+  client snapshot он намеренно содержит endpoint и `LastSeen`.
 - `CreateSession`, `Add`, `Remove`, `Get` управляют lifecycle.
 - `JoinChannel` и routing используют `ChannelID`; временный
   `JoinChannelByName` только находит уже существующий канал для CLI wire-формата.
@@ -650,6 +676,34 @@ domain snapshots, пределы metadata, parent hierarchy, sibling names, ци
 
 ### `internal/server/` — фоновые процессы серверного приложения
 
+#### `internal/server/config.go`
+
+Граница загрузки стартовых каналов. Нейтральный `ChannelSource` отделяет
+bootstrap от формата хранения; `BuiltinChannelSource` возвращает `main`, а
+`JSONChannelSource` строго декодирует файл размером до 64 КиБ. Bootstrap
+ограничивает дерево 256 каналами, создаёт parent-first через `Hub.CreateChannel`
+и возвращает Hub только после полного успеха. JSON не назначает runtime ID.
+
+#### `internal/server/config_test.go`
+
+Проверяет встроенный `main`, дерево и parent-first ID, пустой список,
+malformed/unknown/trailing/oversized JSON, depth/count/metadata/duplicate
+ошибки, отмену context, атомарность bootstrap и routing в загруженном канале.
+
+#### `internal/server/console.go`
+
+Локальная read-only консоль с внедряемыми input/output и clock. Поддерживает
+`help`, `status`, `channels`, `channel <id|name>`, `users` и
+`user <session-id>`. Вывод строится из одного `Hub.Inspect()` snapshot,
+детерминированно сортируется, экранирует имена через quoted formatting и не
+меняет состояние. Строка команды ограничена 4 КиБ; EOF отключает лишь консоль.
+
+#### `internal/server/console_test.go`
+
+Проверяет точный вывод всех команд, ошибки parser/lookup, неоднозначные имена,
+EOF, oversized input, отмену context и конкурентную инспекцию во время
+join/remove/heartbeat под race detector.
+
 #### `internal/server/pipeline.go`
 
 Содержит `CleanupLoop` и его operational constants. Раз в `CleanupInterval` удаляет из Hub сессии, неактивные дольше `SessionTimeout`, очищает их request-cache entries, логирует timeout и удаляет остальные expired cache entries. Возвращает `ctx.Err()` при остановке; `cmd/server` нормализует ожидаемый `context.Canceled`.
@@ -720,6 +774,8 @@ PowerShell-скрипт, записывающий пользовательски
 | Decode | `internal/client/decode_test.go` | decoder-per-sender и cleanup |
 | Mixer | `internal/client/mixer_test.go` | суммирование, saturation, очереди sender-ов |
 | Server state | `internal/voice/hub_test.go`, `channel_test.go` | snapshots, channel hierarchy/limits/revision, expiry, concurrent access |
+| Server bootstrap | `internal/server/config_test.go` | strict JSON, hierarchy/count limits, atomic construction и configured routing |
+| Server console | `internal/server/console_test.go` | parser, deterministic inspection, EOF/limits и concurrent mutations |
 | Request cache | `internal/voice/cache_test.go` | TTL, capacity, copies, session/endpoint keys |
 | Server routing | `internal/voice/router_test.go` | endpoint validation, channel routing, dedup, server lifecycle |
 | Client lifecycle | `cmd/client2/supervisor_test.go` | cancellation, shutdown order, отсутствие зависания |
@@ -748,6 +804,8 @@ go test -race ./...
 | Воспроизведение | `internal/audio/player.go` | `client.PlaybackLoop`, supervisor shutdown |
 | Client lifecycle | `cmd/client2/runtime.go`, `supervisor.go` | supervisor tests и blocking device I/O |
 | Server lifecycle | `cmd/server/main.go`, `voice/server.go` | cleanup loop и router lifecycle tests |
+| Стартовые каналы/JSON | `internal/server/config.go` | Hub channel validation и config tests |
+| Локальный server CLI | `internal/server/console.go` | `Hub.Inspect`, console tests и operational field exposure |
 | Session timeout | `internal/server/pipeline.go` | `Hub.RemoveInactive`, cache cleanup |
 | CI/toolchain | `.github/workflows/test.yml`, `go.mod` | ALSA dependency и race detector |
 
@@ -755,13 +813,15 @@ go test -race ./...
 
 - Нет аутентификации, шифрования, HMAC/AEAD и защиты от replay; проверка `IP:port` — лишь базовая привязка endpoint.
 - `SessionID` является криптографически случайным 64-битным идентификатором, но до появления аутентификации и защиты пакетов его всё равно нельзя считать полноценным session token или единственным средством авторизации.
-- Клиентский host/port и серверный port зашиты в коде, а не вынесены во flags/config.
+- Клиентский host/port и серверный port пока зашиты в коде; server config
+  описывает только стартовые каналы.
 - Один UDP socket переносит control и media; при нагрузке они конкурируют за одну очередь.
 - Сервер выполняет рассылку последовательно и прекращает `SendToSessions` после первой ошибки отправки.
 - Jitter buffer фиксированный; нет adaptive jitter, PLC и детальной наружной телеметрии loss/duplicate/drop.
 - Mixer использует простое суммирование с saturation; нет master/per-user volume, limiter, mute/deafen, PTT или VAD.
 - Нет reconnect/session recovery и синхронизации полного списка пользователей/каналов.
 - Нет persistent storage: все sessions/channels/cache существуют только в памяти процесса.
+- Серверная консоль локальная и read-only; удалённого RCON пока нет.
 - CLI-команда `/join` может выполняться параллельно с shutdown; полноценного GUI пока нет.
 
 ## 10. Минимальный запуск
@@ -771,15 +831,15 @@ go test -race ./...
 go run ./cmd/server
 
 # Терминал 2
-go run ./cmd/client2 -name alice -channel default
+go run ./cmd/client2 -name alice -channel main
 
 # Терминал 3
-go run ./cmd/client2 -name bob -channel default
+go run ./cmd/client2 -name bob -channel main
 ```
 
 Во время работы клиента доступны:
 
 ```text
-/join default
+/join main
 /quit
 ```

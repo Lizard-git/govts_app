@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/server"
@@ -16,12 +18,34 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	configPath := flag.String("config", "", "path to server JSON config")
+	flag.Parse()
+
+	if err := run(*configPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(configPath string) error {
+	startedAt := time.Now()
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer cancel()
+
+	var source server.ChannelSource = server.BuiltinChannelSource{}
+	configSource := "builtin"
+	if configPath != "" {
+		source = server.JSONChannelSource{Path: configPath}
+		configSource = configPath
+	}
+	hub, err := server.BootstrapHub(ctx, source)
+	if err != nil {
+		return fmt.Errorf("bootstrap server channels: %w", err)
+	}
+
 	rawConn, err := udp.ListenUDP(9000)
 	if err != nil {
 		return fmt.Errorf("listen UDP: %w", err)
@@ -33,14 +57,6 @@ func run() error {
 	}
 	defer conn.Close()
 
-	ctx, cancel := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer cancel()
-
-	hub := voice.NewHub()
 	cache := voice.NewRequestCache()
 	cleanupErrCh := make(chan error, 1)
 
@@ -53,8 +69,23 @@ func run() error {
 			server.CleanupInterval,
 		)
 	}()
+	console := server.NewConsole(hub, os.Stdin, os.Stdout, server.ConsoleInfo{
+		StartedAt:     startedAt,
+		ListenAddress: ":9000",
+		ConfigSource:  configSource,
+	})
+	log.Println("local server console ready; type help")
+	go func() {
+		if err := console.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("server console disabled: %v", err)
+		}
+	}()
 
-	log.Println("voice server listening on :9000")
+	log.Printf(
+		"voice server listening on :9000 config=%q channels=%d",
+		configSource,
+		len(hub.ListChannels()),
+	)
 	serveErr := voice.ServeUDP(ctx, conn, hub, cache)
 	cancel()
 	cleanupErr := <-cleanupErrCh

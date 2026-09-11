@@ -263,6 +263,35 @@ func TestHubParticipantsAreSortedDomainSnapshots(t *testing.T) {
 	}
 }
 
+func TestHubOperationalSnapshotIsIndependent(t *testing.T) {
+	hub := NewHub()
+	channel := mustCreateChannel(t, hub, domain.Channel{Name: "main"})
+	session := mustCreateSession(t, hub, "alice", &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: 9001,
+	})
+	if err := hub.JoinChannel(session.ID, channel.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := hub.Inspect()
+	if snapshot.Revision != hub.Revision() || len(snapshot.Channels) != 2 || len(snapshot.Sessions) != 1 {
+		t.Fatalf("Inspect() = %+v", snapshot)
+	}
+	snapshot.Channels[0].Name = "changed"
+	snapshot.Sessions[0].Name = "changed"
+	snapshot.Sessions[0].Addr.IP[0] = 10
+
+	storedChannel, ok := hub.GetChannel(DefaultChannelID)
+	if !ok || storedChannel.Name != DefaultChannelName {
+		t.Fatalf("stored default channel = %+v, found=%v", storedChannel, ok)
+	}
+	storedSession, ok := hub.Get(session.ID)
+	if !ok || storedSession.Name != "alice" || !storedSession.Addr.IP.Equal(net.ParseIP("127.0.0.1")) {
+		t.Fatalf("stored session = %+v, found=%v", storedSession, ok)
+	}
+}
+
 func TestHubConcurrentJoinRemoveAndList(t *testing.T) {
 	hub := NewHub()
 	channel := mustCreateChannel(t, hub, domain.Channel{Name: "music"})

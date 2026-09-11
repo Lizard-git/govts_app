@@ -41,6 +41,15 @@ type Hub struct {
 	revision      domain.StateRevision
 }
 
+// OperationalSnapshot is a point-in-time copy for local server diagnostics.
+// Unlike the future client state snapshot, it intentionally contains runtime
+// session data such as UDP endpoints and LastSeen.
+type OperationalSnapshot struct {
+	Revision domain.StateRevision
+	Channels []domain.Channel
+	Sessions []Session
+}
+
 func NewHub() *Hub {
 	return newHub(randomSessionID)
 }
@@ -225,20 +234,24 @@ func (h *Hub) ListChannels() []domain.Channel {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	channels := make([]domain.Channel, 0, len(h.channels))
-	for _, channel := range h.channels {
-		channels = append(channels, *cloneChannel(*channel))
+	return h.channelsSnapshotLocked()
+}
+
+func (h *Hub) Inspect() OperationalSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	sessions := make([]Session, 0, len(h.sessions))
+	for _, session := range h.sessions {
+		sessions = append(sessions, *cloneSession(session))
 	}
-	sort.Slice(channels, func(i int, j int) bool {
-		if channels[i].ParentID != channels[j].ParentID {
-			return channels[i].ParentID < channels[j].ParentID
-		}
-		if channels[i].Position != channels[j].Position {
-			return channels[i].Position < channels[j].Position
-		}
-		return channels[i].ID < channels[j].ID
-	})
-	return channels
+	sortSessionsByID(sessions)
+
+	return OperationalSnapshot{
+		Revision: h.revision,
+		Channels: h.channelsSnapshotLocked(),
+		Sessions: sessions,
+	}
 }
 
 func (h *Hub) FindChannelByName(name string) (domain.Channel, error) {
@@ -538,6 +551,23 @@ func (h *Hub) nextChannelIDLocked() (domain.ChannelID, error) {
 func cloneChannel(channel domain.Channel) *domain.Channel {
 	clone := channel
 	return &clone
+}
+
+func (h *Hub) channelsSnapshotLocked() []domain.Channel {
+	channels := make([]domain.Channel, 0, len(h.channels))
+	for _, channel := range h.channels {
+		channels = append(channels, *cloneChannel(*channel))
+	}
+	sort.Slice(channels, func(i int, j int) bool {
+		if channels[i].ParentID != channels[j].ParentID {
+			return channels[i].ParentID < channels[j].ParentID
+		}
+		if channels[i].Position != channels[j].Position {
+			return channels[i].Position < channels[j].Position
+		}
+		return channels[i].ID < channels[j].ID
+	})
+	return channels
 }
 
 func sortSessionsByID(sessions []Session) {

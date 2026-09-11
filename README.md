@@ -36,6 +36,10 @@ microphone
   `ChannelID`, иерархией, метаданными и фиксированным Opus-профилем;
 - потокобезопасный server-side registry каналов, участников и
   `StateRevision`;
+- встроенные каналы `default` и `main`, а также строгая загрузка стартового
+  дерева каналов из bounded JSON-конфигурации;
+- локальная read-only консоль сервера для просмотра status, каналов и
+  подключённых пользователей;
 - heartbeat каждые 5 секунд;
 - удаление session после 30 секунд неактивности;
 - подключение и переключение канала через `JoinChannel`;
@@ -58,9 +62,9 @@ microphone
   и индивидуальной регулировки громкости участников;
 - handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
-- нет аутентификации, шифрования и reconnect.
-- сервер пока создаёт только постоянный канал `default`; сетевого API создания
-  каналов, persistence и синхронизации полного состояния с клиентом ещё нет.
+- нет аутентификации, шифрования и reconnect;
+- нет удалённого RCON, сетевого API создания каналов, persistence и
+  синхронизации полного состояния с клиентом.
 
 ## Структура проекта
 
@@ -71,7 +75,7 @@ internal/audio/          устройства, PCM и Opus
 internal/client/         состояние и goroutine клиента
 internal/domain/         общие модели каналов, участников и ревизии
 internal/protocol/       бинарный формат пакета
-internal/server/         фоновые процессы сервера
+internal/server/         bootstrap, локальная консоль и фоновые процессы
 internal/transport/udp/  чтение и запись UDP
 internal/voice/          sessions, channels, routing и request cache
 ```
@@ -89,17 +93,35 @@ internal/voice/          sessions, channels, routing и request cache
 go run ./cmd/server
 ```
 
+Без конфигурационного файла доступны каналы `default` и `main`. Запуск с
+примером пользовательского дерева:
+
+```bash
+go run ./cmd/server -config configs/server.example.json
+```
+
+Локальные команды сервера:
+
+```text
+help
+status
+channels
+channel <id|name>
+users
+user <session-id>
+```
+
 Запустить клиентов в отдельных терминалах:
 
 ```bash
-go run ./cmd/client2 -name alice -channel default
-go run ./cmd/client2 -name bob   -channel default
+go run ./cmd/client2 -name alice -channel main
+go run ./cmd/client2 -name bob   -channel main
 ```
 
 Команды клиента:
 
 ```text
-/join default
+/join main
 /quit
 ```
 
@@ -374,8 +396,9 @@ Channel domain model
 ```
 
 Доменная модель и переход server routing на `ChannelID` выполнены в Patch 2.
-Следующее небольшое изменение — конфигурация стартового дерева каналов из
-[`readme_docs/patch-3.md`](readme_docs/patch-3.md). После неё отдельным Patch 4
-начнётся paged state snapshot через существующий request/response-контур.
+[`Patch 3`](readme_docs/patch-3.md) добавил конфигурацию стартового дерева и
+локальную read-only консоль сервера. Следующее отдельное изменение — paged
+state snapshot и ID-based join по плану
+[`Patch 4`](readme_docs/patch-4.md) через существующий request/response-контур.
 Полный порядок и критерии готовности описаны в
 [`readme_docs/development-plan.md`](readme_docs/development-plan.md).
