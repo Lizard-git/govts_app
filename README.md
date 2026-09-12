@@ -10,7 +10,7 @@
 
 ## Текущая архитектура
 
-Клиент и сервер используют один UDP transport на порту `9000`. Через него идут
+Клиент и сервер используют один UDP transport (по умолчанию порт `9000`). Через него идут
 как control-пакеты, так и Opus voice-пакеты.
 
 ```text
@@ -104,6 +104,16 @@ internal/voice/          sessions, channels, routing и request cache
 go run ./cmd/server
 ```
 
+Другой порт задаётся через `-port` (1–65535):
+
+```bash
+./govots-server -port 9100
+# Или из исходников:
+go run ./cmd/server -port 9100 -config configs/server.example.json
+```
+
+Клиенту укажите тот же порт: `-server 192.168.1.50:9100`.
+
 Без конфигурационного файла доступны каналы `default` и `main`. Запуск с
 примером пользовательского дерева:
 
@@ -128,6 +138,18 @@ user <session-id>
 go run ./cmd/client2 -name alice -channel main
 go run ./cmd/client2 -name bob   -channel main
 ```
+
+Для подключения к другой машине укажите IP сервера:
+
+```powershell
+.\GovotsClient.exe -name alice -server 192.168.1.50
+# Или с явным портом:
+.\GovotsClient.exe -name alice -server 192.168.1.50:9000
+```
+
+По умолчанию используется `127.0.0.1:9000`. Параметр `-server` принимает IP
+с необязательным портом (без порта — `9000`); IPv6 с портом: `[::1]:9000`.
+Указанный адрес сохраняется при автоматическом reconnect.
 
 Команды клиента:
 

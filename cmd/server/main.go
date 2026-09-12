@@ -19,14 +19,18 @@ import (
 
 func main() {
 	configPath := flag.String("config", "", "path to server JSON config")
+	port := flag.Int("port", 9000, "UDP listen port (1..65535)")
 	flag.Parse()
 
-	if err := run(*configPath); err != nil {
+	if err := run(*configPath, *port); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(configPath string) error {
+func run(configPath string, port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid UDP port %d: must be 1..65535", port)
+	}
 	startedAt := time.Now()
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
@@ -46,7 +50,7 @@ func run(configPath string) error {
 		return fmt.Errorf("bootstrap server channels: %w", err)
 	}
 
-	rawConn, err := udp.ListenUDP(9000)
+	rawConn, err := udp.ListenUDP(port)
 	if err != nil {
 		return fmt.Errorf("listen UDP: %w", err)
 	}
@@ -77,7 +81,7 @@ func run(configPath string) error {
 	}()
 	console := server.NewConsole(hub, os.Stdin, os.Stdout, server.ConsoleInfo{
 		StartedAt:     startedAt,
-		ListenAddress: ":9000",
+		ListenAddress: rawConn.LocalAddr().String(),
 		ConfigSource:  configSource,
 	})
 	log.Println("local server console ready; type help")
@@ -88,7 +92,8 @@ func run(configPath string) error {
 	}()
 
 	log.Printf(
-		"voice server listening on :9000 config=%q channels=%d",
+		"voice server listening on %s config=%q channels=%d",
+		rawConn.LocalAddr(),
 		configSource,
 		len(hub.ListChannels()),
 	)

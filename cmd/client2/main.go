@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,15 +24,20 @@ const handshakeAttemptTimeout = 3 * time.Second
 func main() {
 	name := flag.String("name", "", "client name")
 	channel := flag.String("channel", "default", "channel ID or name")
+	server := flag.String("server", "127.0.0.1:9000", "server IP or IP:port (default port 9000)")
 	flag.Parse()
-	if err := run(*name, *channel); err != nil {
+	if err := run(*name, *channel, *server); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(name, initialChannel string) (runErr error) {
+func run(name, initialChannel, server string) (runErr error) {
 	if name == "" {
 		return errors.New("client name required")
+	}
+	endpoint, err := parseServerEndpoint(server)
+	if err != nil {
+		return err
 	}
 	appCtx, cancelApp := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancelApp()
@@ -42,7 +49,7 @@ func run(name, initialChannel string) (runErr error) {
 	everConnected := false
 	var playbackOutput *audio.OtoOutput
 
-	conn, err := openClientPacketConn()
+	conn, err := openClientPacketConn(endpoint)
 	if err != nil {
 		return err
 	}
@@ -69,7 +76,7 @@ func run(name, initialChannel string) (runErr error) {
 				return nil
 			}
 			if shouldReplaceClientSocket(err) {
-				replacement, replaceErr := openClientPacketConn()
+				replacement, replaceErr := openClientPacketConn(endpoint)
 				if replaceErr != nil {
 					log.Printf("cannot replace unusable UDP transport: %v", replaceErr)
 				} else {
@@ -109,7 +116,7 @@ func run(name, initialChannel string) (runErr error) {
 			return sessionErr
 		}
 		if shouldReplaceClientSocket(sessionErr) {
-			replacement, replaceErr := openClientPacketConn()
+			replacement, replaceErr := openClientPacketConn(endpoint)
 			if replaceErr != nil {
 				log.Printf("cannot replace unusable UDP transport: %v", replaceErr)
 			} else {
@@ -125,8 +132,19 @@ func run(name, initialChannel string) (runErr error) {
 	}
 }
 
-func openClientPacketConn() (*udp.ClientPacketConn, error) {
-	rawConn, err := udp.ConnectUDP("127.0.0.1", 9000)
+func parseServerEndpoint(server string) (netip.AddrPort, error) {
+	if ip, err := netip.ParseAddr(server); err == nil {
+		return netip.AddrPortFrom(ip, 9000), nil
+	}
+	endpoint, err := netip.ParseAddrPort(server)
+	if err != nil || endpoint.Port() == 0 {
+		return netip.AddrPort{}, fmt.Errorf("invalid server address %q: use IP or IP:port with port 1..65535 (IPv6: [IP]:port)", server)
+	}
+	return endpoint, nil
+}
+
+func openClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, error) {
+	rawConn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("connect UDP: %w", err)
 	}
