@@ -106,7 +106,7 @@ func RenderServerTree(writer io.Writer, snapshot domain.ServerSnapshot, sessionI
 	if stale {
 		suffix = "  [stale]"
 	}
-	if _, err := fmt.Fprintf(writer, "%s  revision=%d  users=%d%s\n", snapshot.Info.Name, snapshot.Revision, len(snapshot.Participants), suffix); err != nil {
+	if _, err := fmt.Fprintf(writer, "%s  revision=%d  users=%d%s\n", terminalText(snapshot.Info.Name), snapshot.Revision, len(snapshot.Participants), suffix); err != nil {
 		return err
 	}
 	children := make(map[domain.ChannelID][]domain.Channel)
@@ -150,7 +150,7 @@ func RenderServerTree(writer io.Writer, snapshot domain.ServerSnapshot, sessionI
 			if channel.ID == currentChannelID {
 				current = "  <- current"
 			}
-			if _, err := fmt.Fprintf(writer, "%s%s %s [id=%d] users=%d/%s%s\n", prefix, branch, channel.Name, channel.ID, len(members[channel.ID]), maxUsersLabel(channel.MaxUsers), current); err != nil {
+			if _, err := fmt.Fprintf(writer, "%s%s %s [id=%d] users=%d/%s%s\n", prefix, branch, terminalText(channel.Name), channel.ID, len(members[channel.ID]), maxUsersLabel(channel.MaxUsers), current); err != nil {
 				return err
 			}
 			for _, participant := range members[channel.ID] {
@@ -158,7 +158,7 @@ func RenderServerTree(writer io.Writer, snapshot domain.ServerSnapshot, sessionI
 				if participant.SessionID == sessionID {
 					marker = "  <- you"
 				}
-				if _, err := fmt.Fprintf(writer, "%s   • %s [session=%d]%s\n", childPrefix, participant.DisplayName, participant.SessionID, marker); err != nil {
+				if _, err := fmt.Fprintf(writer, "%s   • %s [session=%d]%s\n", childPrefix, terminalText(participant.DisplayName), participant.SessionID, marker); err != nil {
 					return err
 				}
 			}
@@ -180,7 +180,7 @@ func RenderServerTree(writer io.Writer, snapshot domain.ServerSnapshot, sessionI
 			if participant.SessionID == sessionID {
 				marker = "  <- you"
 			}
-			if _, err := fmt.Fprintf(writer, "  • %s [session=%d]%s\n", participant.DisplayName, participant.SessionID, marker); err != nil {
+			if _, err := fmt.Fprintf(writer, "  • %s [session=%d]%s\n", terminalText(participant.DisplayName), participant.SessionID, marker); err != nil {
 				return err
 			}
 		}
@@ -199,7 +199,7 @@ func RenderChannelMembers(writer io.Writer, snapshot domain.ServerSnapshot, chan
 	if channel == nil {
 		return fmt.Errorf("channel %d not found", channelID)
 	}
-	if _, err := fmt.Fprintf(writer, "joined: %s [id=%d]\nusers:\n", channel.Name, channel.ID); err != nil {
+	if _, err := fmt.Fprintf(writer, "joined: %s [id=%d]\nusers:\n", terminalText(channel.Name), channel.ID); err != nil {
 		return err
 	}
 	for _, participant := range snapshot.Participants {
@@ -210,7 +210,7 @@ func RenderChannelMembers(writer io.Writer, snapshot domain.ServerSnapshot, chan
 		if participant.SessionID == sessionID {
 			marker = " [you]"
 		}
-		if _, err := fmt.Fprintf(writer, "  %s [session=%d]%s\n", participant.DisplayName, participant.SessionID, marker); err != nil {
+		if _, err := fmt.Fprintf(writer, "  %s [session=%d]%s\n", terminalText(participant.DisplayName), participant.SessionID, marker); err != nil {
 			return err
 		}
 	}
@@ -260,3 +260,9 @@ func maxUsersLabel(value uint32) string {
 	return strconv.FormatUint(uint64(value), 10)
 }
 func errorsTree(message string) error { return fmt.Errorf("%s", message) }
+
+// Escape untrusted text even when a snapshot comes from an older server.
+func terminalText(value string) string {
+	quoted := strconv.QuoteToGraphic(value)
+	return quoted[1 : len(quoted)-1]
+}

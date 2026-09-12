@@ -62,3 +62,34 @@ func TestStateRejectsPublicationFromOldGeneration(t *testing.T) {
 		t.Fatal("stale snapshot marked fresh")
 	}
 }
+
+func TestRenderersEscapeUntrustedNames(t *testing.T) {
+	unsafe := "Алиса\x1b[2J\r\n\t\u009b\u2028\u202e"
+	snapshot := domain.ServerSnapshot{
+		Info:     domain.ServerInfo{Name: unsafe},
+		Channels: []domain.Channel{{ID: 1, Name: unsafe}},
+		Participants: []domain.Participant{
+			{SessionID: 1, ChannelID: 1, DisplayName: unsafe},
+			{SessionID: 2, DisplayName: unsafe},
+		},
+	}
+	for _, tree := range []bool{true, false} {
+		var output bytes.Buffer
+		var err error
+		if tree {
+			err = RenderServerTree(&output, snapshot, 1, 1, false)
+		} else {
+			err = RenderChannelMembers(&output, snapshot, 1, 1)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := output.String()
+		if strings.ContainsAny(text, "\x1b\r\t\u009b\u2028\u202e") || strings.Contains(text, "[2J\n") {
+			t.Fatalf("unsafe terminal output: %q", text)
+		}
+		if !strings.Contains(text, `Алиса\x1b[2J\r\n\t\u009b\u2028\u202e`) {
+			t.Fatalf("missing escaped name: %q", text)
+		}
+	}
+}

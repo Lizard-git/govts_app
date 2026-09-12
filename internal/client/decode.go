@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 )
 
 type DecoderFactory func() (audio.Decoder, error)
+
+var errInvalidAudioFrame = errors.New("invalid audio frame")
 
 type streamDecoder struct {
 	decoder  audio.Decoder
@@ -52,8 +55,12 @@ func (d *streamDecoders) decodeAt(
 
 	samples, err := stream.decoder.Decode(frame.Data)
 	if err != nil {
+		// A malformed frame may leave codec state partially updated. Reset only
+		// this sender; the next frame will get a fresh decoder.
+		delete(d.bySender, frame.SenderID)
 		return audio.MediaPCMFrame{}, fmt.Errorf(
-			"decode frame from sender %d: %w",
+			"%w: decode frame from sender %d: %w",
+			errInvalidAudioFrame,
 			frame.SenderID,
 			err,
 		)
@@ -103,6 +110,9 @@ func DecodeLoop(
 			}
 
 			pcmFrame, err := decoders.decode(frame)
+			if errors.Is(err, errInvalidAudioFrame) {
+				continue
+			}
 			if err != nil {
 				return err
 			}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"example.com/go-voice-mvp/internal/domain"
@@ -79,6 +80,9 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 	}
 	if !utf8.ValidString(info.Name) || info.Name == "" || len(info.Name) > domain.MaxServerNameBytes || strings.TrimSpace(info.Name) != info.Name {
 		return nil, fmt.Errorf("%w: server name must be valid UTF-8, trimmed, and 1..%d bytes", ErrInvalidServerInfo, domain.MaxServerNameBytes)
+	}
+	if hasNameControlCharacters(info.Name) {
+		return nil, fmt.Errorf("%w: server name contains control characters", ErrInvalidServerInfo)
 	}
 
 	defaultChannel := domain.Channel{
@@ -410,6 +414,9 @@ func sameUDPAddr(left, right *net.UDPAddr) bool {
 }
 
 func validateParticipantName(name string) error {
+	if hasNameControlCharacters(name) {
+		return errors.New("invalid participant name: control characters are not allowed")
+	}
 	if !utf8.ValidString(name) || name == "" || len(name) > domain.MaxParticipantNameBytes || strings.TrimSpace(name) != name {
 		return fmt.Errorf("invalid participant name: must be valid UTF-8, trimmed, and 1..%d bytes", domain.MaxParticipantNameBytes)
 	}
@@ -520,9 +527,16 @@ func validateChannel(channel domain.Channel) error {
 
 func validChannelName(name string) bool {
 	return utf8.ValidString(name) &&
+		!hasNameControlCharacters(name) &&
 		name != "" &&
 		len(name) <= domain.MaxChannelNameBytes &&
 		strings.TrimSpace(name) == name
+}
+
+func hasNameControlCharacters(name string) bool {
+	return strings.ContainsFunc(name, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	})
 }
 
 func (h *Hub) validateChannelParentLocked(parentID domain.ChannelID) error {

@@ -250,6 +250,12 @@ name-based compatibility layer. Live events и GUI в патч не входят
 reconnect с задержками `1s → 2s → 4s → 4s...`, безопасная смена session binding
 и временное консольное дерево каналов/участников поверх `ServerSnapshot`.
 
+#### `readme_docs/patch-6.md`
+
+Исполняемый план live participant events, восстановления snapshot по revision,
+локальных speaking/mute/deafen и immutable view/subscription-границы для
+будущего GUI на Wails без зависимости backend-пакетов от GUI framework.
+
 #### `package.json`
 
 Не содержит JavaScript-кода или npm-зависимостей; используется только как набор удобных npm run scripts для Go-команд. `dev:server` запускает сервер. `dev:client-42` и `dev:client-43` сейчас запускают одинаковую команду с одним именем `G712`, поэтому для моделирования разных участников их параметры стоит различать вручную.

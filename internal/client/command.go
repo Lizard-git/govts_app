@@ -37,8 +37,7 @@ func ReadCommandLoop(ctx context.Context, input io.Reader, commands chan<- Comma
 
 func HandleOfflineCommand(command Command, output io.Writer, cancel context.CancelFunc) {
 	switch command.Name {
-	case "/quit":
-	case "/q":
+	case "/quit", "/q":
 		cancel()
 	case "/help":
 		_ = WriteClientHelp(output)
@@ -66,8 +65,7 @@ func SessionCommandLoop(ctx context.Context, conn *udp.ClientPacketConn, state *
 				if err := WriteClientHelp(output); err != nil {
 					return err
 				}
-			case "/quit":
-			case "/q":
+			case "/quit", "/q":
 				cancelApp()
 				return nil
 			default:

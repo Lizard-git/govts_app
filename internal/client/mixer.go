@@ -7,8 +7,12 @@ import (
 	"example.com/go-voice-mvp/internal/audio"
 )
 
+// At the fixed 20 ms audio profile, keep at most 100 ms per sender.
+const maxMixerFramesPerSender = 5
+
 type pcmMixer struct {
-	bySender map[uint64][]audio.MediaPCMFrame
+	bySender      map[uint64][]audio.MediaPCMFrame
+	droppedFrames uint64
 }
 
 func newPCMMixer() *pcmMixer {
@@ -18,7 +22,15 @@ func newPCMMixer() *pcmMixer {
 }
 
 func (m *pcmMixer) Push(frame audio.MediaPCMFrame) {
-	m.bySender[frame.SenderID] = append(m.bySender[frame.SenderID], frame)
+	queue := m.bySender[frame.SenderID]
+	if len(queue) == maxMixerFramesPerSender {
+		copy(queue, queue[1:])
+		queue[len(queue)-1] = frame
+		m.droppedFrames++
+	} else {
+		queue = append(queue, frame)
+	}
+	m.bySender[frame.SenderID] = queue
 }
 
 func (m *pcmMixer) Mix() (audio.PCMFrame, bool) {
@@ -30,6 +42,7 @@ func (m *pcmMixer) Mix() (audio.PCMFrame, bool) {
 		}
 
 		frames = append(frames, queue[0])
+		queue[0] = audio.MediaPCMFrame{} // Release consumed sample storage.
 		if len(queue) == 1 {
 			delete(m.bySender, senderID)
 		} else {
