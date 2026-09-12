@@ -59,6 +59,12 @@ func run(configPath string) error {
 
 	cache := voice.NewRequestCache()
 	cleanupErrCh := make(chan error, 1)
+	dispatchErrCh := make(chan error, 1)
+	go func() {
+		err := voice.DispatchEvents(ctx, hub, conn)
+		dispatchErrCh <- err
+		cancel()
+	}()
 
 	go func() {
 		cleanupErrCh <- server.CleanupLoop(
@@ -89,6 +95,10 @@ func run(configPath string) error {
 	serveErr := voice.ServeUDP(ctx, conn, hub, cache)
 	cancel()
 	cleanupErr := <-cleanupErrCh
+	dispatchErr := <-dispatchErrCh
+	if errors.Is(dispatchErr, context.Canceled) {
+		dispatchErr = nil
+	}
 
 	if errors.Is(serveErr, context.Canceled) {
 		serveErr = nil
@@ -97,5 +107,5 @@ func run(configPath string) error {
 		cleanupErr = nil
 	}
 
-	return errors.Join(serveErr, cleanupErr)
+	return errors.Join(serveErr, cleanupErr, dispatchErr)
 }

@@ -23,7 +23,7 @@ const (
 
 var errSnapshotRevisionChanged = errors.New("snapshot revision changed")
 
-func LoadServerSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *State) (domain.ServerSnapshot, error) {
+func loadAndPublishSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *State) (domain.ServerSnapshot, error) {
 	generation := state.Generation()
 	for attempt := 1; attempt <= snapshotSyncAttempts; attempt++ {
 		snapshot, err := loadServerSnapshotOnce(ctx, conn, state)
@@ -31,13 +31,16 @@ func LoadServerSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *
 			if !state.ReplaceSnapshotForGeneration(generation, snapshot) {
 				return domain.ServerSnapshot{}, errors.New("client session changed during snapshot load")
 			}
+			if !state.SnapshotFresh() {
+				continue
+			}
 			return snapshot, nil
 		}
 		if !errors.Is(err, errSnapshotRevisionChanged) {
 			return domain.ServerSnapshot{}, err
 		}
 	}
-	return domain.ServerSnapshot{}, fmt.Errorf("server state changed during %d snapshot attempts", snapshotSyncAttempts)
+	return domain.ServerSnapshot{}, fmt.Errorf("%w: server state changed during %d snapshot attempts", errSnapshotRevisionChanged, snapshotSyncAttempts)
 }
 
 func loadServerSnapshotOnce(ctx context.Context, conn *udp.ClientPacketConn, state *State) (domain.ServerSnapshot, error) {

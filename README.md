@@ -60,6 +60,11 @@ microphone
 - безопасный drop повреждённых/rejected датаграмм без остановки receive loop;
 - paged `ServerSnapshot`, атомарное клиентское состояние и консольное дерево
   каналов/участников;
+- live-события подключения, перехода и отключения участников; recovery через
+  snapshot и metadata revision check каждые 5 секунд;
+- локальные `/mute` и `/deafen`, сохраняющиеся через reconnect, и speaking
+  indicators (RMS PCM16 ≥ 600, hangover 300 мс);
+- `ClientViewState`, глубокие копии и bounded-подписка на изменения для будущего UI;
 
 ### Известные ограничения
 
@@ -68,8 +73,9 @@ microphone
 - handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
 - нет аутентификации и шифрования;
-- нет удалённого RCON, сетевого API создания каналов, persistence и
-  live-событий изменения состояния после начального snapshot.
+- нет удалённого RCON, сетевого API создания каналов и persistence;
+- live-события доставляются best effort; потеря последнего события обнаруживается
+  периодической проверкой revision. Консольная история также best effort.
 
 ## Структура проекта
 
@@ -128,6 +134,8 @@ go run ./cmd/client2 -name bob   -channel main
 ```text
 /channels        обновить и показать дерево каналов
 /join <id|name>  перейти в канал
+/mute [on|off|toggle]    управлять передачей микрофона
+/deafen [on|off|toggle]  управлять локальным воспроизведением
 /help            показать справку
 /quit            отключиться и завершить клиент
 ```
@@ -175,6 +183,11 @@ offset   field       type     size
 6  JoinChannel
 7  JoinChannelAck
 8  Error
+9  StateSnapshotRequest
+10 StateSnapshotAck
+11 HeartbeatAck
+12 SessionInvalid
+13 StateEvent
 ```
 
 `Sequence` задаёт порядок voice-пакетов. `RequestID` связывает control request

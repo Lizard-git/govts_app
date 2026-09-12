@@ -91,6 +91,7 @@ func DecodeLoop(
 	newDecoder DecoderFactory,
 	encodedCh <-chan audio.MediaFrame,
 	pcmOutCh chan<- audio.MediaPCMFrame,
+	states ...*State,
 ) error {
 	defer close(pcmOutCh)
 	decoders := newStreamDecoders(newDecoder)
@@ -115,6 +116,16 @@ func DecodeLoop(
 			}
 			if err != nil {
 				return err
+			}
+			if len(states) > 0 && !states[0].ObserveSpeaking(frame.SenderID, pcmFrame.Samples, time.Now()) {
+				continue
+			}
+			if len(states) > 0 {
+				deafened, epoch := states[0].Audio.PlaybackSnapshot()
+				if deafened {
+					continue
+				}
+				pcmFrame.PlaybackEpoch = epoch
 			}
 
 			select {

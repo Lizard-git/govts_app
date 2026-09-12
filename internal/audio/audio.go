@@ -6,8 +6,9 @@ import (
 )
 
 type Frame struct {
-	Data     []byte
-	Duration time.Duration
+	ControlEpoch uint64
+	Data         []byte
+	Duration     time.Duration
 }
 
 // MediaFrame is an encoded frame received from a remote audio stream.
@@ -20,16 +21,19 @@ type MediaFrame struct {
 }
 
 type PCMFrame struct {
-	Samples  []int16
-	Duration time.Duration
+	PlaybackEpoch uint64
+	ControlEpoch  uint64
+	Samples       []int16
+	Duration      time.Duration
 }
 
 // MediaPCMFrame is decoded PCM that still belongs to a remote audio stream.
 type MediaPCMFrame struct {
-	SenderID uint64
-	Sequence uint32
-	Samples  []int16
-	Duration time.Duration
+	PlaybackEpoch uint64
+	SenderID      uint64
+	Sequence      uint32
+	Samples       []int16
+	Duration      time.Duration
 }
 
 type Encoder interface {
@@ -49,6 +53,12 @@ type CodecConfig struct {
 type Player interface {
 	Write(samples []int16) error
 	Close() error
+}
+
+// SetDeafened serializes with Write and discards application playback buffers.
+type DeafenPlayer interface {
+	Player
+	SetDeafened(bool) error
 }
 
 type Recorder interface {

@@ -261,6 +261,9 @@ func (c *packetConn) write(
 ) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
 
 	data, err := c.encode(ctx, packet)
 	if err != nil {

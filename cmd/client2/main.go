@@ -79,7 +79,7 @@ func run(name, initialChannel string) (runErr error) {
 			}
 			delay := backoff.Next()
 			log.Printf("connection unavailable: %v; retry in %s", err, delay)
-			if !waitForReconnect(appCtx, delay, commands, cancelApp) {
+			if !waitForReconnect(appCtx, delay, commands, cancelApp, state) {
 				return nil
 			}
 			continue
@@ -119,7 +119,7 @@ func run(name, initialChannel string) (runErr error) {
 		}
 		delay := backoff.Next()
 		log.Printf("%v; retry in %s", sessionErr, delay)
-		if !waitForReconnect(appCtx, delay, commands, cancelApp) {
+		if !waitForReconnect(appCtx, delay, commands, cancelApp, state) {
 			return nil
 		}
 	}
@@ -138,7 +138,7 @@ func openClientPacketConn() (*udp.ClientPacketConn, error) {
 	return conn, nil
 }
 
-func waitForReconnect(ctx context.Context, delay time.Duration, commands <-chan voiceclient.Command, cancel context.CancelFunc) bool {
+func waitForReconnect(ctx context.Context, delay time.Duration, commands <-chan voiceclient.Command, cancel context.CancelFunc, states ...*voiceclient.State) bool {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	for {
@@ -152,7 +152,7 @@ func waitForReconnect(ctx context.Context, delay time.Duration, commands <-chan 
 				commands = nil
 				continue
 			}
-			voiceclient.HandleOfflineCommand(command, os.Stdout, cancel)
+			voiceclient.HandleOfflineCommand(command, os.Stdout, cancel, states...)
 		}
 	}
 }

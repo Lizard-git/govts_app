@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -22,6 +23,7 @@ const (
 )
 
 func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, playbackOutput *audio.OtoOutput, name string, preference *channelPreference, commands <-chan voiceclient.Command, output io.Writer, cancelApp context.CancelFunc, firstConnection bool, onReady func()) (runErr error) {
+	output = &lockedOutput{writer: output}
 	sessionID := state.SessionID()
 	oldSnapshot := state.Snapshot()
 	audioCh := make(chan audio.Frame)
@@ -48,6 +50,11 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			}
 		}
 	}()
+	detachPlayer, err := state.Audio.AttachPlayer(player)
+	if err != nil {
+		return err
+	}
+	defer detachPlayer()
 	supervisor := newLoopSupervisor(parent)
 	ctx := supervisor.Context()
 	defer supervisor.Cancel()
@@ -55,7 +62,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return classifyNetworkLoopError(operation, loop())
 	}
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) { return audio.NewOpusDecoder(codecConfig) }, orderedInCh, decodedCh)
+		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) { return audio.NewOpusDecoder(codecConfig) }, orderedInCh, decodedCh, state)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.JitterLoop(ctx, encodedInCh, orderedInCh, voiceclient.DefaultJitterDepth)
@@ -69,8 +76,10 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond)
 	})
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, output) })
 	joinedSignal := make(chan struct{}, 1)
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, func(locator voiceclient.ChannelLocator) {
@@ -91,10 +100,12 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return errors.Join(cause, shutdownErr)
 	}
 	log.Printf("client connected: id=%d name=%s", sessionID, name)
-	snapshot, err := voiceclient.LoadServerSnapshot(ctx, conn, state)
+	syncer := &voiceclient.StateSyncer{Conn: conn, State: state}
+	snapshot, err := syncer.Load(ctx)
 	if err != nil {
 		return finish(fmt.Errorf("%w: load server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
+	supervisor.Go(syncer.Run)
 	selector, locator := preference.Get()
 	var channelID domain.ChannelID
 	treePrinted := false
@@ -118,7 +129,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			log.Printf("cannot join channel: %v", err)
 			channelID = 0
 		} else {
-			snapshot, err = voiceclient.LoadServerSnapshot(ctx, conn, state)
+			snapshot, err = syncer.Load(ctx)
 			if err != nil {
 				return finish(fmt.Errorf("%w: refresh server snapshot: %v", voiceclient.ErrConnectionLost, err))
 			}
@@ -155,10 +166,12 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return finish(fmt.Errorf("create audio recorder: %w", err))
 	}
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh) })
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh, state) })
 	supervisor.Go(func(ctx context.Context) error {
-		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh) })
+		return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame, state.Audio)
+	})
+	supervisor.Go(func(ctx context.Context) error {
+		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh, state.Audio) })
 	})
 	if onReady != nil {
 		onReady()
@@ -173,6 +186,17 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		runtimeErr = errors.Join(runtimeErr, wrapError("send disconnect", voiceclient.Disconnect(conn, sessionID)))
 	}
 	return runtimeErr
+}
+
+type lockedOutput struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *lockedOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }
 
 func shouldRenderConnectionTree(firstConnection, alreadyPrinted, topologyUnchanged bool) bool {

@@ -35,7 +35,10 @@ func ReadCommandLoop(ctx context.Context, input io.Reader, commands chan<- Comma
 	}
 }
 
-func HandleOfflineCommand(command Command, output io.Writer, cancel context.CancelFunc) {
+func HandleOfflineCommand(command Command, output io.Writer, cancel context.CancelFunc, states ...*State) {
+	if len(states) > 0 && HandleAudioCommand(command, states[0], output) {
+		return
+	}
 	switch command.Name {
 	case "/quit", "/q":
 		cancel()
@@ -54,6 +57,9 @@ func SessionCommandLoop(ctx context.Context, conn *udp.ClientPacketConn, state *
 		case command, ok := <-commands:
 			if !ok {
 				commands = nil
+				continue
+			}
+			if state != nil && HandleAudioCommand(command, state, output) {
 				continue
 			}
 			switch command.Name {
@@ -79,7 +85,7 @@ func WriteClientHelp(output io.Writer) error {
 	if output == nil {
 		return fmt.Errorf("command output is required")
 	}
-	_, err := io.WriteString(output, "commands:\n  /channels        refresh and show channels\n  /join <id|name>  join a channel\n  /help            show this help\n  /quit            disconnect and exit\n")
+	_, err := io.WriteString(output, "commands:\n  /channels        refresh and show channels\n  /join <id|name>  join a channel\n  /mute [on|off|toggle]\n  /deafen [on|off|toggle]\n  /help            show this help\n  /quit            disconnect and exit\n")
 	return err
 }
 

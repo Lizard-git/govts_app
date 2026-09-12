@@ -59,7 +59,7 @@ func TestCreateSessionReplacingEndpointIsAtomic(t *testing.T) {
 	if _, ok := hub.Get(first.ID); ok {
 		t.Fatal("old endpoint session remains")
 	}
-	if hub.Count() != 1 || hub.Revision() != revision+1 {
+	if hub.Count() != 1 || hub.Revision() != revision+2 {
 		t.Fatalf("count/revision = %d/%d", hub.Count(), hub.Revision())
 	}
 }

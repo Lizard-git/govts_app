@@ -57,9 +57,18 @@ func (m *pcmMixer) Mix() (audio.PCMFrame, bool) {
 }
 
 func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
+	var epoch uint64
+	for _, frame := range frames {
+		if frame.PlaybackEpoch > epoch {
+			epoch = frame.PlaybackEpoch
+		}
+	}
 	sampleCount := 0
 	duration := time.Duration(0)
 	for _, frame := range frames {
+		if frame.PlaybackEpoch != epoch {
+			continue
+		}
 		if len(frame.Samples) > sampleCount {
 			sampleCount = len(frame.Samples)
 		}
@@ -70,6 +79,9 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 
 	sums := make([]int64, sampleCount)
 	for _, frame := range frames {
+		if frame.PlaybackEpoch != epoch {
+			continue
+		}
 		for i, sample := range frame.Samples {
 			sums[i] += int64(sample)
 		}
@@ -79,7 +91,7 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	for i, sum := range sums {
 		samples[i] = clampInt16(sum)
 	}
-	return audio.PCMFrame{Samples: samples, Duration: duration}
+	return audio.PCMFrame{Samples: samples, Duration: duration, PlaybackEpoch: epoch}
 }
 
 func clampInt16(value int64) int16 {

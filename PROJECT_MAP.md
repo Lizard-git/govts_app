@@ -759,13 +759,13 @@ join/remove/heartbeat под race detector.
 
 Содержит `CleanupLoop` и его operational constants. Раз в `CleanupInterval` удаляет из Hub сессии, неактивные дольше `SessionTimeout`, очищает их request-cache entries, логирует timeout и удаляет остальные expired cache entries. Возвращает `ctx.Err()` при остановке; `cmd/server` нормализует ожидаемый `context.Canceled`.
 
-### `readme/` — рабочие заметки и настройка окружения
+### `build` — рабочие заметки и настройка окружения
 
-#### `readme/info.md`
+#### `build`
 
 Черновые инженерные заметки: фрагменты диагностического логирования и схемы handshake, heartbeat, client loops, demultiplexing, join flow и server-side request deduplication. Часть терминологии и схем отражает процесс разработки, поэтому этот файл не следует считать нормативной документацией; актуальные имена и порядок нужно сверять с кодом и `PROJECT_MAP.md`.
 
-#### `readme/sc.ps1`
+#### `build`
 
 PowerShell-скрипт, записывающий пользовательские переменные окружения `GOROOT=D:\_go\sdk\go1.27.1` и `GOPROXY=https://proxy.golang.org,direct`. Изменяет постоянное окружение текущего пользователя Windows, не запускается автоматически и не нужен в CI.
 
@@ -862,6 +862,15 @@ go test -race ./...
 
 ## 9. Существенные текущие ограничения
 
+Patch 6: `internal/domain/event.go` и `internal/protocol/event.go` задают события
+участников и versioned wire payload. `internal/voice/events.go` обслуживает outbox
+на 256 событий и ordered dispatcher. `internal/client/live.go` содержит атомарное
+применение событий, `ClientViewState`, подписки и консольные уведомления;
+`sync.go` сериализует snapshot loads и проверяет revision каждые 5 секунд.
+`audio_controls.go` и `audio_command.go` реализуют speaking/mute/deafen.
+`internal/audio/player.go` использует ограниченный неблокирующий playback buffer
+вместо `io.Pipe`, чтобы deafen мог очистить воспроизведение.
+
 - Нет аутентификации, шифрования, HMAC/AEAD и защиты от replay; проверка `IP:port` — лишь базовая привязка endpoint.
 - `SessionID` является криптографически случайным 64-битным идентификатором, но до появления аутентификации и защиты пакетов его всё равно нельзя считать полноценным session token или единственным средством авторизации.
 - Клиентский host/port и серверный port пока зашиты в коде; server config
@@ -869,10 +878,10 @@ go test -race ./...
 - Один UDP socket переносит control и media; при нагрузке они конкурируют за одну очередь.
 - Сервер выполняет рассылку последовательно и прекращает `SendToSessions` после первой ошибки отправки.
 - Jitter buffer фиксированный; нет adaptive jitter, PLC и детальной наружной телеметрии loss/duplicate/drop.
-- Mixer использует простое суммирование с saturation; нет master/per-user volume, limiter, mute/deafen, PTT или VAD.
-- Reconnect/session recovery реализован, но ещё нет live events и
-  периодического revision check; полный список пользователей/каналов
-  синхронизируется при подключении, join и по команде `/channels`.
+- Mixer использует простое суммирование с saturation; нет master/per-user volume,
+  limiter, PTT или полноценного VAD. Mute/deafen и RMS speaking detector реализованы.
+- Live events восстанавливаются через snapshot при gap и periodic revision check.
+  Runtime rename/channel mutations без соответствующего event выявляются через revision.
 - Нет persistent storage: все sessions/channels/cache существуют только в памяти процесса.
 - Серверная консоль локальная и read-only; удалённого RCON пока нет.
 - CLI-команда `/join` может выполняться параллельно с shutdown; полноценного GUI пока нет.

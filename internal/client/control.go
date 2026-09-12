@@ -24,6 +24,7 @@ func ControlLoop(
 	state *State,
 	controlCh <-chan protocol.VoicePacket,
 ) error {
+	generation := state.Generation()
 	for {
 		select {
 		case <-ctx.Done():
@@ -38,6 +39,16 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketStateEvent:
+				if packet.RequestID != 0 {
+					continue
+				}
+				event, err := protocol.DecodeStateEvent(packet.Payload)
+				if err != nil {
+					state.RequestResync(generation)
+					continue
+				}
+				state.ApplyEvent(generation, event)
 			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck,
 				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid:
 				response := ControlResponse{
@@ -151,7 +162,8 @@ func joinChannelWithTimeout(
 		return err
 	}
 
-	if !state.SetChannelIDForGeneration(generation, channelID) {
+	_, revision, _ := protocol.DecodeJoinChannelAck(response.Payload)
+	if !state.ConfirmChannel(generation, channelID, revision) {
 		return errors.New("client session changed during join")
 	}
 	return nil

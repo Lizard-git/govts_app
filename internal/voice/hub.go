@@ -42,6 +42,8 @@ type Hub struct {
 	nextChannelID domain.ChannelID
 	revision      domain.StateRevision
 	serverInfo    domain.ServerInfo
+	outbox        []domain.StateEvent
+	eventReady    chan struct{}
 }
 
 // OperationalSnapshot is a point-in-time copy for local server diagnostics.
@@ -99,6 +101,7 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		nextChannelID: DefaultChannelID + 1,
 		revision:      1,
 		serverInfo:    info,
+		eventReady:    make(chan struct{}, 1),
 	}, nil
 }
 
@@ -120,6 +123,7 @@ func (h *Hub) Remove(id uint64) (Session, bool) {
 	}
 	delete(h.sessions, id)
 	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
 	return *cloneSession(session), true
 }
 
@@ -167,6 +171,7 @@ func (h *Hub) joinChannelLocked(id uint64, channelID domain.ChannelID) error {
 
 	session.ChannelID = channelID
 	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantMoved, SessionID: id, ChannelID: channelID})
 	return nil
 }
 
@@ -393,6 +398,8 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 		for oldID, oldSession := range h.sessions {
 			if sameUDPAddr(oldSession.Addr, addr) {
 				delete(h.sessions, oldID)
+				h.revision++
+				h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: oldID})
 				replaced = append(replaced, oldID)
 			}
 		}
@@ -405,6 +412,7 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 	}
 	h.sessions[id] = session
 	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, DisplayName: name}})
 	sort.Slice(replaced, func(i, j int) bool { return replaced[i] < replaced[j] })
 	return *cloneSession(session), replaced, nil
 }
@@ -487,6 +495,7 @@ func (h *Hub) RemoveInactive(now time.Time, timeout time.Duration) []Session {
 		}
 		delete(h.sessions, id)
 		h.revision++
+		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
 		removed = append(removed, *cloneSession(session))
 	}
 	sortSessionsByID(removed)

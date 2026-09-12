@@ -10,7 +10,16 @@ import (
 )
 
 type State struct {
-	mu sync.RWMutex
+	mu               sync.RWMutex
+	syncMu           sync.Mutex
+	syncSerial       uint64
+	syncedGeneration uint64
+	observedRevision domain.StateRevision
+	resync           chan struct{}
+	subscribers      map[chan struct{}]struct{}
+	notices          chan string
+	speaking         map[uint64]time.Time
+	Audio            *AudioControlState
 
 	sessionID        uint64
 	name             string
@@ -41,13 +50,19 @@ type ControlResponse struct {
 }
 
 func NewState(sessionID uint64, name string) *State {
-	return &State{
-		sessionID:  sessionID,
-		name:       name,
-		generation: 1,
-		status:     ConnectionConnecting,
-		pending:    make(map[uint32]chan ControlResponse),
+	s := &State{
+		sessionID:   sessionID,
+		name:        name,
+		generation:  1,
+		status:      ConnectionConnecting,
+		pending:     make(map[uint32]chan ControlResponse),
+		resync:      make(chan struct{}, 1),
+		subscribers: make(map[chan struct{}]struct{}),
+		notices:     make(chan string, 64),
+		speaking:    make(map[uint64]time.Time),
 	}
+	s.Audio = NewAudioControlState(func() { s.audioChanged() })
+	return s
 }
 
 func (s *State) ChannelID() domain.ChannelID {
@@ -60,6 +75,7 @@ func (s *State) SetChannelID(channelID domain.ChannelID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.channelID = channelID
+	s.notifyLocked()
 }
 
 func (s *State) Generation() uint64 { s.mu.RLock(); defer s.mu.RUnlock(); return s.generation }
@@ -86,6 +102,7 @@ func (s *State) SetConnectionStatus(status ConnectionStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.status = status
+	s.notifyLocked()
 }
 func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.mu.Lock()
@@ -96,6 +113,17 @@ func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.lastHeartbeatAck = time.Time{}
 	s.channelID = 0
 	s.sessionID = 0
+	s.observedRevision = 0
+drainNotices:
+	for {
+		select {
+		case <-s.notices:
+		default:
+			break drainNotices
+		}
+	}
+	clear(s.speaking)
+	s.notifyLocked()
 	return s.generation
 }
 
@@ -114,6 +142,9 @@ func (s *State) StartSession(sessionID uint64) (uint64, error) {
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
 	s.status = ConnectionConnecting
+	s.observedRevision = 0
+	clear(s.speaking)
+	s.notifyLocked()
 	return s.generation, nil
 }
 
@@ -124,6 +155,8 @@ func (s *State) SetChannelIDForGeneration(generation uint64, channelID domain.Ch
 		return false
 	}
 	s.channelID = channelID
+	clear(s.speaking)
+	s.notifyLocked()
 	return true
 }
 
@@ -137,6 +170,8 @@ func (s *State) ReplaceSnapshot(snapshot domain.ServerSnapshot) {
 	defer s.mu.Unlock()
 	s.snapshot = snapshot.Clone()
 	s.snapshotFresh = true
+	s.syncedGeneration = s.generation
+	s.notifyLocked()
 }
 
 func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.ServerSnapshot) bool {
@@ -145,8 +180,26 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 	if s.generation != generation {
 		return false
 	}
+	if s.syncedGeneration == generation && snapshot.Revision < s.snapshot.Revision {
+		return true
+	}
+	if snapshot.Revision < s.observedRevision {
+		s.requestResyncLocked()
+		return true
+	}
 	s.snapshot = snapshot.Clone()
-	s.snapshotFresh = true
+	s.syncedGeneration = generation
+	s.snapshotFresh = snapshot.Revision >= s.observedRevision
+	clear(s.speaking)
+	for _, p := range snapshot.Participants {
+		if p.SessionID == s.sessionID {
+			s.channelID = p.ChannelID
+		}
+	}
+	if !s.snapshotFresh {
+		s.requestResyncLocked()
+	}
+	s.notifyLocked()
 	return true
 }
 
