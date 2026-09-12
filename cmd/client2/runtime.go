@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
+	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -19,15 +21,9 @@ const (
 	samplesPerFrame = 960
 )
 
-func runSession(
-	parent context.Context,
-	conn *udp.ClientPacketConn,
-	sessionID uint64,
-	name string,
-	channel string,
-) (runErr error) {
-	state := voiceclient.NewState(sessionID, name)
-
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, playbackOutput *audio.OtoOutput, name string, preference *channelPreference, commands <-chan voiceclient.Command, output io.Writer, cancelApp context.CancelFunc, firstConnection bool, onReady func()) (runErr error) {
+	sessionID := state.SessionID()
+	oldSnapshot := state.Snapshot()
 	audioCh := make(chan audio.Frame)
 	pcmCh := make(chan audio.PCMFrame)
 	encodedInCh := make(chan audio.MediaFrame)
@@ -35,19 +31,12 @@ func runSession(
 	controlCh := make(chan protocol.VoicePacket, 16)
 	decodedCh := make(chan audio.MediaPCMFrame)
 	pcmOutCh := make(chan audio.PCMFrame)
-
-	codecConfig := audio.CodecConfig{
-		SampleRate:      sampleRate,
-		Channels:        channels,
-		SamplesPerFrame: samplesPerFrame,
-	}
-
+	codecConfig := clientAudioConfig()
 	encoder, err := audio.NewOpusEncoder(codecConfig)
 	if err != nil {
 		return fmt.Errorf("create Opus encoder: %w", err)
 	}
-
-	player, err := audio.NewOtoPlayer(codecConfig)
+	player, err := playbackOutput.NewPlayer()
 	if err != nil {
 		return fmt.Errorf("create audio player: %w", err)
 	}
@@ -59,110 +48,152 @@ func runSession(
 			}
 		}
 	}()
-
 	supervisor := newLoopSupervisor(parent)
 	ctx := supervisor.Context()
 	defer supervisor.Cancel()
-
-	// Receive and control loops must be running before JoinChannel: DoRequest
-	// receives its acknowledgement through this part of the pipeline.
+	networkLoop := func(operation string, loop func() error) error {
+		return classifyNetworkLoopError(operation, loop())
+	}
 	supervisor.Go(func(ctx context.Context) error {
-		// UDP → receiveLoop → encodedInCh → jitterLoop → orderedInCh
-		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) {
-			return audio.NewOpusDecoder(codecConfig)
-		}, orderedInCh, decodedCh)
+		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) { return audio.NewOpusDecoder(codecConfig) }, orderedInCh, decodedCh)
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.JitterLoop(
-			ctx,
-			encodedInCh,
-			orderedInCh,
-			voiceclient.DefaultJitterDepth,
-		)
+		return voiceclient.JitterLoop(ctx, encodedInCh, orderedInCh, voiceclient.DefaultJitterDepth)
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.HeartbeatLoop(ctx, conn, sessionID)
+		return networkLoop("heartbeat", func() error { return voiceclient.HeartbeatLoop(ctx, conn, state) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh)
+		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond)
 	})
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
+	joinedSignal := make(chan struct{}, 1)
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.PlaybackLoop(ctx, player, pcmOutCh)
+		return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, func(locator voiceclient.ChannelLocator) {
+			preference.Set(locator)
+			select {
+			case joinedSignal <- struct{}{}:
+			default:
+			}
+		})
 	})
-	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.ControlLoop(ctx, state, controlCh)
-	})
-	failBeforeCapture := func(cause error) error {
+
+	finish := func(cause error) error {
 		shutdownErr := supervisor.Shutdown(func() error {
 			closeErr := player.Close()
 			playerClosed = true
 			return wrapError("close audio player", closeErr)
 		})
-		disconnectErr := voiceclient.Disconnect(conn, sessionID)
-		return errors.Join(cause, shutdownErr, wrapError("send disconnect", disconnectErr))
+		return errors.Join(cause, shutdownErr)
 	}
-
 	log.Printf("client connected: id=%d name=%s", sessionID, name)
 	snapshot, err := voiceclient.LoadServerSnapshot(ctx, conn, state)
 	if err != nil {
-		return failBeforeCapture(fmt.Errorf("load server snapshot: %w", err))
+		return finish(fmt.Errorf("%w: load server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
-	channelID, err := voiceclient.ResolveChannel(snapshot, channel)
-	if err != nil {
-		return failBeforeCapture(fmt.Errorf("resolve initial channel: %w", err))
+	selector, locator := preference.Get()
+	var channelID domain.ChannelID
+	treePrinted := false
+	if len(locator) > 0 {
+		id, resolveErr := voiceclient.ResolveChannelLocator(snapshot, locator)
+		if resolveErr == nil {
+			channelID = id
+		} else {
+			log.Printf("cannot restore channel: %v", resolveErr)
+		}
+	} else {
+		id, resolveErr := voiceclient.ResolveChannel(snapshot, selector)
+		if resolveErr == nil {
+			channelID = id
+		} else {
+			log.Printf("cannot resolve initial channel: %v", resolveErr)
+		}
 	}
-	if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
-		return failBeforeCapture(fmt.Errorf("join channel: %w", err))
+	if channelID != 0 {
+		if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
+			log.Printf("cannot join channel: %v", err)
+			channelID = 0
+		} else {
+			snapshot, err = voiceclient.LoadServerSnapshot(ctx, conn, state)
+			if err != nil {
+				return finish(fmt.Errorf("%w: refresh server snapshot: %v", voiceclient.ErrConnectionLost, err))
+			}
+			saved, err := voiceclient.BuildChannelLocator(snapshot, channelID)
+			if err != nil {
+				return finish(err)
+			}
+			preference.Set(saved)
+		}
 	}
-	if _, err := voiceclient.LoadServerSnapshot(ctx, conn, state); err != nil {
-		return failBeforeCapture(fmt.Errorf("refresh server snapshot after join: %w", err))
+	if channelID == 0 {
+		state.SetConnectionStatus(voiceclient.ConnectionConnected)
+		_ = voiceclient.RenderServerTree(output, snapshot, sessionID, 0, false)
+		treePrinted = true
+		select {
+		case <-ctx.Done():
+			return finish(nil)
+		case <-joinedSignal:
+			channelID = state.ChannelID()
+		}
 	}
-	log.Printf("join confirmed: %s (id=%d)", channel, channelID)
-
-	// Capture starts only after the server has confirmed the channel. Therefore
-	// no microphone frames can enter SendLoop before a successful join.
+	currentSnapshot := state.Snapshot()
+	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
+	if shouldRenderConnectionTree(firstConnection, treePrinted, topologyUnchanged) {
+		if !firstConnection {
+			log.Printf("reconnected; channel structure changed")
+		}
+		_ = voiceclient.RenderServerTree(output, currentSnapshot, sessionID, state.ChannelID(), false)
+	} else if !firstConnection {
+		log.Printf("reconnected; channel restored: id=%d", state.ChannelID())
+	}
+	state.SetConnectionStatus(voiceclient.ConnectionConnected)
 	recorder, err := audio.NewMalgoRecorder(codecConfig)
 	if err != nil {
-		shutdownErr := supervisor.Shutdown(func() error {
-			closeErr := player.Close()
-			playerClosed = true
-			return wrapError("close audio player", closeErr)
-		})
-		disconnectErr := voiceclient.Disconnect(conn, sessionID)
-		return errors.Join(
-			fmt.Errorf("create audio recorder: %w", err),
-			shutdownErr,
-			wrapError("send disconnect", disconnectErr),
-		)
+		return finish(fmt.Errorf("create audio recorder: %w", err))
 	}
-
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame) })
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh)
+		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh) })
 	})
-	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame)
-	})
-	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.SendLoop(ctx, conn, sessionID, audioCh)
-	})
-	go voiceclient.CommandLoop(ctx, conn, state, supervisor.Cancel)
-
+	if onReady != nil {
+		onReady()
+	}
 	runtimeErr := supervisor.Wait(func() error {
 		recorderErr := recorder.Close()
 		playerErr := player.Close()
 		playerClosed = true
-
-		return errors.Join(
-			wrapError("close audio recorder", recorderErr),
-			wrapError("close audio player", playerErr),
-		)
+		return errors.Join(wrapError("close audio recorder", recorderErr), wrapError("close audio player", playerErr))
 	})
+	if !errors.Is(runtimeErr, voiceclient.ErrConnectionLost) {
+		runtimeErr = errors.Join(runtimeErr, wrapError("send disconnect", voiceclient.Disconnect(conn, sessionID)))
+	}
+	return runtimeErr
+}
 
-	disconnectErr := voiceclient.Disconnect(conn, sessionID)
-	return errors.Join(runtimeErr, wrapError("send disconnect", disconnectErr))
+func shouldRenderConnectionTree(firstConnection, alreadyPrinted, topologyUnchanged bool) bool {
+	if alreadyPrinted {
+		return false
+	}
+	return firstConnection || !topologyUnchanged
+}
+
+func classifyNetworkLoopError(operation string, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	if errors.Is(err, voiceclient.ErrConnectionLost) {
+		return err
+	}
+	return fmt.Errorf("%w: %s: %w", voiceclient.ErrConnectionLost, operation, err)
+}
+
+func clientAudioConfig() audio.CodecConfig {
+	return audio.CodecConfig{SampleRate: sampleRate, Channels: channels, SamplesPerFrame: samplesPerFrame}
 }
 
 func wrapError(operation string, err error) error {

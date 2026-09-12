@@ -163,6 +163,19 @@ func (c *RequestCache) RemoveSession(sessionID uint64) int {
 	return removed
 }
 
+func (c *RequestCache) RemoveHandshakeEndpoint(endpoint netip.AddrPort) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	removed := 0
+	for key := range c.responses {
+		if key.SessionID == 0 && key.Endpoint == endpoint {
+			delete(c.responses, key)
+			removed++
+		}
+	}
+	return removed
+}
+
 func (c *RequestCache) RemoveExpired() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

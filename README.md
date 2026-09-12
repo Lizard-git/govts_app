@@ -40,13 +40,16 @@ microphone
   дерева каналов из bounded JSON-конфигурации;
 - локальная read-only консоль сервера для просмотра status, каналов и
   подключённых пользователей;
-- heartbeat каждые 5 секунд;
+- подтверждаемый heartbeat каждые 5 секунд с отдельным ACK deadline 3 секунды;
+- автоматический reconnect с задержками `1s → 2s → 4s → 4s...`, новой
+  сессией и восстановлением канала по пути имён;
 - удаление session после 30 секунд неактивности;
 - подключение и переключение канала через `JoinChannel`;
 - разделение входящих voice и control packets;
 - Opus encode/decode;
 - захват микрофона через malgo;
-- воспроизведение через Oto;
+- воспроизведение через один app-lifetime Oto context с отдельным player для
+  каждой восстановленной сетевой сессии;
 - `RequestID`, ожидание ответа и повтор control-запроса;
 - server-side deduplication через `RequestCache`;
 - явный disconnect клиента;
@@ -54,7 +57,9 @@ microphone
   endpoint и отдельным контекстом получателя (`KeyOwnerID`);
 - разные transport-типы для connected client socket и unconnected server
   socket;
-- безопасный drop повреждённых/rejected датаграмм без остановки receive loop.
+- безопасный drop повреждённых/rejected датаграмм без остановки receive loop;
+- paged `ServerSnapshot`, атомарное клиентское состояние и консольное дерево
+  каналов/участников;
 
 ### Известные ограничения
 
@@ -62,9 +67,9 @@ microphone
   и индивидуальной регулировки громкости участников;
 - handshake deduplication требует стабильного `IP:port` на время retry;
 - входящие voice-пакеты пока декодируются ещё до завершения join;
-- нет аутентификации, шифрования и reconnect;
+- нет аутентификации и шифрования;
 - нет удалённого RCON, сетевого API создания каналов, persistence и
-  синхронизации полного состояния с клиентом.
+  live-событий изменения состояния после начального snapshot.
 
 ## Структура проекта
 
@@ -121,8 +126,10 @@ go run ./cmd/client2 -name bob   -channel main
 Команды клиента:
 
 ```text
-/join main
-/quit
+/channels        обновить и показать дерево каналов
+/join <id|name>  перейти в канал
+/help            показать справку
+/quit            отключиться и завершить клиент
 ```
 
 Проверки проекта:
@@ -379,7 +386,7 @@ internal/transport/udp/    только UDP I/O
   `State`; при смене revision выполнять bounded restart.
 - [x] Перевести wire-контракт join на `ChannelID`, разрешая имя только локально
   по уже полученному snapshot.
-- [ ] Реализовать обнаружение потери сервера, автоматический reconnect и
+- [x] Реализовать обнаружение потери сервера, автоматический reconnect и
   консольное дерево каналов/участников по плану Patch 5.
 - [ ] Добавить server events `UserJoined`, `UserLeft` и `UserMoved` после
   стабилизации lifecycle соединения.
@@ -405,6 +412,7 @@ Channel domain model
 [`Patch 3`](readme_docs/patch-3.md) добавил конфигурацию стартового дерева и
 локальную read-only консоль сервера. [`Patch 4`](readme_docs/patch-4.md)
 добавил paged state snapshot, атомарное клиентское состояние и ID-based join
-через существующий request/response-контур.
+через существующий request/response-контур. [`Patch 5`](readme_docs/patch-5.md)
+добавил подтверждаемый lifecycle, reconnect и временное консольное дерево.
 Полный порядок и критерии готовности описаны в
 [`readme_docs/development-plan.md`](readme_docs/development-plan.md).

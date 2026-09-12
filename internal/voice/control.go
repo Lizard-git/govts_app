@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -52,9 +53,15 @@ func HandleHelloPacket(
 	if err := validateParticipantName(name); err != nil {
 		return cacheAndSendHandshakeError(conn, cache, packet.RequestID, addr, err.Error())
 	}
-	session, err := hub.CreateSession(name, addr)
+	session, replaced, err := hub.CreateSessionReplacingEndpoint(name, addr)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
+	}
+	for _, replacedID := range replaced {
+		cache.RemoveSession(replacedID)
+	}
+	if len(replaced) > 0 {
+		cache.RemoveHandshakeEndpoint(endpoint)
 	}
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketHelloAck,
@@ -88,14 +95,45 @@ func cacheAndSendHandshakeError(
 }
 
 func HandleHeartbeatPacket(
+	conn *udp.ServerPacketConn,
 	hub *Hub,
+	cache *RequestCache,
 	packet protocol.VoicePacket,
 	addr *net.UDPAddr,
 ) error {
+	if addr == nil {
+		return fmt.Errorf("client UDP address is required")
+	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, packet.SessionID, 0, "heartbeat request ID is required")
+	}
 	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrInvalidSessionAddr) {
+			response := protocol.VoicePacket{
+				Type:      protocol.PacketSessionInvalid,
+				SessionID: packet.SessionID,
+				RequestID: packet.RequestID,
+			}
+			return conn.WritePacket(packet.SessionID, addr, response)
+		}
 		return err
 	}
-	return hub.Touch(packet.SessionID)
+	if err := protocol.ValidateEmptyLifecyclePayload(protocol.PacketHeartbeat, packet.Payload); err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+	}
+	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
+		return conn.WritePacket(packet.SessionID, addr, response)
+	}
+	if err := hub.Touch(packet.SessionID); err != nil {
+		return err
+	}
+	ack := protocol.VoicePacket{
+		Type:      protocol.PacketHeartbeatAck,
+		SessionID: packet.SessionID,
+		RequestID: packet.RequestID,
+	}
+	cache.Put(packet.SessionID, packet.RequestID, ack)
+	return conn.WritePacket(packet.SessionID, addr, ack)
 }
 
 func HandleDisconnectPacket(

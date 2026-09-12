@@ -3,49 +3,93 @@ package client
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"io"
 	"log"
-	"os"
 	"strings"
 
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
-func CommandLoop(
-	ctx context.Context,
-	conn *udp.ClientPacketConn,
-	state *State,
-	cancel context.CancelFunc,
-) {
-	scanner := bufio.NewScanner(os.Stdin)
+type Command struct {
+	Name      string
+	Arguments []string
+}
+
+func ReadCommandLoop(ctx context.Context, input io.Reader, commands chan<- Command) {
+	if input == nil {
+		return
+	}
+	scanner := bufio.NewScanner(input)
 	for scanner.Scan() {
 		parts := strings.Fields(scanner.Text())
 		if len(parts) == 0 {
 			continue
 		}
-
-		switch parts[0] {
-		case "/join":
-			handleJoin(ctx, conn, state, parts[1:])
-		case "/quit":
-			cancel()
+		command := Command{Name: strings.ToLower(parts[0]), Arguments: append([]string(nil), parts[1:]...)}
+		select {
+		case commands <- command:
+		case <-ctx.Done():
 			return
-		default:
-			log.Printf("unknown command: %s", parts[0])
 		}
 	}
 }
 
-func handleJoin(
-	ctx context.Context,
-	conn *udp.ClientPacketConn,
-	state *State,
-	parts []string,
-) {
+func HandleOfflineCommand(command Command, output io.Writer, cancel context.CancelFunc) {
+	switch command.Name {
+	case "/quit":
+	case "/q":
+		cancel()
+	case "/help":
+		_ = WriteClientHelp(output)
+	default:
+		log.Printf("command %s unavailable while reconnecting", command.Name)
+	}
+}
+
+func SessionCommandLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State, commands <-chan Command, output io.Writer, cancelApp context.CancelFunc, onLocator func(ChannelLocator)) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case command, ok := <-commands:
+			if !ok {
+				commands = nil
+				continue
+			}
+			switch command.Name {
+			case "/join":
+				handleJoin(ctx, conn, state, command.Arguments, output, onLocator)
+			case "/channels":
+				handleChannels(ctx, conn, state, output)
+			case "/help":
+				if err := WriteClientHelp(output); err != nil {
+					return err
+				}
+			case "/quit":
+			case "/q":
+				cancelApp()
+				return nil
+			default:
+				log.Printf("unknown command: %s", command.Name)
+			}
+		}
+	}
+}
+
+func WriteClientHelp(output io.Writer) error {
+	if output == nil {
+		return fmt.Errorf("command output is required")
+	}
+	_, err := io.WriteString(output, "commands:\n  /channels        refresh and show channels\n  /join <id|name>  join a channel\n  /help            show this help\n  /quit            disconnect and exit\n")
+	return err
+}
+
+func handleJoin(ctx context.Context, conn *udp.ClientPacketConn, state *State, parts []string, output io.Writer, onLocator func(ChannelLocator)) {
 	if len(parts) != 1 {
-		log.Printf("usage: /join <channel>")
+		log.Printf("usage: /join <id|name>")
 		return
 	}
-
 	selector := parts[0]
 	channelID, err := ResolveChannel(state.Snapshot(), selector)
 	if err != nil {
@@ -56,9 +100,33 @@ func handleJoin(
 		log.Printf("join channel: %v", err)
 		return
 	}
-	if _, err := LoadServerSnapshot(ctx, conn, state); err != nil {
+	snapshot, err := LoadServerSnapshot(ctx, conn, state)
+	if err != nil {
 		log.Printf("refresh server state after join: %v", err)
 		return
 	}
-	log.Printf("join confirmed: %s (id=%d)", selector, channelID)
+	locator, err := BuildChannelLocator(snapshot, channelID)
+	if err != nil {
+		log.Printf("remember joined channel: %v", err)
+		return
+	}
+	if onLocator != nil {
+		onLocator(locator)
+	}
+	if err := RenderChannelMembers(output, snapshot, channelID, state.SessionID()); err != nil {
+		log.Printf("render joined channel: %v", err)
+	}
+}
+
+func handleChannels(ctx context.Context, conn *udp.ClientPacketConn, state *State, output io.Writer) {
+	snapshot, err := LoadServerSnapshot(ctx, conn, state)
+	if err != nil {
+		log.Printf("refresh channels: %v; showing stale snapshot", err)
+		snapshot = state.Snapshot()
+		_ = RenderServerTree(output, snapshot, state.SessionID(), state.ChannelID(), true)
+		return
+	}
+	if err := RenderServerTree(output, snapshot, state.SessionID(), state.ChannelID(), false); err != nil {
+		log.Printf("render channels: %v", err)
+	}
 }

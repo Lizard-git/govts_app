@@ -44,6 +44,26 @@ func TestHubReturnsIndependentSessionSnapshots(t *testing.T) {
 	}
 }
 
+func TestCreateSessionReplacingEndpointIsAtomic(t *testing.T) {
+	hub := NewHub()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	first := mustCreateSession(t, hub, "alice", addr)
+	revision := hub.Revision()
+	second, replaced, err := hub.CreateSessionReplacingEndpoint("alice", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID || len(replaced) != 1 || replaced[0] != first.ID {
+		t.Fatalf("replacement = session %d, removed %v", second.ID, replaced)
+	}
+	if _, ok := hub.Get(first.ID); ok {
+		t.Fatal("old endpoint session remains")
+	}
+	if hub.Count() != 1 || hub.Revision() != revision+1 {
+		t.Fatalf("count/revision = %d/%d", hub.Count(), hub.Revision())
+	}
+}
+
 func TestHubRemoveInactive(t *testing.T) {
 	hub := NewHub()
 

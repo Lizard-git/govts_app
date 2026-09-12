@@ -25,6 +25,8 @@ const (
 	PacketError
 	PacketStateSnapshotRequest
 	PacketStateSnapshotAck
+	PacketHeartbeatAck
+	PacketSessionInvalid
 
 	PacketEnd
 )

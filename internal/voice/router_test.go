@@ -61,6 +61,72 @@ func TestValidateSessionAddr(t *testing.T) {
 	})
 }
 
+func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn := mustPacketConn(t, serverRaw)
+	defer serverConn.Close()
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConn := mustClientPacketConn(t, clientRaw)
+	defer clientConn.Close()
+	hub := NewHub()
+	addr := clientConn.LocalAddr().(*net.UDPAddr)
+	session := mustCreateSession(t, hub, "alice", addr)
+	if err := clientConn.BindSession(session.ID); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewRequestCache()
+	request := protocol.VoicePacket{Type: protocol.PacketHeartbeat, SessionID: session.ID, RequestID: 7}
+	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, addr); err != nil {
+		t.Fatal(err)
+	}
+	response := receiveTestPacket(t, clientConn)
+	if response.Type != protocol.PacketHeartbeatAck || response.RequestID != request.RequestID || len(response.Payload) != 0 {
+		t.Fatalf("heartbeat response = %+v", response)
+	}
+	request.SessionID++
+	request.RequestID++
+	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, addr); err != nil {
+		t.Fatal(err)
+	}
+	response = receiveTestPacket(t, clientConn)
+	if response.Type != protocol.PacketSessionInvalid || response.RequestID != request.RequestID {
+		t.Fatalf("invalid-session response = %+v", response)
+	}
+
+	otherRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConn := mustClientPacketConn(t, otherRaw)
+	defer otherConn.Close()
+	request.SessionID = session.ID
+	request.RequestID++
+	otherAddr := otherConn.LocalAddr().(*net.UDPAddr)
+	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, otherAddr); err != nil {
+		t.Fatal(err)
+	}
+	response = receiveTestPacket(t, otherConn)
+	if response.Type != protocol.PacketSessionInvalid || response.RequestID != request.RequestID {
+		t.Fatalf("wrong-endpoint response = %+v", response)
+	}
+}
+
+func TestHandlePacketSilentlyDropsVoiceForUnknownSession(t *testing.T) {
+	err := HandlePacket(nil, NewHub(), NewRequestCache(), protocol.VoicePacket{
+		Type:      protocol.PacketVoice,
+		SessionID: 42,
+	}, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5000})
+	if err != nil {
+		t.Fatalf("HandlePacket() error = %v", err)
+	}
+}
+
 func TestFindRecipientsRejectsSenderWithoutChannel(t *testing.T) {
 	hub := NewHub()
 	sender := mustCreateSession(t, hub, "alice", nil)

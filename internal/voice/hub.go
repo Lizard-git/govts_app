@@ -369,15 +369,29 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 }
 
 func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
+	session, _, err := h.CreateSessionReplacingEndpoint(name, addr)
+	return session, err
+}
+
+func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Session, []uint64, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := validateParticipantName(name); err != nil {
-		return Session{}, err
+		return Session{}, nil, err
 	}
 
 	id, err := h.availableSessionID()
 	if err != nil {
-		return Session{}, err
+		return Session{}, nil, err
+	}
+	var replaced []uint64
+	if addr != nil {
+		for oldID, oldSession := range h.sessions {
+			if sameUDPAddr(oldSession.Addr, addr) {
+				delete(h.sessions, oldID)
+				replaced = append(replaced, oldID)
+			}
+		}
 	}
 	session := &Session{
 		ID:       id,
@@ -387,7 +401,12 @@ func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
 	}
 	h.sessions[id] = session
 	h.revision++
-	return *cloneSession(session), nil
+	sort.Slice(replaced, func(i, j int) bool { return replaced[i] < replaced[j] })
+	return *cloneSession(session), replaced, nil
+}
+
+func sameUDPAddr(left, right *net.UDPAddr) bool {
+	return left != nil && right != nil && left.Port == right.Port && left.IP.Equal(right.IP)
 }
 
 func validateParticipantName(name string) error {

@@ -146,7 +146,7 @@ ClientPacketConn.ReceivePacket
 ### 3.6. Остановка и очистка
 
 - Любая неожиданная ошибка клиентского loop вызывает `loopSupervisor.Cancel`, после чего останавливаются остальные loops.
-- До ожидания goroutine закрываются recorder и player, чтобы разблокировать потенциально блокирующие `Read`/`Write`.
+- До ожидания goroutine закрываются recorder и session-scoped Oto player, чтобы разблокировать потенциально блокирующие `Read`/`Write`. Единственный `OtoOutput`/context живёт до завершения процесса и переиспользуется после reconnect.
 - Клиент в конце пытается отправить `PacketDisconnect`, затем `run` закрывает UDP socket.
 - Сервер удаляет сессию сразу по disconnect либо через 30 секунд неактивности. Связанные записи request cache также удаляются.
 - Отмена серверного контекста устанавливает немедленный read deadline и выводит `ServeUDP` из блокирующего чтения.
@@ -246,7 +246,7 @@ name-based compatibility layer. Live events и GUI в патч не входят
 
 #### `readme_docs/patch-5.md`
 
-Исполняемый план следующего изменения: подтверждаемый heartbeat, автоматический
+Выполненный план lifecycle: подтверждаемый heartbeat, автоматический
 reconnect с задержками `1s → 2s → 4s → 4s...`, безопасная смена session binding
 и временное консольное дерево каналов/участников поверх `ServerSnapshot`.
 
@@ -320,7 +320,8 @@ Composition root одной активной клиентской сессии �
 
 - Задаёт аудиопараметры `48000/mono/960`.
 - Создаёт каналы между loops: исходные PCM/Opus, входящие media/control, упорядоченные и декодированные кадры, mixed PCM.
-- Создаёт Opus encoder и Oto player.
+- Получает app-lifetime `OtoOutput`, создаёт из него отдельный Oto player для
+  текущей сетевой сессии и создаёт Opus encoder.
 - До join запускает receive, control, heartbeat, jitter, decode, mix и playback.
 - После подтверждённого join создаёт Malgo recorder и запускает record, encode и send.
 - Запускает CLI-команды из stdin.
@@ -375,13 +376,18 @@ Composition root одной активной клиентской сессии �
 
 #### `internal/audio/player.go`
 
-Реализация `Player` через Oto.
+Реализация app-lifetime audio output и session-scoped `Player` через Oto.
 
-- Создаёт Oto context в формате signed PCM16 little-endian и ждёт готовности не более 5 секунд.
-- Связывает pipeline с Oto через `io.Pipe`; player читает из pipe в собственной goroutine.
+- `OtoOutput` единственный раз за процесс создаёт Oto context в формате signed
+  PCM16 little-endian и ждёт готовности не более 5 секунд; повторно создавать
+  context при reconnect нельзя по контракту Oto.
+- `OtoOutput.NewPlayer` для каждой сетевой сессии создаёт отдельные `io.Pipe` и
+  Oto player внутри общего context.
 - Размер внутреннего буфера равен одному PCM-кадру.
 - `Write` сериализует samples и пишет в pipe.
-- `Close` идемпотентно закрывает reader раньше writer, немедленно разблокируя конкурентный `Write` во время shutdown.
+- `Close` идемпотентно закрывает reader раньше writer, ставит session player на
+  паузу и очищает его buffer, немедленно разблокируя конкурентный `Write` во
+  время shutdown и не уничтожая общий Oto context.
 
 ### `internal/protocol/` — wire format
 
@@ -858,8 +864,9 @@ go test -race ./...
 - Сервер выполняет рассылку последовательно и прекращает `SendToSessions` после первой ошибки отправки.
 - Jitter buffer фиксированный; нет adaptive jitter, PLC и детальной наружной телеметрии loss/duplicate/drop.
 - Mixer использует простое суммирование с saturation; нет master/per-user volume, limiter, mute/deafen, PTT или VAD.
-- Нет reconnect/session recovery, live events и периодического revision check;
-  полный список пользователей/каналов синхронизируется при подключении и join.
+- Reconnect/session recovery реализован, но ещё нет live events и
+  периодического revision check; полный список пользователей/каналов
+  синхронизируется при подключении, join и по команде `/channels`.
 - Нет persistent storage: все sessions/channels/cache существуют только в памяти процесса.
 - Серверная консоль локальная и read-only; удалённого RCON пока нет.
 - CLI-команда `/join` может выполняться параллельно с shutdown; полноценного GUI пока нет.

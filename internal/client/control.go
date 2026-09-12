@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -9,6 +10,13 @@ import (
 	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
+)
+
+var ErrConnectionLost = errors.New("connection lost")
+
+const (
+	HeartbeatInterval    = 5 * time.Second
+	HeartbeatACKDeadline = 3 * time.Second
 )
 
 func ControlLoop(
@@ -30,7 +38,8 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
-			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck:
+			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck,
+				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid:
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,
@@ -58,9 +67,16 @@ func ControlLoop(
 func HeartbeatLoop(
 	ctx context.Context,
 	conn *udp.ClientPacketConn,
-	sessionID uint64,
+	state *State,
 ) error {
-	ticker := time.NewTicker(5 * time.Second)
+	return heartbeatLoop(ctx, conn, state, HeartbeatInterval, HeartbeatACKDeadline)
+}
+
+func heartbeatLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State, interval, deadline time.Duration) error {
+	if interval <= 0 || deadline <= 0 {
+		return errors.New("heartbeat interval and deadline must be positive")
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -68,15 +84,29 @@ func HeartbeatLoop(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			packet := protocol.VoicePacket{
-				Type:      protocol.PacketHeartbeat,
-				SessionID: sessionID,
-			}
-			if err := conn.SendPacket(packet); err != nil {
+			if err := heartbeatProbe(ctx, conn, state, deadline); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *State, deadline time.Duration) error {
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat}, deadline, 1)
+	if err != nil {
+		return fmt.Errorf("%w: heartbeat: %w", ErrConnectionLost, err)
+	}
+	if response.Type != protocol.PacketHeartbeatAck && response.Type != protocol.PacketSessionInvalid {
+		return fmt.Errorf("%w: unexpected heartbeat response type %d", ErrConnectionLost, response.Type)
+	}
+	if err := protocol.ValidateEmptyLifecyclePayload(response.Type, response.Payload); err != nil {
+		return fmt.Errorf("%w: %v", ErrConnectionLost, err)
+	}
+	if response.Type == protocol.PacketSessionInvalid {
+		return fmt.Errorf("%w: server rejected session", ErrConnectionLost)
+	}
+	state.MarkHeartbeatAck(time.Now())
+	return nil
 }
 
 func Disconnect(conn *udp.ClientPacketConn, sessionID uint64) error {
@@ -103,6 +133,7 @@ func joinChannelWithTimeout(
 	channelID domain.ChannelID,
 	timeout time.Duration,
 ) error {
+	generation := state.Generation()
 	payload, err := protocol.EncodeJoinChannelRequest(channelID)
 	if err != nil {
 		return err
@@ -120,7 +151,9 @@ func joinChannelWithTimeout(
 		return err
 	}
 
-	state.SetChannelID(channelID)
+	if !state.SetChannelIDForGeneration(generation, channelID) {
+		return errors.New("client session changed during join")
+	}
 	return nil
 }
 

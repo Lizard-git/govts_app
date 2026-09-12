@@ -21,11 +21,15 @@ func HandlePacket(
 ) error {
 	switch packet.Type {
 	case protocol.PacketVoice:
-		return HandleVoicePacket(conn, hub, packet, addr)
+		err := HandleVoicePacket(conn, hub, packet, addr)
+		if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrInvalidSessionAddr) {
+			return nil
+		}
+		return err
 	case protocol.PacketHello:
 		return HandleHelloPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketHeartbeat:
-		return HandleHeartbeatPacket(hub, packet, addr)
+		return HandleHeartbeatPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketDisconnect:
 		return HandleDisconnectPacket(hub, cache, packet, addr)
 	case protocol.PacketJoinChannel:

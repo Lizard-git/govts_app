@@ -73,6 +73,27 @@ func TestRequestCacheRemovesSession(t *testing.T) {
 	}
 }
 
+func TestRequestCacheRemovesHandshakeEndpoint(t *testing.T) {
+	cache := NewRequestCache()
+	endpoint := netip.MustParseAddrPort("127.0.0.1:9000")
+	other := netip.MustParseAddrPort("127.0.0.1:9001")
+	cache.PutHandshake(endpoint, 1, protocol.VoicePacket{Type: protocol.PacketHelloAck})
+	cache.PutHandshake(other, 1, protocol.VoicePacket{Type: protocol.PacketHelloAck})
+	cache.Put(7, 1, protocol.VoicePacket{Type: protocol.PacketJoinChannelAck})
+	if removed := cache.RemoveHandshakeEndpoint(endpoint); removed != 1 {
+		t.Fatalf("removed = %d", removed)
+	}
+	if _, ok := cache.GetHandshake(endpoint, 1); ok {
+		t.Fatal("endpoint handshake remains")
+	}
+	if _, ok := cache.GetHandshake(other, 1); !ok {
+		t.Fatal("other handshake removed")
+	}
+	if _, ok := cache.Get(7, 1); !ok {
+		t.Fatal("session response removed")
+	}
+}
+
 func TestRequestCacheCopiesPayload(t *testing.T) {
 	now := time.Date(2026, time.September, 8, 12, 0, 0, 0, time.UTC)
 	cache := newRequestCache(time.Minute, 10, func() time.Time {

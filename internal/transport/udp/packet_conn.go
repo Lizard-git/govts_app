@@ -113,6 +113,23 @@ func (c *ClientPacketConn) BindSession(sessionID uint64) error {
 	}
 }
 
+// ClearSession removes exactly the expected binding. The caller must stop all
+// session read/write loops before calling it.
+func (c *ClientPacketConn) ClearSession(expectedSessionID uint64) error {
+	if expectedSessionID == 0 {
+		return errors.New("expected client session ID must not be zero")
+	}
+	if c.sessionID.CompareAndSwap(expectedSessionID, 0) {
+		return nil
+	}
+	current := c.sessionID.Load()
+	return fmt.Errorf(
+		"client packet connection bound to session %d, expected %d",
+		current,
+		expectedSessionID,
+	)
+}
+
 func (c *ClientPacketConn) SendPacket(packet protocol.VoicePacket) error {
 	ownerID := c.sessionID.Load()
 	if ownerID == 0 && packet.SessionID != 0 {

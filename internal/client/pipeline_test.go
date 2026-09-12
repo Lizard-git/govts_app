@@ -243,6 +243,178 @@ func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
 	}
 }
 
+func TestPerformHandshakeSkipsStaleControlPacket(t *testing.T) {
+	serverConn, clientConn := newHandshakeTestConnections(t)
+	serverErr := make(chan error, 1)
+	go func() {
+		request, addr, err := serverConn.ReadPacket()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if err := serverConn.WritePacket(88, addr, protocol.VoicePacket{Type: protocol.PacketJoinChannelAck, SessionID: 88, RequestID: request.RequestID + 1}); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- serverConn.WritePacket(99, addr, protocol.VoicePacket{Type: protocol.PacketHelloAck, SessionID: 99, RequestID: request.RequestID})
+	}()
+	sessionID, err := performHandshakeWithRequestID(context.Background(), clientConn, "alice", 17, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != 99 {
+		t.Fatalf("session ID = %d", sessionID)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHeartbeatProbeHandlesAckAndInvalidSession(t *testing.T) {
+	for _, packetType := range []uint8{protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid} {
+		t.Run(fmt.Sprintf("type-%d", packetType), func(t *testing.T) {
+			peer := newJoinTestPeer(t)
+			serverErr := make(chan error, 1)
+			go func() {
+				request, addr, err := peer.receiveRequest()
+				if err != nil {
+					serverErr <- err
+					return
+				}
+				serverErr <- peer.sendResponse(addr, protocol.VoicePacket{Type: packetType, SessionID: request.SessionID, RequestID: request.RequestID})
+			}()
+			err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, time.Second)
+			if packetType == protocol.PacketHeartbeatAck && err != nil {
+				t.Fatal(err)
+			}
+			if packetType == protocol.PacketHeartbeatAck && peer.state.LastHeartbeatAck().IsZero() {
+				t.Fatal("last heartbeat ACK time was not recorded")
+			}
+			if packetType == protocol.PacketSessionInvalid && !errors.Is(err, ErrConnectionLost) {
+				t.Fatalf("heartbeat error = %v", err)
+			}
+			if err := <-serverErr; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestHeartbeatProbeTimeoutMeansConnectionLost(t *testing.T) {
+	peer := newJoinTestPeer(t)
+	err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, 10*time.Millisecond)
+	if !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("heartbeat error = %v", err)
+	}
+	if strings.Count(err.Error(), ErrConnectionLost.Error()) != 1 {
+		t.Fatalf("heartbeat error repeats connection state: %q", err)
+	}
+	if strings.Contains(err.Error(), "1 attempts") {
+		t.Fatalf("heartbeat error uses invalid singular grammar: %q", err)
+	}
+}
+
+func TestHeartbeatProbeRejectsMalformedLifecyclePayload(t *testing.T) {
+	for _, packetType := range []uint8{protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid} {
+		t.Run(fmt.Sprintf("type-%d", packetType), func(t *testing.T) {
+			peer := newJoinTestPeer(t)
+			serverErr := make(chan error, 1)
+			go func() {
+				request, addr, err := peer.receiveRequest()
+				if err != nil {
+					serverErr <- err
+					return
+				}
+				serverErr <- peer.sendResponse(addr, protocol.VoicePacket{
+					Type:      packetType,
+					SessionID: request.SessionID,
+					RequestID: request.RequestID,
+					Payload:   []byte{1},
+				})
+			}()
+			err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, time.Second)
+			if !errors.Is(err, ErrConnectionLost) || !strings.Contains(err.Error(), "payload") {
+				t.Fatalf("heartbeat error = %v", err)
+			}
+			if err := <-serverErr; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestHeartbeatProbeIgnoresWrongRequestAndDuplicateAck(t *testing.T) {
+	peer := newJoinTestPeer(t)
+	serverErr := make(chan error, 1)
+	go func() {
+		request, addr, err := peer.receiveRequest()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		wrong := protocol.VoicePacket{Type: protocol.PacketHeartbeatAck, SessionID: request.SessionID, RequestID: request.RequestID + 1}
+		if err := peer.sendResponse(addr, wrong); err != nil {
+			serverErr <- err
+			return
+		}
+		wrong.SessionID++
+		wrong.RequestID = request.RequestID
+		if err := peer.sendResponse(addr, wrong); err != nil {
+			serverErr <- err
+			return
+		}
+		ack := protocol.VoicePacket{Type: protocol.PacketHeartbeatAck, SessionID: request.SessionID, RequestID: request.RequestID}
+		if err := peer.sendResponse(addr, ack); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- peer.sendResponse(addr, ack)
+	}()
+	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLateHeartbeatAckDoesNotRestoreLiveness(t *testing.T) {
+	peer := newJoinTestPeer(t)
+	serverErr := make(chan error, 1)
+	go func() {
+		request, addr, err := peer.receiveRequest()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+		serverErr <- peer.sendResponse(addr, protocol.VoicePacket{
+			Type:      protocol.PacketHeartbeatAck,
+			SessionID: request.SessionID,
+			RequestID: request.RequestID,
+		})
+	}()
+	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, 10*time.Millisecond); !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("heartbeat error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if !peer.state.LastHeartbeatAck().IsZero() {
+		t.Fatal("late heartbeat ACK restored liveness")
+	}
+}
+
+func TestHeartbeatLoopRejectsInvalidTiming(t *testing.T) {
+	state := NewState(1, "alice")
+	for _, timing := range []struct{ interval, deadline time.Duration }{{0, time.Second}, {time.Second, 0}} {
+		if err := heartbeatLoop(context.Background(), nil, state, timing.interval, timing.deadline); err == nil {
+			t.Fatal("heartbeat loop accepted non-positive timing")
+		}
+	}
+}
+
 func newHandshakeTestConnections(
 	t *testing.T,
 ) (*udp.ServerPacketConn, *udp.ClientPacketConn) {

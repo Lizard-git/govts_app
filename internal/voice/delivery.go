@@ -9,6 +9,8 @@ import (
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
+var ErrInvalidSessionAddr = errors.New("invalid session address")
+
 func SendToSession(
 	conn *udp.ServerPacketConn,
 	session Session,
@@ -45,12 +47,12 @@ func ValidateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
 
 	session, ok := hub.Get(sessionID)
 	if !ok {
-		return fmt.Errorf("session %d not found", sessionID)
+		return fmt.Errorf("%w: %d", ErrSessionNotFound, sessionID)
 	}
 	if session.Addr == nil ||
 		!session.Addr.IP.Equal(addr.IP) ||
 		session.Addr.Port != addr.Port {
-		return fmt.Errorf("invalid session address: ip=%s port=%d", addr.IP, addr.Port)
+		return fmt.Errorf("%w: ip=%s port=%d", ErrInvalidSessionAddr, addr.IP, addr.Port)
 	}
 	return nil
 }

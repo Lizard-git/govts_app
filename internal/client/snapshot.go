@@ -24,10 +24,13 @@ const (
 var errSnapshotRevisionChanged = errors.New("snapshot revision changed")
 
 func LoadServerSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *State) (domain.ServerSnapshot, error) {
+	generation := state.Generation()
 	for attempt := 1; attempt <= snapshotSyncAttempts; attempt++ {
 		snapshot, err := loadServerSnapshotOnce(ctx, conn, state)
 		if err == nil {
-			state.ReplaceSnapshot(snapshot)
+			if !state.ReplaceSnapshotForGeneration(generation, snapshot) {
+				return domain.ServerSnapshot{}, errors.New("client session changed during snapshot load")
+			}
 			return snapshot, nil
 		}
 		if !errors.Is(err, errSnapshotRevisionChanged) {

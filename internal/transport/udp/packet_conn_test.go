@@ -18,11 +18,41 @@ type codecCall struct {
 
 type clientConnectionContract interface {
 	BindSession(uint64) error
+	ClearSession(uint64) error
 	SendPacket(protocol.VoicePacket) error
 	ReceivePacket() (protocol.VoicePacket, error)
 	SetReadDeadline(time.Time) error
 	Close() error
 	LocalAddr() net.Addr
+}
+
+func TestClientPacketConnClearsOnlyExpectedSession(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverRaw.Close()
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := NewClientPacketConn(clientRaw, protocol.PlainDatagramCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.BindSession(42); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.ClearSession(41); err == nil {
+		t.Fatal("ClearSession accepted the wrong session")
+	}
+	if err := conn.ClearSession(42); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.BindSession(43); err != nil {
+		t.Fatalf("rebind after clear: %v", err)
+	}
 }
 
 type serverConnectionContract interface {

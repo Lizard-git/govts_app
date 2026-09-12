@@ -46,6 +46,25 @@ func PerformHandshake(
 	)
 }
 
+func PerformHandshakeAttempt(
+	ctx context.Context,
+	conn *udp.ClientPacketConn,
+	name string,
+	timeout time.Duration,
+) (uint64, error) {
+	if len(name) == 0 {
+		return 0, errors.New("client name is required")
+	}
+	if len([]byte(name)) > maxClientNameBytes {
+		return 0, fmt.Errorf("client name too long: %d bytes", len([]byte(name)))
+	}
+	requestID, err := newHandshakeRequestID()
+	if err != nil {
+		return 0, fmt.Errorf("create handshake request ID: %w", err)
+	}
+	return performHandshake(ctx, conn, name, requestID, timeout, 1)
+}
+
 func newHandshakeRequestID() (uint32, error) {
 	for {
 		var data [4]byte
@@ -67,6 +86,17 @@ func performHandshakeWithRequestID(
 	requestID uint32,
 	timeout time.Duration,
 ) (uint64, error) {
+	return performHandshake(ctx, conn, name, requestID, timeout, requestAttempts)
+}
+
+func performHandshake(
+	ctx context.Context,
+	conn *udp.ClientPacketConn,
+	name string,
+	requestID uint32,
+	timeout time.Duration,
+	attempts int,
+) (uint64, error) {
 	if requestID == 0 {
 		return 0, errors.New("handshake request ID must not be zero")
 	}
@@ -82,7 +112,7 @@ func performHandshakeWithRequestID(
 
 	defer conn.SetReadDeadline(time.Time{})
 
-	for attempt := 1; attempt <= requestAttempts; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
@@ -110,30 +140,29 @@ func performHandshakeWithRequestID(
 					if ctxErr := ctx.Err(); ctxErr != nil {
 						return 0, ctxErr
 					}
-					if attempt < requestAttempts {
+					if attempt < attempts {
 						break
+					}
+					if attempts == 1 {
+						return 0, fmt.Errorf("handshake request %d timed out", requestID)
 					}
 					return 0, fmt.Errorf(
 						"handshake request %d timed out after %d attempts",
 						requestID,
-						requestAttempts,
+						attempts,
 					)
 				}
 				return 0, err
 			}
 
 			if ack.RequestID != requestID {
-				return 0, fmt.Errorf(
-					"unexpected handshake request ID: got %d, want %d",
-					ack.RequestID,
-					requestID,
-				)
+				continue
 			}
 			if ack.Type == protocol.PacketError {
 				return 0, fmt.Errorf("server error: %s", string(ack.Payload))
 			}
 			if ack.Type != protocol.PacketHelloAck {
-				return 0, fmt.Errorf("expected hello ack, got packet type %d", ack.Type)
+				continue
 			}
 			if ack.SessionID == 0 {
 				return 0, errors.New("server returned invalid session ID")
@@ -153,6 +182,20 @@ func DoRequest(
 	packet protocol.VoicePacket,
 	timeout time.Duration,
 ) (ControlResponse, error) {
+	return doRequestAttempts(ctx, conn, state, packet, timeout, requestAttempts)
+}
+
+func doRequestAttempts(
+	ctx context.Context,
+	conn *udp.ClientPacketConn,
+	state *State,
+	packet protocol.VoicePacket,
+	timeout time.Duration,
+	attempts int,
+) (ControlResponse, error) {
+	if attempts <= 0 {
+		return ControlResponse{}, errors.New("request attempts must be positive")
+	}
 	requestID := state.NextRequestID()
 	packet.SessionID = state.SessionID()
 	packet.RequestID = requestID
@@ -160,7 +203,7 @@ func DoRequest(
 	responseCh := state.RegisterRequest(requestID)
 	defer state.CancelRequest(requestID)
 
-	for attempt := 1; attempt <= requestAttempts; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := conn.SendPacket(packet); err != nil {
 			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
 		}
@@ -174,11 +217,14 @@ func DoRequest(
 			}
 			return response, nil
 		case <-timer.C:
-			if attempt == requestAttempts {
+			if attempt == attempts {
+				if attempts == 1 {
+					return ControlResponse{}, fmt.Errorf("request %d timed out", requestID)
+				}
 				return ControlResponse{}, fmt.Errorf(
 					"request %d timed out after %d attempts",
 					requestID,
-					requestAttempts,
+					attempts,
 				)
 			}
 		case <-ctx.Done():

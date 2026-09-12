@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -32,7 +33,7 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 		{
 			name:    "status",
 			command: "status",
-			want:    "status server=\"GoVots Server\" uptime=1m0s listen=\":9000\" config=\"test.json\" revision=5 channels=2 users=2 unjoined=1\n",
+			want:    fmt.Sprintf("status server=%q uptime=1m0s listen=\":9000\" config=\"test.json\" revision=5 channels=2 users=2 unjoined=1\n", voice.DefaultServerName),
 		},
 		{
 			name:    "channels",
