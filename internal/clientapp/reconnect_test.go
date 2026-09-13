@@ -1,4 +1,4 @@
-package main
+package clientapp
 
 import (
 	"context"
@@ -38,7 +38,8 @@ func TestUnusableSocketRequiresReplacement(t *testing.T) {
 func TestWaitForReconnectStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if waitForReconnect(ctx, time.Hour, nil, func() {}) {
+	app := New(Options{})
+	if app.waitForReconnect(ctx, time.Hour) {
 		t.Fatal("waitForReconnect returned retry after cancellation")
 	}
 }

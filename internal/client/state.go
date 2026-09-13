@@ -104,6 +104,29 @@ func (s *State) SetConnectionStatus(status ConnectionStatus) {
 	s.status = status
 	s.notifyLocked()
 }
+
+// PrepareConnection clears state owned by a previous server while preserving
+// application-lifetime audio controls and view subscriptions.
+func (s *State) PrepareConnection() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) != 0 {
+		return errors.New("cannot prepare connection with pending requests")
+	}
+	s.generation++
+	s.syncedGeneration = 0
+	s.observedRevision = 0
+	s.sessionID = 0
+	s.channelID = 0
+	s.snapshot = domain.ServerSnapshot{}
+	s.status = ConnectionConnecting
+	s.snapshotFresh = false
+	s.lastHeartbeatAck = time.Time{}
+	clear(s.speaking)
+	s.notifyLocked()
+	return nil
+}
+
 func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -1,4 +1,4 @@
-package main
+package clientapp
 
 import (
 	"context"
@@ -25,8 +25,9 @@ const (
 	samplesPerFrame = 960
 )
 
-func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, playbackOutput *audio.OtoOutput, name string, preference *channelPreference, commands <-chan voiceclient.Command, output io.Writer, cancelApp context.CancelFunc, firstConnection bool, onReady func()) (runErr error) {
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, playbackOutput *audio.OtoOutput, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
 	output = &lockedOutput{writer: output}
+	noticeOutput = &lockedOutput{writer: noticeOutput}
 	sessionID := state.SessionID()
 	oldSnapshot := state.Snapshot()
 	audioCh := make(chan audio.Frame)
@@ -104,17 +105,19 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, output) })
+	supervisor.Go(func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
 	joinedSignal := make(chan struct{}, 1)
-	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, func(locator voiceclient.ChannelLocator) {
-			preference.Set(locator)
-			select {
-			case joinedSignal <- struct{}{}:
-			default:
-			}
+	if commands != nil {
+		supervisor.Go(func(ctx context.Context) error {
+			return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, func(locator voiceclient.ChannelLocator) {
+				preference.Set(locator)
+				select {
+				case joinedSignal <- struct{}{}:
+				default:
+				}
+			})
 		})
-	})
+	}
 
 	finish := func(cause error) error {
 		shutdownErr := supervisor.Shutdown(func() error {
@@ -124,7 +127,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		})
 		return errors.Join(cause, shutdownErr)
 	}
-	log.Printf("client connected: id=%d name=%s", sessionID, name)
+	logger.Printf("client connected: id=%d name=%s", sessionID, name)
 	syncer := &voiceclient.StateSyncer{Conn: conn, State: state}
 	snapshot, err := syncer.Load(ctx)
 	if err != nil {
@@ -139,19 +142,19 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		if resolveErr == nil {
 			channelID = id
 		} else {
-			log.Printf("cannot restore channel: %v", resolveErr)
+			logger.Printf("cannot restore channel: %v", resolveErr)
 		}
 	} else {
 		id, resolveErr := voiceclient.ResolveChannel(snapshot, selector)
 		if resolveErr == nil {
 			channelID = id
 		} else {
-			log.Printf("cannot resolve initial channel: %v", resolveErr)
+			logger.Printf("cannot resolve initial channel: %v", resolveErr)
 		}
 	}
 	if channelID != 0 {
 		if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
-			log.Printf("cannot join channel: %v", err)
+			logger.Printf("cannot join channel: %v", err)
 			channelID = 0
 		} else {
 			snapshot, err = syncer.Load(ctx)
@@ -169,22 +172,24 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		state.SetConnectionStatus(voiceclient.ConnectionConnected)
 		_ = voiceclient.RenderServerTree(output, snapshot, sessionID, 0, false)
 		treePrinted = true
-		select {
-		case <-ctx.Done():
-			return finish(nil)
-		case <-joinedSignal:
-			channelID = state.ChannelID()
+		if commands != nil {
+			select {
+			case <-ctx.Done():
+				return finish(nil)
+			case <-joinedSignal:
+				channelID = state.ChannelID()
+			}
 		}
 	}
 	currentSnapshot := state.Snapshot()
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
 	if shouldRenderConnectionTree(firstConnection, treePrinted, topologyUnchanged) {
 		if !firstConnection {
-			log.Printf("reconnected; channel structure changed")
+			logger.Printf("reconnected; channel structure changed")
 		}
 		_ = voiceclient.RenderServerTree(output, currentSnapshot, sessionID, state.ChannelID(), false)
 	} else if !firstConnection {
-		log.Printf("reconnected; channel restored: id=%d", state.ChannelID())
+		logger.Printf("reconnected; channel restored: id=%d", state.ChannelID())
 	}
 	state.SetConnectionStatus(voiceclient.ConnectionConnected)
 	recorder, err := audio.NewMalgoRecorder(codecConfig)
