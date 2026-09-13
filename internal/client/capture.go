@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -16,6 +17,19 @@ const frameDuration = 20 * time.Millisecond
 func EncodeLoop(
 	ctx context.Context,
 	encoder audio.Encoder,
+	pcmCh <-chan audio.PCMFrame,
+	audioCh chan<- audio.Frame,
+	states ...*State,
+) error {
+	return EncodeLoopWithProcessor(ctx, encoder, nil, pcmCh, audioCh, states...)
+}
+
+// EncodeLoopWithProcessor applies microphone processing before voice activity
+// observation and encoding. A nil processor disables processing.
+func EncodeLoopWithProcessor(
+	ctx context.Context,
+	encoder audio.Encoder,
+	processor audio.PCMProcessor,
 	pcmCh <-chan audio.PCMFrame,
 	audioCh chan<- audio.Frame,
 	states ...*State,
@@ -35,6 +49,13 @@ func EncodeLoop(
 				if muted || epoch != pcmFrame.ControlEpoch {
 					continue
 				}
+			}
+			if processor != nil {
+				if err := processor.Process(pcmFrame.Samples); err != nil {
+					return fmt.Errorf("process microphone PCM: %w", err)
+				}
+			}
+			if len(states) > 0 {
 				states[0].ObserveSpeaking(states[0].SessionID(), pcmFrame.Samples, time.Now())
 			}
 			buffer, err := encoder.Encode(pcmFrame.Samples)

@@ -38,6 +38,12 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return fmt.Errorf("create Opus encoder: %w", err)
 	}
+	processor := audio.PassthroughProcessor{}
+	defer func() {
+		if err := processor.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close microphone processor: %w", err))
+		}
+	}()
 	player, err := playbackOutput.NewPlayer()
 	if err != nil {
 		return fmt.Errorf("create audio player: %w", err)
@@ -166,7 +172,9 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return finish(fmt.Errorf("create audio recorder: %w", err))
 	}
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.EncodeLoop(ctx, encoder, pcmCh, audioCh, state) })
+	supervisor.Go(func(ctx context.Context) error {
+		return voiceclient.EncodeLoopWithProcessor(ctx, encoder, processor, pcmCh, audioCh, state)
+	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame, state.Audio)
 	})
