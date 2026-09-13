@@ -4,23 +4,38 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"example.com/go-voice-mvp/internal/audio/voicegate"
 )
 
 func HandleAudioCommand(command Command, state *State, output io.Writer) bool {
-	if command.Name == "/rnnoise-gate" {
+	if command.Name == "/vad-mode" {
 		if len(command.Arguments) != 1 {
-			fmt.Fprintln(output, "usage: /rnnoise-gate <0..1>")
+			fmt.Fprintln(output, "usage: /vad-mode <level|vad|hybrid>")
+			return true
+		}
+		mode, err := voicegate.ParseMode(command.Arguments[0])
+		if err != nil || mode == voicegate.ModeDisabled || state.Audio.SetVADMode(mode) != nil {
+			fmt.Fprintln(output, "vad-mode must be level, vad, or hybrid")
+			return true
+		}
+		fmt.Fprintf(output, "vad-mode: %s\n", mode)
+		return true
+	}
+	if command.Name == "/vad-sensitivity" {
+		if len(command.Arguments) != 1 {
+			fmt.Fprintln(output, "usage: /vad-sensitivity <0..1>")
 			return true
 		}
 		value, err := strconv.ParseFloat(command.Arguments[0], 32)
-		if err != nil || state.Audio.SetRNNoiseGate(float32(value)) != nil {
-			fmt.Fprintln(output, "rnnoise-gate must be a number between 0 and 1")
+		if err != nil || state.Audio.SetVADSensitivity(float32(value)) != nil {
+			fmt.Fprintln(output, "vad-sensitivity must be a number between 0 and 1")
 			return true
 		}
-		fmt.Fprintf(output, "rnnoise-gate: %.2f\n", value)
+		fmt.Fprintf(output, "vad-sensitivity: %.2f\n", value)
 		return true
 	}
-	if command.Name != "/mute" && command.Name != "/deafen" && command.Name != "/rnnoise" {
+	if command.Name != "/mute" && command.Name != "/deafen" && command.Name != "/rnnoise" && command.Name != "/vad" {
 		return false
 	}
 	mode := "toggle"
@@ -36,7 +51,9 @@ func HandleAudioCommand(command Command, state *State, output io.Writer) bool {
 	if command.Name == "/deafen" {
 		value = deafened
 	} else if command.Name == "/rnnoise" {
-		value, _ = state.Audio.RNNoiseSnapshot()
+		value = state.Audio.RNNoiseEnabled()
+	} else if command.Name == "/vad" {
+		value = state.Audio.VADSnapshot().Enabled
 	}
 	switch mode {
 	case "on":
@@ -50,6 +67,8 @@ func HandleAudioCommand(command Command, state *State, output io.Writer) bool {
 		state.Audio.SetMuted(value)
 	} else if command.Name == "/rnnoise" {
 		state.Audio.SetRNNoiseEnabled(value)
+	} else if command.Name == "/vad" {
+		state.Audio.SetVADEnabled(value)
 	} else if err := state.Audio.SetDeafened(value); err != nil {
 		fmt.Fprintf(output, "deafen failed: %v\n", err)
 		return true

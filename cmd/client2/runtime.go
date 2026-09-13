@@ -11,6 +11,8 @@ import (
 
 	"example.com/go-voice-mvp/internal/audio"
 	audiornnoise "example.com/go-voice-mvp/internal/audio/rnnoise"
+	audiovad "example.com/go-voice-mvp/internal/audio/vad"
+	"example.com/go-voice-mvp/internal/audio/voicegate"
 	voiceclient "example.com/go-voice-mvp/internal/client"
 	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
@@ -39,15 +41,28 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return fmt.Errorf("create Opus encoder: %w", err)
 	}
-	processor, err := newMicrophoneProcessor(codecConfig, state.Audio)
+	filter, err := newMicrophoneFilter(codecConfig, state.Audio)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := processor.Close(); err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("close microphone processor: %w", err))
+		if err := filter.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close microphone filter: %w", err))
 		}
 	}()
+	detector, err := newMicrophoneVAD(codecConfig)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := detector.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close microphone VAD: %w", err))
+		}
+	}()
+	gate, err := voicegate.New(state.Audio.VADSnapshot().GateConfig())
+	if err != nil {
+		return fmt.Errorf("create microphone voice gate: %w", err)
+	}
 	player, err := playbackOutput.NewPlayer()
 	if err != nil {
 		return fmt.Errorf("create audio player: %w", err)
@@ -177,7 +192,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return finish(fmt.Errorf("create audio recorder: %w", err))
 	}
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.EncodeLoopWithProcessor(ctx, encoder, processor, pcmCh, audioCh, state)
+		return voiceclient.EncodeLoopWithPipeline(ctx, encoder, filter, detector, gate, pcmCh, audioCh, state)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame, state.Audio)
@@ -200,7 +215,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	return runtimeErr
 }
 
-func newMicrophoneProcessor(config audio.CodecConfig, settings audiornnoise.Settings) (audio.PCMProcessor, error) {
+func newMicrophoneFilter(config audio.CodecConfig, settings audiornnoise.Settings) (audio.PCMFilter, error) {
 	if config.SampleRate != audiornnoise.SampleRate || config.Channels != 1 {
 		return nil, fmt.Errorf("RNNoise requires 48000 Hz mono audio, got %d Hz with %d channels", config.SampleRate, config.Channels)
 	}
@@ -212,6 +227,19 @@ func newMicrophoneProcessor(config audio.CodecConfig, settings audiornnoise.Sett
 		return nil, fmt.Errorf("create RNNoise processor: %w", err)
 	}
 	return processor, nil
+}
+
+func newMicrophoneVAD(config audio.CodecConfig) (audiovad.Detector, error) {
+	detector, err := audiovad.NewWebRTC(audiovad.WebRTCConfig{
+		SampleRate:      config.SampleRate,
+		Channels:        config.Channels,
+		SamplesPerFrame: config.SamplesPerFrame,
+		Aggressiveness:  audiovad.ModeAggressive,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create WebRTC VAD: %w", err)
+	}
+	return detector, nil
 }
 
 type lockedOutput struct {

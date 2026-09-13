@@ -17,6 +17,8 @@ const (
 
 var ErrClosed = errors.New("RNNoise processor is closed")
 
+var _ audio.PCMFilter = (*Processor)(nil)
+
 // Processor applies the built-in RNNoise model to one mono 48 kHz PCM stream.
 // It must be used sequentially because the model keeps history between frames.
 type Processor struct {
@@ -27,7 +29,7 @@ type Processor struct {
 }
 
 type Settings interface {
-	RNNoiseSnapshot() (enabled bool, gate float32)
+	RNNoiseEnabled() bool
 }
 
 func New(settings ...Settings) (*Processor, error) {
@@ -54,46 +56,37 @@ func (p *Processor) Reset() error {
 	return nil
 }
 
-func (p *Processor) Process(samples []int16) (audio.PCMAnalysis, error) {
+func (p *Processor) Process(samples []int16) error {
 	if p.state == nil {
-		return audio.PCMAnalysis{}, ErrClosed
+		return ErrClosed
 	}
-	enabled, gate := true, float32(0.5)
+	enabled := true
 	if p.settings != nil {
-		enabled, gate = p.settings.RNNoiseSnapshot()
+		enabled = p.settings.RNNoiseEnabled()
 	}
 	if !enabled {
 		p.needsReset = true
-		return audio.PCMAnalysis{}, nil
+		return nil
 	}
 	if p.needsReset {
 		if err := p.Reset(); err != nil {
-			return audio.PCMAnalysis{}, err
+			return err
 		}
 	}
 	if len(samples)%FrameSize != 0 {
-		return audio.PCMAnalysis{}, fmt.Errorf("RNNoise requires blocks divisible by %d samples, got %d", FrameSize, len(samples))
+		return fmt.Errorf("RNNoise requires blocks divisible by %d samples, got %d", FrameSize, len(samples))
 	}
 
-	var probability float32
 	for offset := 0; offset < len(samples); offset += FrameSize {
 		for i := range FrameSize {
 			p.frame[i] = float32(samples[offset+i])
 		}
-		vad := p.state.ProcessFrame(p.frame, p.frame)
-		if vad > probability {
-			probability = vad
-		}
+		p.state.ProcessFrame(p.frame, p.frame)
 		for i := range FrameSize {
 			samples[offset+i] = pcm16(p.frame[i])
 		}
 	}
-	return audio.PCMAnalysis{
-		VoiceProbability:          probability,
-		VoiceProbabilityAvailable: true,
-		VoiceDetected:             probability >= gate,
-		VoiceDetectedAvailable:    true,
-	}, nil
+	return nil
 }
 
 func (p *Processor) Close() error {

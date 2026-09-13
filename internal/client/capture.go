@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	"example.com/go-voice-mvp/internal/audio/vad"
+	"example.com/go-voice-mvp/internal/audio/voicegate"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
@@ -21,22 +23,29 @@ func EncodeLoop(
 	audioCh chan<- audio.Frame,
 	states ...*State,
 ) error {
-	return EncodeLoopWithProcessor(ctx, encoder, nil, pcmCh, audioCh, states...)
+	return EncodeLoopWithPipeline(ctx, encoder, nil, nil, nil, pcmCh, audioCh, states...)
 }
 
-// EncodeLoopWithProcessor applies microphone processing before voice activity
-// observation and encoding. A nil processor disables processing.
-func EncodeLoopWithProcessor(
+// EncodeLoopWithPipeline applies filtering, voice detection, gate policy and
+// encoding in order. Nil audio stages preserve the legacy passthrough path.
+func EncodeLoopWithPipeline(
 	ctx context.Context,
 	encoder audio.Encoder,
-	processor audio.PCMProcessor,
+	filter audio.PCMFilter,
+	detector vad.Detector,
+	gate *voicegate.Gate,
 	pcmCh <-chan audio.PCMFrame,
 	audioCh chan<- audio.Frame,
 	states ...*State,
 ) error {
 	defer close(audioCh)
-	var processedEpoch uint64
-	var haveProcessedEpoch bool
+	var pipelineEpoch uint64
+	var havePipelineEpoch bool
+	var vadEnabled bool
+	var haveVADSetting bool
+	if len(states) > 0 {
+		defer states[0].Audio.SetVADOpen(false)
+	}
 
 	for {
 		select {
@@ -52,38 +61,92 @@ func EncodeLoopWithProcessor(
 					continue
 				}
 			}
-			var analysis audio.PCMAnalysis
-			if processor != nil {
-				if haveProcessedEpoch && processedEpoch != pcmFrame.ControlEpoch {
-					if err := processor.Reset(); err != nil {
-						return fmt.Errorf("reset microphone processor: %w", err)
+			if havePipelineEpoch && pipelineEpoch != pcmFrame.ControlEpoch {
+				if filter != nil {
+					if err := filter.Reset(); err != nil {
+						return fmt.Errorf("reset microphone filter: %w", err)
 					}
 				}
-				var err error
-				analysis, err = processor.Process(pcmFrame.Samples)
-				if err != nil {
-					return fmt.Errorf("process microphone PCM: %w", err)
+				if detector != nil {
+					if err := detector.Reset(); err != nil {
+						return fmt.Errorf("reset microphone VAD: %w", err)
+					}
 				}
-				processedEpoch = pcmFrame.ControlEpoch
-				haveProcessedEpoch = true
+				if gate != nil {
+					gate.Reset()
+				}
 			}
-			if len(states) > 0 {
+			pipelineEpoch = pcmFrame.ControlEpoch
+			havePipelineEpoch = true
+
+			if filter != nil {
+				if err := filter.Process(pcmFrame.Samples); err != nil {
+					return fmt.Errorf("filter microphone PCM: %w", err)
+				}
+			}
+
+			frames := []audio.PCMFrame{pcmFrame}
+			var result vad.Result
+			var gateConfig voicegate.Config
+			if gate != nil {
+				gateConfig = voicegate.DefaultConfig()
+				if len(states) > 0 {
+					settings := states[0].Audio.VADSnapshot()
+					gateConfig = settings.GateConfig()
+				}
+				if err := gate.Configure(gateConfig); err != nil {
+					return fmt.Errorf("configure microphone voice gate: %w", err)
+				}
+				currentVADEnabled := gateConfig.Mode != voicegate.ModeDisabled
+				if haveVADSetting && currentVADEnabled != vadEnabled && detector != nil {
+					if err := detector.Reset(); err != nil {
+						return fmt.Errorf("reset microphone VAD: %w", err)
+					}
+				}
+				vadEnabled = currentVADEnabled
+				haveVADSetting = true
+				if currentVADEnabled {
+					if detector == nil {
+						return errors.New("microphone VAD is enabled without a detector")
+					}
+					var err error
+					result, err = detector.Analyze(pcmFrame.Samples)
+					if err != nil {
+						return fmt.Errorf("analyze microphone PCM: %w", err)
+					}
+				}
+				frames = gate.Process(pcmFrame, result)
+				if len(states) > 0 {
+					states[0].Audio.SetVADOpen(gate.IsOpen())
+				}
+			}
+
+			if len(states) > 0 && len(frames) > 0 {
 				now := time.Now()
-				if analysis.VoiceDetectedAvailable {
-					states[0].ObserveVoiceActivity(states[0].SessionID(), analysis.VoiceDetected, now)
+				if gate != nil && gateConfig.Mode != voicegate.ModeDisabled {
+					states[0].ObserveVoiceActivity(states[0].SessionID(), voicegate.Active(gateConfig, result), now)
 				} else {
 					states[0].ObserveSpeaking(states[0].SessionID(), pcmFrame.Samples, now)
 				}
 			}
-			buffer, err := encoder.Encode(pcmFrame.Samples)
-			if err != nil {
-				return err
-			}
-			frame := audio.Frame{Data: buffer, Duration: pcmFrame.Duration, ControlEpoch: pcmFrame.ControlEpoch}
-			select {
-			case audioCh <- frame:
-			case <-ctx.Done():
-				return ctx.Err()
+
+			for _, released := range frames {
+				if len(states) > 0 {
+					muted, _, epoch := states[0].Audio.Snapshot()
+					if muted || epoch != released.ControlEpoch {
+						continue
+					}
+				}
+				buffer, err := encoder.Encode(released.Samples)
+				if err != nil {
+					return err
+				}
+				frame := audio.Frame{Data: buffer, Duration: released.Duration, ControlEpoch: released.ControlEpoch}
+				select {
+				case audioCh <- frame:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		}
 	}
@@ -107,7 +170,14 @@ func SendLoop(
 				return nil
 			}
 			sent := protocol.NewVoicePacket(sessionID, sequence, frame.Data)
-			send := func() error { return conn.SendPacket(sent) }
+			packetSent := false
+			send := func() error {
+				if err := conn.SendPacket(sent); err != nil {
+					return err
+				}
+				packetSent = true
+				return nil
+			}
 			var err error
 			if len(controls) > 0 {
 				err = controls[0].Send(frame.ControlEpoch, send)
@@ -117,7 +187,9 @@ func SendLoop(
 			if err != nil {
 				return err
 			}
-			sequence++
+			if packetSent {
+				sequence++
+			}
 		}
 	}
 }

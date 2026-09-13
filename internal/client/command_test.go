@@ -46,7 +46,7 @@ func TestWriteClientHelpListsCommands(t *testing.T) {
 	if err := WriteClientHelp(&output); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"/channels", "/join <id|name>", "/rnnoise", "/rnnoise-gate", "/help", "/quit"} {
+	for _, command := range []string{"/channels", "/join <id|name>", "/rnnoise", "/vad", "/vad-mode", "/vad-sensitivity", "/help", "/quit"} {
 		if !strings.Contains(output.String(), command) {
 			t.Fatalf("help missing %q", command)
 		}

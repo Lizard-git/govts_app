@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	"example.com/go-voice-mvp/internal/audio/voicegate"
 	"example.com/go-voice-mvp/internal/protocol"
 )
 
@@ -34,7 +35,7 @@ func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {
 	}
 }
 
-func TestRNNoiseVADThresholdControlsLocalSpeaking(t *testing.T) {
+func TestVADResultControlsLocalSpeaking(t *testing.T) {
 	s := liveTestState()
 	now := time.Now()
 	id := s.SessionID()
@@ -113,11 +114,13 @@ func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) 
 	HandleOfflineCommand(Command{Name: "/mute", Arguments: []string{"on"}}, &output, cancel, s)
 	HandleOfflineCommand(Command{Name: "/deafen", Arguments: []string{"on"}}, &output, cancel, s)
 	HandleOfflineCommand(Command{Name: "/rnnoise"}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/rnnoise-gate", Arguments: []string{"0.7"}}, &output, cancel, s)
+	HandleOfflineCommand(Command{Name: "/vad", Arguments: []string{"on"}}, &output, cancel, s)
+	HandleOfflineCommand(Command{Name: "/vad-mode", Arguments: []string{"vad"}}, &output, cancel, s)
+	HandleOfflineCommand(Command{Name: "/vad-sensitivity", Arguments: []string{"0.7"}}, &output, cancel, s)
 	s.InvalidateSession(ConnectionReconnecting)
 	s.StartSession(99)
 	v := s.SnapshotView()
-	if !v.Muted || !v.Deafened || v.RNNoiseEnabled || v.RNNoiseGate != 0.7 || ctx.Err() != nil {
+	if !v.Muted || !v.Deafened || v.RNNoiseEnabled || !v.VADEnabled || v.VADMode != "vad" || v.VADSensitivity != 0.7 || ctx.Err() != nil {
 		t.Fatal("offline flags lost")
 	}
 	p := &controlPlayer{}
@@ -144,19 +147,49 @@ func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) 
 	}
 }
 
-func TestRNNoiseCommandsValidateGate(t *testing.T) {
+func TestVADCommandsValidateSettings(t *testing.T) {
 	s := liveTestState()
 	var output bytes.Buffer
 
-	if !HandleAudioCommand(Command{Name: "/rnnoise-gate", Arguments: []string{"1.1"}}, s, &output) {
-		t.Fatal("RNNoise gate command was not handled")
+	if !HandleAudioCommand(Command{Name: "/vad-sensitivity", Arguments: []string{"1.1"}}, s, &output) {
+		t.Fatal("VAD sensitivity command was not handled")
 	}
-	_, gate := s.Audio.RNNoiseSnapshot()
-	if gate != SpeakingVADThreshold {
-		t.Fatalf("invalid gate changed state to %v", gate)
+	settings := s.Audio.VADSnapshot()
+	if settings.Sensitivity != voicegate.DefaultSensitivity {
+		t.Fatalf("invalid sensitivity changed state to %v", settings.Sensitivity)
 	}
 	if !strings.Contains(output.String(), "between 0 and 1") {
 		t.Fatalf("missing validation message: %q", output.String())
+	}
+	output.Reset()
+	HandleAudioCommand(Command{Name: "/vad-mode", Arguments: []string{"unknown"}}, s, &output)
+	if s.Audio.VADSnapshot().Mode != voicegate.ModeHybrid || !strings.Contains(output.String(), "level, vad, or hybrid") {
+		t.Fatalf("invalid mode changed state: %q", output.String())
+	}
+}
+
+func TestVADOpenIsTransientObservableAndMuteClosesIt(t *testing.T) {
+	s := liveTestState()
+	s.Audio.SetVADEnabled(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changed, unsubscribe := s.Subscribe(ctx)
+	defer unsubscribe()
+	<-changed
+
+	s.Audio.SetVADOpen(true)
+	if !s.SnapshotView().VADOpen {
+		t.Fatal("open gate missing from view")
+	}
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("open transition did not notify subscriber")
+	}
+	s.Audio.SetMuted(true)
+	view := s.SnapshotView()
+	if view.VADOpen || !view.Muted {
+		t.Fatalf("mute did not close gate in view: %+v", view)
 	}
 }
 
@@ -175,7 +208,7 @@ func TestSendLoopRejectsQueuedFramesFromBeforeMute(t *testing.T) {
 		t.Fatal(err)
 	}
 	packet, _, err := peer.receiveRequest()
-	if err != nil || packet.Type != protocol.PacketVoice || !bytes.Equal(packet.Payload, []byte{2}) {
+	if err != nil || packet.Type != protocol.PacketVoice || packet.Sequence != 1 || !bytes.Equal(packet.Payload, []byte{2}) {
 		t.Fatalf("sent old frame: %+v, %v", packet, err)
 	}
 	peer.serverConn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))

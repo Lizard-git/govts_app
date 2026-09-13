@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	"example.com/go-voice-mvp/internal/audio/voicegate"
 )
 
 // SetMuted and Send share the same lock. On return, an earlier send has
@@ -18,7 +19,10 @@ type AudioControlState struct {
 	sendMu          sync.Mutex
 	muted, deafened bool
 	rnnoiseEnabled  bool
-	rnnoiseGate     float32
+	vadEnabled      bool
+	vadMode         voicegate.Mode
+	vadSensitivity  float32
+	vadOpen         bool
 	epoch           uint64
 	playbackEpoch   uint64
 	player          audio.DeafenPlayer
@@ -26,13 +30,18 @@ type AudioControlState struct {
 }
 
 func NewAudioControlState(onChange func()) *AudioControlState {
-	return &AudioControlState{onChange: onChange, rnnoiseEnabled: true, rnnoiseGate: SpeakingVADThreshold}
+	return &AudioControlState{
+		onChange:       onChange,
+		rnnoiseEnabled: true,
+		vadMode:        voicegate.ModeHybrid,
+		vadSensitivity: voicegate.DefaultSensitivity,
+	}
 }
 
-func (a *AudioControlState) RNNoiseSnapshot() (enabled bool, gate float32) {
+func (a *AudioControlState) RNNoiseEnabled() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.rnnoiseEnabled, a.rnnoiseGate
+	return a.rnnoiseEnabled
 }
 
 func (a *AudioControlState) SetRNNoiseEnabled(value bool) {
@@ -45,18 +54,84 @@ func (a *AudioControlState) SetRNNoiseEnabled(value bool) {
 	}
 }
 
-func (a *AudioControlState) SetRNNoiseGate(value float32) error {
-	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
-		return fmt.Errorf("RNNoise gate must be between 0 and 1, got %g", value)
+type VADSettings struct {
+	Enabled     bool
+	Mode        voicegate.Mode
+	Sensitivity float32
+	Open        bool
+}
+
+func (a *AudioControlState) VADSnapshot() VADSettings {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return VADSettings{Enabled: a.vadEnabled, Mode: a.vadMode, Sensitivity: a.vadSensitivity, Open: a.vadOpen}
+}
+
+func (settings VADSettings) GateConfig() voicegate.Config {
+	config := voicegate.DefaultConfig()
+	if settings.Enabled {
+		config.Mode = settings.Mode
+	}
+	config.Sensitivity = settings.Sensitivity
+	return config
+}
+
+func (a *AudioControlState) SetVADEnabled(value bool) {
+	a.mu.Lock()
+	changed := a.vadEnabled != value
+	a.vadEnabled = value
+	if !value {
+		a.vadOpen = false
+	}
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+}
+
+func (a *AudioControlState) SetVADMode(value voicegate.Mode) error {
+	if value != voicegate.ModeLevel && value != voicegate.ModeVAD && value != voicegate.ModeHybrid {
+		return fmt.Errorf("VAD mode must be level, vad, or hybrid, got %q", value)
 	}
 	a.mu.Lock()
-	changed := a.rnnoiseGate != value
-	a.rnnoiseGate = value
+	changed := a.vadMode != value
+	a.vadMode = value
+	if changed {
+		a.vadOpen = false
+	}
 	a.mu.Unlock()
 	if changed && a.onChange != nil {
 		a.onChange()
 	}
 	return nil
+}
+
+func (a *AudioControlState) SetVADSensitivity(value float32) error {
+	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
+		return fmt.Errorf("VAD sensitivity must be between 0 and 1, got %g", value)
+	}
+	a.mu.Lock()
+	changed := a.vadSensitivity != value
+	a.vadSensitivity = value
+	if changed {
+		a.vadOpen = false
+	}
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
+}
+
+func (a *AudioControlState) SetVADOpen(value bool) {
+	a.mu.Lock()
+	value = value && a.vadEnabled && !a.muted
+	changed := a.vadOpen != value
+	a.vadOpen = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
 }
 func (a *AudioControlState) Snapshot() (bool, bool, uint64) {
 	a.mu.Lock()
@@ -69,6 +144,9 @@ func (a *AudioControlState) SetMuted(value bool) {
 	if a.muted != value {
 		a.muted = value
 		a.epoch++
+		if value {
+			a.vadOpen = false
+		}
 	}
 	a.mu.Unlock()
 	a.sendMu.Unlock()
@@ -132,7 +210,6 @@ func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 
 const SpeakingRMSThreshold = 600
 const SpeakingHangover = 300 * time.Millisecond
-const SpeakingVADThreshold float32 = 0.5
 
 type SpeakingDetector struct{ ActiveUntil time.Time }
 
