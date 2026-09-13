@@ -85,7 +85,7 @@ func WriteClientHelp(output io.Writer) error {
 	if output == nil {
 		return fmt.Errorf("command output is required")
 	}
-	_, err := io.WriteString(output, "commands:\n  /channels        refresh and show channels\n  /join <id|name>  join a channel\n  /mute [on|off|toggle]\n  /deafen [on|off|toggle]\n  /help            show this help\n  /quit            disconnect and exit\n")
+	_, err := io.WriteString(output, "commands:\n  /channels              refresh and show channels\n  /join <id|name>        join a channel\n  /mute [on|off|toggle]\n  /deafen [on|off|toggle]\n  /rnnoise [on|off|toggle]\n  /rnnoise-gate <0..1>\n  /help                  show this help\n  /quit                  disconnect and exit\n")
 	return err
 }
 

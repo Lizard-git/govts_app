@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,21 @@ func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {
 	}
 	if !d.Observe([]int16{-32768}, now) {
 		t.Fatal("PCM square overflow")
+	}
+}
+
+func TestRNNoiseVADThresholdControlsLocalSpeaking(t *testing.T) {
+	s := liveTestState()
+	now := time.Now()
+	id := s.SessionID()
+
+	s.ObserveVoiceActivity(id, false, now)
+	if s.SnapshotView().Speaking[id] {
+		t.Fatal("inactive VAD result activated speaking")
+	}
+	s.ObserveVoiceActivity(id, true, now)
+	if !s.SnapshotView().Speaking[id] {
+		t.Fatal("active VAD result did not activate speaking")
 	}
 }
 
@@ -96,10 +112,12 @@ func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) 
 	defer cancel()
 	HandleOfflineCommand(Command{Name: "/mute", Arguments: []string{"on"}}, &output, cancel, s)
 	HandleOfflineCommand(Command{Name: "/deafen", Arguments: []string{"on"}}, &output, cancel, s)
+	HandleOfflineCommand(Command{Name: "/rnnoise"}, &output, cancel, s)
+	HandleOfflineCommand(Command{Name: "/rnnoise-gate", Arguments: []string{"0.7"}}, &output, cancel, s)
 	s.InvalidateSession(ConnectionReconnecting)
 	s.StartSession(99)
 	v := s.SnapshotView()
-	if !v.Muted || !v.Deafened || ctx.Err() != nil {
+	if !v.Muted || !v.Deafened || v.RNNoiseEnabled || v.RNNoiseGate != 0.7 || ctx.Err() != nil {
 		t.Fatal("offline flags lost")
 	}
 	p := &controlPlayer{}
@@ -123,6 +141,22 @@ func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) 
 	HandleAudioCommand(Command{Name: "/mute", Arguments: []string{"off"}}, s, &output)
 	if muted, _, _ := s.Audio.Snapshot(); muted {
 		t.Fatal("off is not idempotent")
+	}
+}
+
+func TestRNNoiseCommandsValidateGate(t *testing.T) {
+	s := liveTestState()
+	var output bytes.Buffer
+
+	if !HandleAudioCommand(Command{Name: "/rnnoise-gate", Arguments: []string{"1.1"}}, s, &output) {
+		t.Fatal("RNNoise gate command was not handled")
+	}
+	_, gate := s.Audio.RNNoiseSnapshot()
+	if gate != SpeakingVADThreshold {
+		t.Fatalf("invalid gate changed state to %v", gate)
+	}
+	if !strings.Contains(output.String(), "between 0 and 1") {
+		t.Fatalf("missing validation message: %q", output.String())
 	}
 }
 
