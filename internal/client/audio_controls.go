@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -15,6 +17,8 @@ type AudioControlState struct {
 	mu              sync.Mutex
 	sendMu          sync.Mutex
 	muted, deafened bool
+	rnnoiseEnabled  bool
+	rnnoiseGate     float32
 	epoch           uint64
 	playbackEpoch   uint64
 	player          audio.DeafenPlayer
@@ -22,7 +26,37 @@ type AudioControlState struct {
 }
 
 func NewAudioControlState(onChange func()) *AudioControlState {
-	return &AudioControlState{onChange: onChange}
+	return &AudioControlState{onChange: onChange, rnnoiseEnabled: true, rnnoiseGate: SpeakingVADThreshold}
+}
+
+func (a *AudioControlState) RNNoiseSnapshot() (enabled bool, gate float32) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.rnnoiseEnabled, a.rnnoiseGate
+}
+
+func (a *AudioControlState) SetRNNoiseEnabled(value bool) {
+	a.mu.Lock()
+	changed := a.rnnoiseEnabled != value
+	a.rnnoiseEnabled = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+}
+
+func (a *AudioControlState) SetRNNoiseGate(value float32) error {
+	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
+		return fmt.Errorf("RNNoise gate must be between 0 and 1, got %g", value)
+	}
+	a.mu.Lock()
+	changed := a.rnnoiseGate != value
+	a.rnnoiseGate = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
 }
 func (a *AudioControlState) Snapshot() (bool, bool, uint64) {
 	a.mu.Lock()
@@ -98,6 +132,7 @@ func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 
 const SpeakingRMSThreshold = 600
 const SpeakingHangover = 300 * time.Millisecond
+const SpeakingVADThreshold float32 = 0.5
 
 type SpeakingDetector struct{ ActiveUntil time.Time }
 
@@ -121,6 +156,14 @@ func activePCM(samples []int16) bool {
 }
 
 func (s *State) ObserveSpeaking(id uint64, samples []int16, now time.Time) bool {
+	return s.observeSpeaking(id, activePCM(samples), now)
+}
+
+func (s *State) ObserveVoiceActivity(id uint64, active bool, now time.Time) bool {
+	return s.observeSpeaking(id, active, now)
+}
+
+func (s *State) observeSpeaking(id uint64, active bool, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id == 0 || s.channelID == 0 || !s.snapshotFresh {
@@ -143,7 +186,7 @@ func (s *State) ObserveSpeaking(id uint64, samples []int16, now time.Time) bool 
 			return false
 		}
 	}
-	if activePCM(samples) {
+	if active {
 		_, wasSpeaking := s.speaking[id]
 		s.speaking[id] = now.Add(SpeakingHangover)
 		if !wasSpeaking {

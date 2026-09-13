@@ -35,6 +35,8 @@ func EncodeLoopWithProcessor(
 	states ...*State,
 ) error {
 	defer close(audioCh)
+	var processedEpoch uint64
+	var haveProcessedEpoch bool
 
 	for {
 		select {
@@ -50,13 +52,28 @@ func EncodeLoopWithProcessor(
 					continue
 				}
 			}
+			var analysis audio.PCMAnalysis
 			if processor != nil {
-				if err := processor.Process(pcmFrame.Samples); err != nil {
+				if haveProcessedEpoch && processedEpoch != pcmFrame.ControlEpoch {
+					if err := processor.Reset(); err != nil {
+						return fmt.Errorf("reset microphone processor: %w", err)
+					}
+				}
+				var err error
+				analysis, err = processor.Process(pcmFrame.Samples)
+				if err != nil {
 					return fmt.Errorf("process microphone PCM: %w", err)
 				}
+				processedEpoch = pcmFrame.ControlEpoch
+				haveProcessedEpoch = true
 			}
 			if len(states) > 0 {
-				states[0].ObserveSpeaking(states[0].SessionID(), pcmFrame.Samples, time.Now())
+				now := time.Now()
+				if analysis.VoiceDetectedAvailable {
+					states[0].ObserveVoiceActivity(states[0].SessionID(), analysis.VoiceDetected, now)
+				} else {
+					states[0].ObserveSpeaking(states[0].SessionID(), pcmFrame.Samples, now)
+				}
 			}
 			buffer, err := encoder.Encode(pcmFrame.Samples)
 			if err != nil {

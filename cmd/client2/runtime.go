@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
+	audiornnoise "example.com/go-voice-mvp/internal/audio/rnnoise"
 	voiceclient "example.com/go-voice-mvp/internal/client"
 	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/protocol"
@@ -38,7 +39,10 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return fmt.Errorf("create Opus encoder: %w", err)
 	}
-	processor := audio.PassthroughProcessor{}
+	processor, err := newMicrophoneProcessor(codecConfig, state.Audio)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err := processor.Close(); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("close microphone processor: %w", err))
@@ -194,6 +198,20 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		runtimeErr = errors.Join(runtimeErr, wrapError("send disconnect", voiceclient.Disconnect(conn, sessionID)))
 	}
 	return runtimeErr
+}
+
+func newMicrophoneProcessor(config audio.CodecConfig, settings audiornnoise.Settings) (audio.PCMProcessor, error) {
+	if config.SampleRate != audiornnoise.SampleRate || config.Channels != 1 {
+		return nil, fmt.Errorf("RNNoise requires 48000 Hz mono audio, got %d Hz with %d channels", config.SampleRate, config.Channels)
+	}
+	if config.SamplesPerFrame%audiornnoise.FrameSize != 0 {
+		return nil, fmt.Errorf("RNNoise frame size %d does not divide client frame size %d", audiornnoise.FrameSize, config.SamplesPerFrame)
+	}
+	processor, err := audiornnoise.New(settings)
+	if err != nil {
+		return nil, fmt.Errorf("create RNNoise processor: %w", err)
+	}
+	return processor, nil
 }
 
 type lockedOutput struct {

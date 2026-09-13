@@ -20,6 +20,8 @@ type ClientViewState struct {
 	ChannelID        domain.ChannelID
 	SnapshotFresh    bool
 	Muted, Deafened  bool
+	RNNoiseEnabled   bool
+	RNNoiseGate      float32
 	Speaking         map[uint64]bool
 }
 
@@ -46,9 +48,11 @@ func (s *State) SnapshotView() ClientViewState {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot.Clone()
 	muted, deafened, _ := s.Audio.Snapshot()
+	rnnoiseEnabled, rnnoiseGate := s.Audio.RNNoiseSnapshot()
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
 		Channels: snapshot.Channels, Participants: snapshot.Participants, SessionID: s.sessionID, ChannelID: s.channelID,
-		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, Speaking: make(map[uint64]bool)}
+		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, RNNoiseEnabled: rnnoiseEnabled,
+		RNNoiseGate: rnnoiseGate, Speaking: make(map[uint64]bool)}
 	// The view's local channel belongs to the same snapshot as its participants.
 	// A newer Join ACK marks it stale until that revision is synchronized.
 	v.ChannelID = 0
