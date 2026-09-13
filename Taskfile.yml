@@ -1,0 +1,65 @@
+version: '3'
+
+vars:
+  APP_NAME: govots
+  FRONTEND_DIR: cmd/desktop/frontend
+  WAILS_VERSION: v3.0.0-beta.20
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+tasks:
+  bindings:
+    desc: Generate type-safe Wails bindings for the desktop service
+    cmds:
+      - go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} generate bindings -d {{.FRONTEND_DIR}}/bindings -clean=true -ts -i ./cmd/desktop
+
+  frontend:install:
+    dir: '{{.FRONTEND_DIR}}'
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/**/*
+    cmds:
+      - npm install
+
+  frontend:build:
+    dir: '{{.FRONTEND_DIR}}'
+    deps: [frontend:install, bindings]
+    cmds:
+      - npm run {{if eq .DEV "true"}}build:dev{{else}}build{{end}}
+
+  frontend:dev:
+    dir: '{{.FRONTEND_DIR}}'
+    deps: [frontend:install]
+    cmds:
+      - npm run dev -- --port {{.VITE_PORT}} --strictPort
+
+  build:dev:
+    desc: Build the desktop backend for Wails development mode
+    deps: [bindings]
+    cmds:
+      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.APP_NAME}}.exe ./cmd/desktop
+        platforms: [windows]
+      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.APP_NAME}} ./cmd/desktop
+        platforms: [linux, darwin]
+
+  build:
+    desc: Build the Wails desktop client
+    deps: [frontend:build]
+    cmds:
+      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s -H windowsgui"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.APP_NAME}}.exe ./cmd/desktop
+        platforms: [windows]
+      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.APP_NAME}} ./cmd/desktop
+        platforms: [linux, darwin]
+
+  run:
+    cmds:
+      - cmd: bin/{{.APP_NAME}}.exe
+        platforms: [windows]
+      - cmd: ./bin/{{.APP_NAME}}
+        platforms: [linux, darwin]
+
+  dev:
+    desc: Run the desktop client with Wails/Vite hot reload
+    cmds:
+      - go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} dev -config ./build/config.yml -port {{.VITE_PORT}}

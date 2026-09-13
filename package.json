@@ -1,11 +1,17 @@
 {
   "scripts": {
 
-    "dev:server": "go run ./cmd/server/main.go",
+    "dev:server": "go run ./cmd/server",
+
+    "dev:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 task dev",
+
+    "build:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 build",
 
 
-    "dev:client-42": "go run ./cmd/client2/main.go -name G712",
+    "dev:client-42": "go run ./cmd/client2 -name G712",
 
-    "dev:client-43": "go run ./cmd/client2/main.go -name G712"
+    "dev:client-43": "go run ./cmd/client2 -name G712",
+
+    "run-bin-client": ".\\bin\\govts.exe -name Den2 -server 193.187.92.89"
   }
 }
