@@ -37,6 +37,19 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 	if s.syncedGeneration == generation && s.snapshot.Revision >= revision {
 		return true
 	}
+	// The join ACK and its ParticipantMoved event are sent independently and
+	// may arrive in either order. When the ACK announces exactly the next
+	// revision, keep the snapshot eligible for that event instead of forcing a
+	// resync. A lost event is still recovered by the periodic revision check.
+	if s.syncedGeneration == generation && s.snapshotFresh && revision == s.snapshot.Revision+1 {
+		s.channelID = channel
+		if revision > s.observedRevision {
+			s.observedRevision = revision
+		}
+		clear(s.speaking)
+		s.notifyLocked()
+		return true
+	}
 	s.channelID = channel
 	if revision > s.observedRevision {
 		s.observedRevision = revision

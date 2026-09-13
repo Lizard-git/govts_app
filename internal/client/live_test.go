@@ -207,3 +207,25 @@ func TestConsoleLiveLineAndOwnJoinAckOrdering(t *testing.T) {
 		t.Fatalf("console line=%q error=%v", line, err)
 	}
 }
+
+func TestOwnJoinAckBeforeMoveDoesNotForceResync(t *testing.T) {
+	s := liveTestState()
+	gen := s.Generation()
+	if !s.ConfirmChannel(gen, 2, 11) {
+		t.Fatal("join ACK rejected")
+	}
+	if !s.SnapshotFresh() {
+		t.Fatal("next-revision join ACK marked snapshot stale")
+	}
+	if len(s.resync) != 0 {
+		t.Fatal("next-revision join ACK requested resync")
+	}
+	move := domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 1, ChannelID: 2}
+	if !s.ApplyEvent(gen, move) {
+		t.Fatal("matching move event was rejected")
+	}
+	view := s.SnapshotView()
+	if view.Revision != 11 || view.ChannelID != 2 || !view.SnapshotFresh {
+		t.Fatalf("view after move = %+v", view)
+	}
+}
