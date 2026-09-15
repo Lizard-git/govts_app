@@ -1,12 +1,12 @@
 version: '3'
 
 info:
-  companyName: "Govots"
-  productName: "Govots"
-  productIdentifier: "app.govots.desktop"
-  description: "Голосовой desktop-клиент Govots"
-  copyright: "(c) 2026 Govots contributors"
-  version: "0.1.27"
+  companyName: "Govts"
+  productName: "Govts"
+  productIdentifier: "app.govts.desktop"
+  description: "Голосовой desktop-клиент Govts"
+  copyright: "(c) 2026 Govts contributors"
+  version: "0.1.40"
 
 dev_mode:
   root_path: .
