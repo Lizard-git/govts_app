@@ -29,6 +29,10 @@ export function JoinChannel(channelID: string): $CancellablePromise<void> {
     return $Call.ByID(136141940, channelID);
 }
 
+export function SavedDisplayName(): $CancellablePromise<string> {
+    return $Call.ByID(1364441037);
+}
+
 export function SetCaptureDevice(id: string): $CancellablePromise<void> {
     return $Call.ByID(691731989, id);
 }

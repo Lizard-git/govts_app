@@ -21,9 +21,12 @@ func init() {
 func main() {
 	client := clientapp.New(clientapp.Options{Logger: log.Default()})
 	service := wailsui.NewService(client)
+	if err := wailsui.EnableDefaultSettings(service); err != nil {
+		log.Printf("load settings: %v", err)
+	}
 	app := application.New(application.Options{
-		Name:        "Govots",
-		Description: "Голосовой клиент Govots",
+		Name:        "Govts",
+		Description: "Голосовой клиент Govts",
 		Services: []application.Service{
 			application.NewService(service),
 		},
@@ -52,7 +55,7 @@ func main() {
 	app.OnShutdown(shutdown)
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            fmt.Sprintf("Govots %s", applicationVersion()),
+		Title:            fmt.Sprintf("Govts %s", applicationVersion()),
 		Width:            1180,
 		Height:           760,
 		MinWidth:         900,

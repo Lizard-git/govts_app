@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/go-voice-mvp/internal/clientapp"
@@ -28,7 +29,10 @@ type ConnectRequest struct {
 }
 
 type Service struct {
-	client *clientapp.App
+	client      *clientapp.App
+	settings    *settingsStore
+	settingsMu  sync.RWMutex
+	displayName string
 }
 
 func NewService(client *clientapp.App) *Service { return &Service{client: client} }
@@ -42,11 +46,20 @@ func (s *Service) Connect(request ConnectRequest) error {
 	if request.Server == "" {
 		return &validationError{Field: "server", Message: "введите адрес сервера"}
 	}
+	if err := s.setDisplayName(request.Name); err != nil {
+		return err
+	}
 	return s.client.Connect(clientapp.ConnectOptions{
 		Name:           request.Name,
 		Server:         request.Server,
 		InitialChannel: strings.TrimSpace(request.InitialChannel),
 	})
+}
+
+func (s *Service) SavedDisplayName() string {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.displayName
 }
 
 func (s *Service) Disconnect() error {
@@ -84,16 +97,35 @@ func (s *Service) EventsAfter(sequence string) ([]ClientEventDTO, error) {
 
 func (s *Service) SetMuted(value bool) { s.client.SetMuted(value) }
 
-func (s *Service) SetDeafened(value bool) error { return s.client.SetDeafened(value) }
+func (s *Service) SetDeafened(value bool) error {
+	if err := s.client.SetDeafened(value); err != nil {
+		return err
+	}
+	return s.saveSettings()
+}
 
-func (s *Service) SetRNNoiseEnabled(value bool) { s.client.SetRNNoiseEnabled(value) }
+func (s *Service) SetRNNoiseEnabled(value bool) error {
+	s.client.SetRNNoiseEnabled(value)
+	return s.saveSettings()
+}
 
-func (s *Service) SetVADEnabled(value bool) { s.client.SetVADEnabled(value) }
+func (s *Service) SetVADEnabled(value bool) error {
+	s.client.SetVADEnabled(value)
+	return s.saveSettings()
+}
 
-func (s *Service) SetVADMode(value string) error { return s.client.SetVADMode(value) }
+func (s *Service) SetVADMode(value string) error {
+	if err := s.client.SetVADMode(value); err != nil {
+		return err
+	}
+	return s.saveSettings()
+}
 
 func (s *Service) SetVADSensitivity(value float32) error {
-	return s.client.SetVADSensitivity(value)
+	if err := s.client.SetVADSensitivity(value); err != nil {
+		return err
+	}
+	return s.saveSettings()
 }
 
 func (s *Service) AudioDevices() (AudioDevicesDTO, error) {
@@ -111,11 +143,17 @@ func (s *Service) AudioDevices() (AudioDevicesDTO, error) {
 }
 
 func (s *Service) SetCaptureDevice(id string) error {
-	return s.client.SetCaptureDevice(strings.TrimSpace(id))
+	if err := s.client.SetCaptureDevice(strings.TrimSpace(id)); err != nil {
+		return err
+	}
+	return s.saveSettings()
 }
 
 func (s *Service) SetPlaybackDevice(id string) error {
-	return s.client.SetPlaybackDevice(strings.TrimSpace(id))
+	if err := s.client.SetPlaybackDevice(strings.TrimSpace(id)); err != nil {
+		return err
+	}
+	return s.saveSettings()
 }
 
 func StartEventBridge(ctx context.Context, app *application.App, client *clientapp.App) func() {
@@ -143,6 +181,7 @@ func StartEventBridge(ctx context.Context, app *application.App, client *clienta
 				lastSequence = sample.Sequence
 				app.Event.Emit("audio-meter", AudioMeterDTO{
 					Input:       sample.Input,
+					Processed:   sample.Processed,
 					Transmitted: sample.Transmitted,
 				})
 			}

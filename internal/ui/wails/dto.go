@@ -67,6 +67,7 @@ type AudioDevicesDTO struct {
 
 type AudioMeterDTO struct {
 	Input       float32 `json:"input"`
+	Processed   float32 `json:"processed"`
 	Transmitted float32 `json:"transmitted"`
 }
 

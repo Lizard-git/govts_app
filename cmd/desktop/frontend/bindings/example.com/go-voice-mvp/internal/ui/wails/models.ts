@@ -16,6 +16,7 @@ export interface AudioDevicesDTO {
 
 export interface AudioMeterDTO {
     "input": number;
+    "processed": number;
     "transmitted": number;
 }
 
