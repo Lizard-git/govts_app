@@ -65,6 +65,11 @@ type AudioDevicesDTO struct {
 	SelectedPlayback string           `json:"selectedPlayback"`
 }
 
+type AudioMeterDTO struct {
+	Input       float32 `json:"input"`
+	Transmitted float32 `json:"transmitted"`
+}
+
 type ClientViewDTO struct {
 	ConnectionStatus string           `json:"connectionStatus"`
 	LastError        string           `json:"lastError,omitempty"`

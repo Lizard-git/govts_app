@@ -14,6 +14,11 @@ export interface AudioDevicesDTO {
     "selectedPlayback": string;
 }
 
+export interface AudioMeterDTO {
+    "input": number;
+    "transmitted": number;
+}
+
 export interface AudioProfileDTO {
     "codec": string;
     "sampleRate": number;

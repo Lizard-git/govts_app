@@ -6,7 +6,7 @@ info:
   productIdentifier: "app.govots.desktop"
   description: "Голосовой desktop-клиент Govots"
   copyright: "(c) 2026 Govots contributors"
-  version: "0.1.24"
+  version: "0.1.27"
 
 dev_mode:
   root_path: .

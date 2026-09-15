@@ -35,6 +35,20 @@ func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {
 	}
 }
 
+func TestAudioMeterClampsAndAdvancesSequence(t *testing.T) {
+	controls := NewAudioControlState(nil)
+	controls.SetAudioMeter(-1, 2)
+	first := controls.AudioMeterSnapshot()
+	if first.Input != 0 || first.Transmitted != 1 || first.Sequence != 1 {
+		t.Fatalf("first meter sample = %+v", first)
+	}
+	controls.SetAudioMeter(0.25, 0.5)
+	second := controls.AudioMeterSnapshot()
+	if second.Input != 0.25 || second.Transmitted != 0.5 || second.Sequence != 2 {
+		t.Fatalf("second meter sample = %+v", second)
+	}
+}
+
 func TestVADResultControlsLocalSpeaking(t *testing.T) {
 	s := liveTestState()
 	now := time.Now()

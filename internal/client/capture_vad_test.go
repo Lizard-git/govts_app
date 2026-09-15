@@ -13,6 +13,23 @@ import (
 
 type countingEncoder struct{ calls int }
 
+func TestNormalizedMeterLevel(t *testing.T) {
+	tests := []struct {
+		level float32
+		want  float32
+	}{
+		{level: -96, want: 0},
+		{level: -60, want: 0},
+		{level: -30, want: 0.5},
+		{level: 0, want: 1},
+	}
+	for _, test := range tests {
+		if got := normalizedMeterLevel(test.level); got != test.want {
+			t.Errorf("normalizedMeterLevel(%v) = %v, want %v", test.level, got, test.want)
+		}
+	}
+}
+
 func (e *countingEncoder) Encode(samples []int16) ([]byte, error) {
 	e.calls++
 	return []byte{byte(samples[0])}, nil

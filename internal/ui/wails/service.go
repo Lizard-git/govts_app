@@ -128,6 +128,27 @@ func StartEventBridge(ctx context.Context, app *application.App, client *clienta
 		}
 	}()
 	go func() {
+		ticker := time.NewTicker(time.Second / 30)
+		defer ticker.Stop()
+		var lastSequence uint64
+		for {
+			select {
+			case <-bridgeCtx.Done():
+				return
+			case <-ticker.C:
+				sample := client.AudioMeterSnapshot()
+				if sample.Sequence == lastSequence {
+					continue
+				}
+				lastSequence = sample.Sequence
+				app.Event.Emit("audio-meter", AudioMeterDTO{
+					Input:       sample.Input,
+					Transmitted: sample.Transmitted,
+				})
+			}
+		}
+	}()
+	go func() {
 		for range eventChanges {
 			app.Event.Emit("client-event-log-changed", true)
 			app.Event.Emit("client-state-changed", true)

@@ -16,6 +16,18 @@ import (
 
 const frameDuration = 20 * time.Millisecond
 
+const meterFloorDBFS float32 = -60
+
+func normalizedMeterLevel(levelDBFS float32) float32 {
+	if levelDBFS <= meterFloorDBFS {
+		return 0
+	}
+	if levelDBFS >= 0 {
+		return 1
+	}
+	return (levelDBFS - meterFloorDBFS) / -meterFloorDBFS
+}
+
 func EncodeLoop(
 	ctx context.Context,
 	encoder audio.Encoder,
@@ -44,7 +56,10 @@ func EncodeLoopWithPipeline(
 	var vadEnabled bool
 	var haveVADSetting bool
 	if len(states) > 0 {
-		defer states[0].Audio.SetVADOpen(false)
+		defer func() {
+			states[0].Audio.SetVADOpen(false)
+			states[0].Audio.SetAudioMeter(0, 0)
+		}()
 	}
 
 	for {
@@ -61,6 +76,7 @@ func EncodeLoopWithPipeline(
 					continue
 				}
 			}
+			rawLevel := normalizedMeterLevel(vad.LevelDBFS(pcmFrame.Samples))
 			if havePipelineEpoch && pipelineEpoch != pcmFrame.ControlEpoch {
 				if filter != nil {
 					if err := filter.Reset(); err != nil {
@@ -84,6 +100,7 @@ func EncodeLoopWithPipeline(
 					return fmt.Errorf("filter microphone PCM: %w", err)
 				}
 			}
+			processedLevel := normalizedMeterLevel(vad.LevelDBFS(pcmFrame.Samples))
 
 			frames := []audio.PCMFrame{pcmFrame}
 			var result vad.Result
@@ -128,6 +145,13 @@ func EncodeLoopWithPipeline(
 				} else {
 					states[0].ObserveSpeaking(states[0].SessionID(), pcmFrame.Samples, now)
 				}
+			}
+			if len(states) > 0 {
+				transmittedLevel := float32(0)
+				if len(frames) > 0 {
+					transmittedLevel = processedLevel
+				}
+				states[0].Audio.SetAudioMeter(rawLevel, transmittedLevel)
 			}
 
 			for _, released := range frames {
@@ -231,6 +255,7 @@ func RecordLoop(
 		if len(controls) > 0 {
 			muted, _, current := controls[0].Snapshot()
 			if muted || current != epoch {
+				controls[0].SetAudioMeter(normalizedMeterLevel(vad.LevelDBFS(frame.Samples)), 0)
 				continue
 			}
 		}

@@ -417,6 +417,10 @@ func (a *App) JoinChannel(ctx context.Context, channelID domain.ChannelID) error
 
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }
 
+func (a *App) AudioMeterSnapshot() voiceclient.AudioMeterSample {
+	return a.state.Audio.AudioMeterSnapshot()
+}
+
 func (a *App) Subscribe(ctx context.Context) (<-chan struct{}, func()) {
 	return a.state.Subscribe(ctx)
 }

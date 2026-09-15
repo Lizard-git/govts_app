@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
 import { Service } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
-import type { AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import type { AudioDeviceDTO, AudioDevicesDTO, AudioMeterDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
 import { buildChannelGroups, mergeEventTail } from "./model";
 
 type Page = "channels" | "settings";
@@ -197,10 +197,98 @@ function SettingsPage({ view, invoke }: { view: ClientViewDTO; invoke: (operatio
       <SettingToggle title="Обнаружение голосовой активности (VAD)" description="Микрофон передаёт звук автоматически, когда обнаружена речь." checked={view.audio.vadEnabled} onChange={(value) => invoke(() => Service.SetVADEnabled(value))} />
       <div className="mode-row"><label htmlFor="vad-mode">Режим</label><select id="vad-mode" value={view.audio.vadMode} disabled={!view.audio.vadEnabled} onChange={(event) => void invoke(() => Service.SetVADMode(event.target.value))}><option value="level">По громкости</option><option value="vad">Распознавание речи</option><option value="hybrid">Гибридный</option></select><span className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? "Передача" : "Ожидание речи"}</span></div>
       <div className="sensitivity-setting"><div><span className="setting-label">Чувствительность</span><output>{Math.round(sensitivity * 100)}%</output></div><input aria-label="Чувствительность VAD" type="range" min="0" max="1" step="0.01" value={sensitivity} disabled={!view.audio.vadEnabled} onChange={(event) => setSensitivity(Number(event.target.value))} onPointerUp={() => void invoke(() => Service.SetVADSensitivity(sensitivity))} onKeyUp={() => void invoke(() => Service.SetVADSensitivity(sensitivity))} /><p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
+      <AudioWaveform />
     </section>
     <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device" label="Устройство вывода звука" devices={devices?.playback ?? []} value={devices?.selectedPlayback ?? ""} disabled={!devices || devicePending} onChange={(id) => selectDevice("playback", id)} /><SettingToggle title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится." checked={view.audio.deafened} onChange={(value) => invoke(() => Service.SetDeafened(value))} /></section>
     <section className="settings-card compact-card"><h3>Качество голоса</h3><div className="profile-row"><div><span>Профиль</span><strong>Opus Voice</strong></div><div><span>Формат</span><strong>48 кГц · Mono · 20 мс</strong></div></div></section>
   </section>;
+}
+
+function AudioWaveform() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const targetRef = useRef({ input: 0, transmitted: 0, updatedAt: 0 });
+
+  useEffect(() => Events.On("audio-meter", (event) => {
+    const sample = event.data as AudioMeterDTO;
+    targetRef.current = {
+      input: Math.max(0, Math.min(1, sample.input)),
+      transmitted: Math.max(0, Math.min(1, sample.transmitted)),
+      updatedAt: performance.now(),
+    };
+  }), []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const points = 96;
+    const rejectedHistory = Array<number>(points).fill(0);
+    const transmittedHistory = Array<number>(points).fill(0);
+    let currentInput = 0;
+    let currentTransmitted = 0;
+    let previousSample = performance.now();
+    let animationFrame = 0;
+
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(bounds.width * scale));
+      canvas.height = Math.max(1, Math.round(bounds.height * scale));
+      context.setTransform(scale, 0, 0, scale, 0, 0);
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
+
+    const ribbon = (history: number[], center: number, height: number, fill: string, stroke: string) => {
+      const width = canvas.clientWidth;
+      const step = width / Math.max(1, history.length - 1);
+      context.beginPath();
+      history.forEach((value, index) => {
+        const y = center - Math.max(0.6, value * height);
+        if (index === 0) context.moveTo(0, y);
+        else context.lineTo(index * step, y);
+      });
+      for (let index = history.length - 1; index >= 0; index--) {
+        context.lineTo(index * step, center + Math.max(0.6, history[index] * height));
+      }
+      context.closePath();
+      context.fillStyle = fill;
+      context.fill();
+      context.strokeStyle = stroke;
+      context.lineWidth = 1;
+      context.stroke();
+    };
+
+    const draw = (now: number) => {
+      const target = targetRef.current;
+      const stale = now - target.updatedAt > 120;
+      const inputTarget = stale ? 0 : target.input;
+      const transmittedTarget = stale ? 0 : target.transmitted;
+      currentInput += (inputTarget - currentInput) * (inputTarget > currentInput ? 0.42 : 0.16);
+      currentTransmitted += (transmittedTarget - currentTransmitted) * (transmittedTarget > currentTransmitted ? 0.48 : 0.2);
+      if (now - previousSample >= 25) {
+        const rejected = Math.max(0, currentInput - currentTransmitted);
+        rejectedHistory.shift(); rejectedHistory.push(rejected);
+        transmittedHistory.shift(); transmittedHistory.push(currentTransmitted);
+        previousSample = now;
+      }
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      context.clearRect(0, 0, width, height);
+      const waveCenter = height * 0.5;
+      context.beginPath(); context.moveTo(0, waveCenter); context.lineTo(width, waveCenter);
+      context.strokeStyle = "rgba(126, 143, 174, .10)"; context.lineWidth = 1; context.stroke();
+      ribbon(rejectedHistory, waveCenter, height * 0.38, "rgba(126, 143, 174, .18)", "rgba(151, 166, 193, .34)");
+      ribbon(transmittedHistory, waveCenter, height * 0.38, "rgba(19, 231, 176, .24)", "rgba(28, 240, 184, .9)");
+      animationFrame = requestAnimationFrame(draw);
+    };
+    animationFrame = requestAnimationFrame(draw);
+    return () => { cancelAnimationFrame(animationFrame); observer.disconnect(); };
+  }, []);
+
+  return <div className="audio-waveform"><div className="audio-waveform-heading"><span className="setting-label">Активность микрофона</span><span className="wave-legend"><i className="transmitted" />Передаётся<i className="rejected" />Отсечено</span></div><canvas ref={canvasRef} role="img" aria-label="Индикатор передаваемого и отсечённого звука" /></div>;
 }
 
 function DeviceSelect({ id, label, devices, value, disabled, onChange }: { id: string; label: string; devices: AudioDeviceDTO[]; value: string; disabled: boolean; onChange: (id: string) => Promise<void> }) {

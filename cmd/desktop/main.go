@@ -15,6 +15,7 @@ import (
 func init() {
 	application.RegisterEvent[bool]("client-state-changed")
 	application.RegisterEvent[bool]("client-event-log-changed")
+	application.RegisterEvent[wailsui.AudioMeterDTO]("audio-meter")
 }
 
 func main() {

@@ -16,6 +16,7 @@ import (
 // completed and no later send can use an old capture epoch, even after unmute.
 type AudioControlState struct {
 	mu              sync.Mutex
+	meterMu         sync.RWMutex
 	sendMu          sync.Mutex
 	muted, deafened bool
 	rnnoiseEnabled  bool
@@ -27,6 +28,16 @@ type AudioControlState struct {
 	playbackEpoch   uint64
 	player          audio.DeafenPlayer
 	onChange        func()
+	meter           AudioMeterSample
+}
+
+// AudioMeterSample contains normalized microphone levels without retaining or
+// exposing PCM samples. Input is measured before filters; Transmitted is the
+// processed signal only while the voice gate lets audio through.
+type AudioMeterSample struct {
+	Input       float32
+	Transmitted float32
+	Sequence    uint64
 }
 
 func NewAudioControlState(onChange func()) *AudioControlState {
@@ -36,6 +47,30 @@ func NewAudioControlState(onChange func()) *AudioControlState {
 		vadMode:        voicegate.ModeHybrid,
 		vadSensitivity: voicegate.DefaultSensitivity,
 	}
+}
+
+func (a *AudioControlState) SetAudioMeter(input, transmitted float32) {
+	a.meterMu.Lock()
+	a.meter.Input = clampMeterLevel(input)
+	a.meter.Transmitted = clampMeterLevel(transmitted)
+	a.meter.Sequence++
+	a.meterMu.Unlock()
+}
+
+func (a *AudioControlState) AudioMeterSnapshot() AudioMeterSample {
+	a.meterMu.RLock()
+	defer a.meterMu.RUnlock()
+	return a.meter
+}
+
+func clampMeterLevel(value float32) float32 {
+	if value < 0 || math.IsNaN(float64(value)) {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func (a *AudioControlState) RNNoiseEnabled() bool {

@@ -9,6 +9,7 @@ export {
 export type {
     AudioDeviceDTO,
     AudioDevicesDTO,
+    AudioMeterDTO,
     AudioProfileDTO,
     AudioStateDTO,
     ChannelDTO,
