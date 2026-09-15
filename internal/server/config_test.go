@@ -17,18 +17,18 @@ func (function channelSourceFunc) Load(ctx context.Context) (ServerDefinition, e
 	return function(ctx)
 }
 
-func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
+func TestBootstrapHubUsesOnlyBuiltinDefaultChannel(t *testing.T) {
 	hub, err := BootstrapHub(context.Background(), BuiltinBootstrapSource{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	channels := hub.ListChannels()
-	if len(channels) != 2 {
-		t.Fatalf("channel count = %d, want 2", len(channels))
+	if len(channels) != 1 {
+		t.Fatalf("channel count = %d, want 1", len(channels))
 	}
-	main := testChannelNamed(t, hub.ListChannels(), "main")
-	if main.ID != 2 || main.ParentID != 0 || main.Position != 10 {
-		t.Fatalf("main channel = %+v", main)
+	defaultChannel := channels[0]
+	if defaultChannel.ID != 1 || defaultChannel.Name != "default" || defaultChannel.ParentID != 0 {
+		t.Fatalf("default channel = %+v", defaultChannel)
 	}
 
 	alice, err := hub.CreateSession("alice", nil)
@@ -39,10 +39,10 @@ func TestBootstrapHubUsesBuiltinMainChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.JoinChannel(alice.ID, main.ID); err != nil {
+	if err := hub.JoinChannel(alice.ID, defaultChannel.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.JoinChannel(bob.ID, main.ID); err != nil {
+	if err := hub.JoinChannel(bob.ID, defaultChannel.ID); err != nil {
 		t.Fatal(err)
 	}
 	recipients, err := hub.RecipientsFor(alice.ID)
@@ -82,7 +82,7 @@ func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	music := testChannelNamed(t, hub.ListChannels(), "music")
 	afk := testChannelNamed(t, hub.ListChannels(), "afk")
 
-	if main.ID != 2 || gaming.ID != 3 || music.ID != 4 || afk.ID != 5 {
+	if main.ID != 1 || gaming.ID != 2 || music.ID != 3 || afk.ID != 4 {
 		t.Fatalf("parent-first IDs = main:%d gaming:%d music:%d afk:%d", main.ID, gaming.ID, music.ID, afk.ID)
 	}
 	if gaming.ParentID != main.ID || music.ParentID != main.ID || afk.ParentID != 0 {
@@ -93,7 +93,7 @@ func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	}
 
 	channels := hub.ListChannels()
-	wantIDs := []domain.ChannelID{1, afk.ID, main.ID, gaming.ID, music.ID}
+	wantIDs := []domain.ChannelID{afk.ID, main.ID, gaming.ID, music.ID}
 	for index, wantID := range wantIDs {
 		if channels[index].ID != wantID {
 			t.Fatalf("sorted channel[%d] ID = %d, want %d", index, channels[index].ID, wantID)
@@ -101,14 +101,10 @@ func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	}
 }
 
-func TestJSONBootstrapSourceAcceptsEmptyChannelList(t *testing.T) {
+func TestJSONBootstrapSourceRejectsEmptyChannelList(t *testing.T) {
 	path := writeTestConfig(t, `{"server":{"name":"Test Server"},"channels": []}`)
-	hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if channels := hub.ListChannels(); len(channels) != 1 || channels[0].Name != "default" {
-		t.Fatalf("channels = %+v, want only default", channels)
+	if hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path}); hub != nil || err == nil || !strings.Contains(err.Error(), "at least one channel") {
+		t.Fatalf("BootstrapHub() = (%v, %v), want empty-channel error", hub, err)
 	}
 }
 

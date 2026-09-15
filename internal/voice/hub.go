@@ -57,7 +57,7 @@ type OperationalSnapshot struct {
 }
 
 func NewHub() *Hub {
-	hub, err := newHubWithServerInfo(randomSessionID, domain.ServerInfo{Name: DefaultServerName})
+	hub, err := newHubWithServerInfo(randomSessionID, domain.ServerInfo{Name: DefaultServerName}, true)
 	if err != nil {
 		panic(err)
 	}
@@ -65,7 +65,7 @@ func NewHub() *Hub {
 }
 
 func newHub(newSessionID sessionIDGenerator) *Hub {
-	hub, err := newHubWithServerInfo(newSessionID, domain.ServerInfo{Name: DefaultServerName})
+	hub, err := newHubWithServerInfo(newSessionID, domain.ServerInfo{Name: DefaultServerName}, true)
 	if err != nil {
 		panic(err)
 	}
@@ -73,10 +73,16 @@ func newHub(newSessionID sessionIDGenerator) *Hub {
 }
 
 func NewHubWithServerInfo(info domain.ServerInfo) (*Hub, error) {
-	return newHubWithServerInfo(randomSessionID, info)
+	return newHubWithServerInfo(randomSessionID, info, true)
 }
 
-func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInfo) (*Hub, error) {
+// NewEmptyHubWithServerInfo creates a hub whose complete channel tree will be
+// supplied by an external bootstrap source.
+func NewEmptyHubWithServerInfo(info domain.ServerInfo) (*Hub, error) {
+	return newHubWithServerInfo(randomSessionID, info, false)
+}
+
+func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInfo, includeDefault bool) (*Hub, error) {
 	if newSessionID == nil {
 		panic("session ID generator is required")
 	}
@@ -87,22 +93,26 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		return nil, fmt.Errorf("%w: server name contains control characters", ErrInvalidServerInfo)
 	}
 
-	defaultChannel := domain.Channel{
-		ID:    DefaultChannelID,
-		Name:  DefaultChannelName,
-		Type:  domain.ChannelTypePermanent,
-		Audio: domain.DefaultAudioProfile(),
-	}
-
-	return &Hub{
+	hub := &Hub{
 		sessions:      make(map[uint64]*Session),
-		channels:      map[domain.ChannelID]*domain.Channel{DefaultChannelID: &defaultChannel},
+		channels:      make(map[domain.ChannelID]*domain.Channel),
 		newSessionID:  newSessionID,
-		nextChannelID: DefaultChannelID + 1,
-		revision:      1,
+		nextChannelID: DefaultChannelID,
 		serverInfo:    info,
 		eventReady:    make(chan struct{}, 1),
-	}, nil
+	}
+	if includeDefault {
+		defaultChannel := domain.Channel{
+			ID:    DefaultChannelID,
+			Name:  DefaultChannelName,
+			Type:  domain.ChannelTypePermanent,
+			Audio: domain.DefaultAudioProfile(),
+		}
+		hub.channels[DefaultChannelID] = &defaultChannel
+		hub.nextChannelID = DefaultChannelID + 1
+		hub.revision = 1
+	}
+	return hub, nil
 }
 
 func (h *Hub) Add(s *Session) {

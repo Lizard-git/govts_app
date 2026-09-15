@@ -45,9 +45,7 @@ func (BuiltinBootstrapSource) Load(ctx context.Context) (ServerDefinition, error
 		return ServerDefinition{}, err
 	}
 	return ServerDefinition{Info: domain.ServerInfo{Name: voice.DefaultServerName}, Channels: []ChannelDefinition{{
-		Name:     "main",
-		Topic:    "Main voice channel",
-		Position: 10,
+		Name: voice.DefaultChannelName,
 	}}}, nil
 }
 
@@ -121,6 +119,9 @@ func (source JSONBootstrapSource) Load(ctx context.Context) (ServerDefinition, e
 	if !utf8.ValidString(config.Server.Name) || config.Server.Name == "" || len(config.Server.Name) > domain.MaxServerNameBytes || strings.TrimSpace(config.Server.Name) != config.Server.Name {
 		return ServerDefinition{}, fmt.Errorf("decode server config %q: server name must be valid UTF-8, trimmed, and 1..%d bytes", source.Path, domain.MaxServerNameBytes)
 	}
+	if len(config.Channels) == 0 {
+		return ServerDefinition{}, fmt.Errorf("decode server config %q: channels must contain at least one channel", source.Path)
+	}
 
 	return ServerDefinition{Info: domain.ServerInfo{Name: config.Server.Name}, Channels: definitionsFromSpecs(config.Channels)}, nil
 }
@@ -136,8 +137,11 @@ func BootstrapHub(ctx context.Context, source BootstrapSource) (*voice.Hub, erro
 	if err := validateBootstrapDefinitions(ctx, definition.Channels); err != nil {
 		return nil, err
 	}
+	if len(definition.Channels) == 0 {
+		return nil, errors.New("server definition must contain at least one channel")
+	}
 
-	hub, err := voice.NewHubWithServerInfo(definition.Info)
+	hub, err := voice.NewEmptyHubWithServerInfo(definition.Info)
 	if err != nil {
 		return nil, fmt.Errorf("validate server definition: %w", err)
 	}

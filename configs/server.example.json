@@ -1,0 +1,27 @@
+{
+  "server": {
+    "name": "Il Bar sul Bord del Mondo"
+  },
+  "channels": [
+    {
+      "name": "main",
+      "topic": "Основной голосовой канал",
+      "position": 10,
+      "max_users": 0,
+      "children": [
+        {
+          "name": "Private I",
+          "topic": "Комната 1",
+          "position": 10,
+          "max_users": 10
+        },
+        {
+          "name": "Private II",
+          "topic": "Комната 2",
+          "position": 20,
+          "max_users": 6
+        }
+      ]
+    }
+  ]
+}
