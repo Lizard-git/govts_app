@@ -25,7 +25,7 @@ const (
 	samplesPerFrame = 960
 )
 
-func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, playbackOutput *audio.OtoOutput, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
 	output = &lockedOutput{writer: output}
 	noticeOutput = &lockedOutput{writer: noticeOutput}
 	sessionID := state.SessionID()
@@ -64,7 +64,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return fmt.Errorf("create microphone voice gate: %w", err)
 	}
-	player, err := playbackOutput.NewPlayer()
+	player, err := audio.NewSwitchablePlayer(codecConfig, devices.PlaybackID)
 	if err != nil {
 		return fmt.Errorf("create audio player: %w", err)
 	}
@@ -192,7 +192,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		logger.Printf("reconnected; channel restored: id=%d", state.ChannelID())
 	}
 	state.SetConnectionStatus(voiceclient.ConnectionConnected)
-	recorder, err := audio.NewMalgoRecorder(codecConfig)
+	recorder, err := audio.NewSwitchableRecorder(codecConfig, devices.CaptureID)
 	if err != nil {
 		return finish(fmt.Errorf("create audio recorder: %w", err))
 	}
@@ -204,6 +204,27 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh, state.Audio) })
+	})
+	supervisor.Go(func(ctx context.Context) error {
+		current := devices
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case request := <-audioDeviceChanges:
+				var changeErr error
+				if request.selection.CaptureID != current.CaptureID {
+					changeErr = recorder.Switch(request.selection.CaptureID)
+				}
+				if changeErr == nil && request.selection.PlaybackID != current.PlaybackID {
+					changeErr = player.Switch(request.selection.PlaybackID)
+				}
+				if changeErr == nil {
+					current = request.selection
+				}
+				request.done <- changeErr
+			}
+		}
 	})
 	if onReady != nil {
 		onReady()

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
 import { Service } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
-import type { ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import type { AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
 import { buildChannelGroups, mergeEventTail } from "./model";
 
 type Page = "channels" | "settings";
@@ -67,9 +67,11 @@ function App() {
       <div className="brand-mark" aria-label="Govots">G</div>
       <nav aria-label="Основная навигация">
         <button className={page === "channels" ? "nav-button active" : "nav-button"} onClick={() => setPage("channels")}><span aria-hidden="true">◫</span><span>Каналы</span></button>
-        <button className={page === "settings" ? "nav-button active" : "nav-button"} onClick={() => setPage("settings")}><span aria-hidden="true">⚙</span><span>Настройки</span></button>
       </nav>
       <div className="sidebar-spacer" />
+      <nav className="sidebar-secondary" aria-label="Настройки клиента">
+        <button className={page === "settings" ? "nav-button active" : "nav-button"} onClick={() => setPage("settings")}><span aria-hidden="true">⚙</span><span>Настройки</span></button>
+      </nav>
       <button className="disconnect-button" onClick={() => void invoke(() => Service.Disconnect())}>Отключиться</button>
     </aside>
     <main className="main-area">
@@ -165,16 +167,61 @@ function EventPanel({ events, onClear }: { events: ClientEventDTO[]; onClear: ()
 
 function SettingsPage({ view, invoke }: { view: ClientViewDTO; invoke: (operation: () => Promise<unknown>) => Promise<void> }) {
   const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity); useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
+  const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
+  const [devicesError, setDevicesError] = useState("");
+  const [devicePending, setDevicePending] = useState(false);
+  const loadDevices = useCallback(async () => {
+    try {
+      const next = await Service.AudioDevices();
+      next.capture ??= [];
+      next.playback ??= [];
+      setDevices(next);
+      setDevicesError("");
+    } catch (error) { setDevicesError(errorText(error)); }
+  }, []);
+  useEffect(() => { void loadDevices(); }, [loadDevices]);
+  const selectDevice = async (kind: "capture" | "playback", id: string) => {
+    if (devicePending) return;
+    setDevicePending(true); setDevicesError("");
+    try {
+      if (kind === "capture") await Service.SetCaptureDevice(id);
+      else await Service.SetPlaybackDevice(id);
+      await loadDevices();
+    } catch (error) { setDevicesError(errorText(error)); }
+    finally { setDevicePending(false); }
+  };
   return <section className="settings-page"><div className="settings-heading"><p className="eyebrow">ПАРАМЕТРЫ КЛИЕНТА</p><h2>Настройки</h2></div>
-    <section className="settings-card"><h3>Микрофон</h3><div className="setting-block"><span className="setting-label">Устройство захвата звука</span><div className="device-field"><span aria-hidden="true">♩</span><strong>Устройство по умолчанию</strong><small>Выбор устройства появится позднее</small></div></div>
+    {devicesError && <div className="device-error" role="alert">Не удалось получить аудиоустройства: {devicesError} <button className="text-button" onClick={() => void loadDevices()}>Повторить</button></div>}
+    <section className="settings-card"><h3>Микрофон</h3><DeviceSelect id="capture-device" label="Устройство захвата звука" devices={devices?.capture ?? []} value={devices?.selectedCapture ?? ""} disabled={!devices || devicePending} onChange={(id) => selectDevice("capture", id)} />
       <SettingToggle title="Шумоподавление RNNoise" description="Убирает постоянный фоновый шум до анализа голосовой активности." checked={view.audio.rnnoiseEnabled} onChange={(value) => invoke(() => Service.SetRNNoiseEnabled(value))} />
       <SettingToggle title="Обнаружение голосовой активности (VAD)" description="Микрофон передаёт звук автоматически, когда обнаружена речь." checked={view.audio.vadEnabled} onChange={(value) => invoke(() => Service.SetVADEnabled(value))} />
       <div className="mode-row"><label htmlFor="vad-mode">Режим</label><select id="vad-mode" value={view.audio.vadMode} disabled={!view.audio.vadEnabled} onChange={(event) => void invoke(() => Service.SetVADMode(event.target.value))}><option value="level">По громкости</option><option value="vad">Распознавание речи</option><option value="hybrid">Гибридный</option></select><span className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? "Передача" : "Ожидание речи"}</span></div>
       <div className="sensitivity-setting"><div><span className="setting-label">Чувствительность</span><output>{Math.round(sensitivity * 100)}%</output></div><input aria-label="Чувствительность VAD" type="range" min="0" max="1" step="0.01" value={sensitivity} disabled={!view.audio.vadEnabled} onChange={(event) => setSensitivity(Number(event.target.value))} onPointerUp={() => void invoke(() => Service.SetVADSensitivity(sensitivity))} onKeyUp={() => void invoke(() => Service.SetVADSensitivity(sensitivity))} /><p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
     </section>
-    <section className="settings-card compact-card"><h3>Воспроизведение</h3><SettingToggle title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится." checked={view.audio.deafened} onChange={(value) => invoke(() => Service.SetDeafened(value))} /></section>
+    <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device" label="Устройство вывода звука" devices={devices?.playback ?? []} value={devices?.selectedPlayback ?? ""} disabled={!devices || devicePending} onChange={(id) => selectDevice("playback", id)} /><SettingToggle title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится." checked={view.audio.deafened} onChange={(value) => invoke(() => Service.SetDeafened(value))} /></section>
     <section className="settings-card compact-card"><h3>Качество голоса</h3><div className="profile-row"><div><span>Профиль</span><strong>Opus Voice</strong></div><div><span>Формат</span><strong>48 кГц · Mono · 20 мс</strong></div></div></section>
   </section>;
+}
+
+function DeviceSelect({ id, label, devices, value, disabled, onChange }: { id: string; label: string; devices: AudioDeviceDTO[]; value: string; disabled: boolean; onChange: (id: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const selected = devices.find((device) => device.id === value);
+  const selectedName = selected ? `${selected.name}${selected.isDefault ? " — системное по умолчанию" : ""}` : "Системное устройство по умолчанию";
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+  const choose = (deviceID: string) => {
+    setOpen(false);
+    if (deviceID !== value) void onChange(deviceID);
+  };
+  return <div className="device-select"><span className="setting-label" id={`${id}-label`}>{label}</span><div className="device-select-control"><button id={id} className="device-select-trigger" type="button" disabled={disabled} aria-labelledby={`${id}-label ${id}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}><span>{selectedName}</span></button>{open && <div className="device-options" role="listbox" aria-labelledby={`${id}-label`}><button type="button" role="option" aria-selected={value === ""} className={value === "" ? "selected" : ""} onClick={() => choose("")}>Системное устройство по умолчанию</button>{devices.map((device) => <button type="button" role="option" aria-selected={device.id === value} className={device.id === value ? "selected" : ""} onClick={() => choose(device.id)} key={device.id}>{device.name}{device.isDefault ? <small>Системное по умолчанию</small> : null}</button>)}</div>}</div></div>;
 }
 
 function VoiceBar({ view, invoke }: { view: ClientViewDTO; invoke: (operation: () => Promise<unknown>) => Promise<void> }) {

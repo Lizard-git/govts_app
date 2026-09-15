@@ -23,6 +23,10 @@ type MalgoRecorder struct {
 }
 
 func NewMalgoRecorder(config CodecConfig) (*MalgoRecorder, error) {
+	return NewMalgoRecorderForDevice(config, "")
+}
+
+func NewMalgoRecorderForDevice(config CodecConfig, deviceID string) (*MalgoRecorder, error) {
 	ctx, err := malgo.InitContext(
 		nil,
 		malgo.ContextConfig{},
@@ -36,6 +40,13 @@ func NewMalgoRecorder(config CodecConfig) (*MalgoRecorder, error) {
 	deviceConfig.Capture.Format = malgo.FormatS16
 	deviceConfig.Capture.Channels = uint32(config.Channels)
 	deviceConfig.SampleRate = uint32(config.SampleRate)
+	releaseDeviceID, err := configureDeviceID(&deviceConfig.Capture.DeviceID, deviceID)
+	if err != nil {
+		_ = ctx.Uninit()
+		ctx.Free()
+		return nil, err
+	}
+	defer releaseDeviceID()
 
 	dataCh := make(chan []byte, 8)
 

@@ -96,6 +96,28 @@ func (s *Service) SetVADSensitivity(value float32) error {
 	return s.client.SetVADSensitivity(value)
 }
 
+func (s *Service) AudioDevices() (AudioDevicesDTO, error) {
+	devices, err := s.client.AudioDevices()
+	if err != nil {
+		return AudioDevicesDTO{}, err
+	}
+	selected := s.client.AudioDeviceSelection()
+	return AudioDevicesDTO{
+		Capture:          audioDeviceDTOs(devices.Capture),
+		Playback:         audioDeviceDTOs(devices.Playback),
+		SelectedCapture:  selected.CaptureID,
+		SelectedPlayback: selected.PlaybackID,
+	}, nil
+}
+
+func (s *Service) SetCaptureDevice(id string) error {
+	return s.client.SetCaptureDevice(strings.TrimSpace(id))
+}
+
+func (s *Service) SetPlaybackDevice(id string) error {
+	return s.client.SetPlaybackDevice(strings.TrimSpace(id))
+}
+
 func StartEventBridge(ctx context.Context, app *application.App, client *clientapp.App) func() {
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	stateChanges, unsubscribeState := client.Subscribe(bridgeCtx)

@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function AudioDevices(): $CancellablePromise<$models.AudioDevicesDTO> {
+    return $Call.ByID(689973808);
+}
+
 export function Connect(request: $models.ConnectRequest): $CancellablePromise<void> {
     return $Call.ByID(1685769029, request);
 }
@@ -25,12 +29,20 @@ export function JoinChannel(channelID: string): $CancellablePromise<void> {
     return $Call.ByID(136141940, channelID);
 }
 
+export function SetCaptureDevice(id: string): $CancellablePromise<void> {
+    return $Call.ByID(691731989, id);
+}
+
 export function SetDeafened(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(4111513517, value);
 }
 
 export function SetMuted(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(2056801774, value);
+}
+
+export function SetPlaybackDevice(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2957827556, id);
 }
 
 export function SetRNNoiseEnabled(value: boolean): $CancellablePromise<void> {

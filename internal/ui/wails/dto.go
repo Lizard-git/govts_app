@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"example.com/go-voice-mvp/internal/audio"
 	voiceclient "example.com/go-voice-mvp/internal/client"
 	"example.com/go-voice-mvp/internal/clientapp"
 	"example.com/go-voice-mvp/internal/domain"
@@ -49,6 +50,19 @@ type AudioStateDTO struct {
 	VADMode        string  `json:"vadMode"`
 	VADSensitivity float32 `json:"vadSensitivity"`
 	VADOpen        bool    `json:"vadOpen"`
+}
+
+type AudioDeviceDTO struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+type AudioDevicesDTO struct {
+	Capture          []AudioDeviceDTO `json:"capture"`
+	Playback         []AudioDeviceDTO `json:"playback"`
+	SelectedCapture  string           `json:"selectedCapture"`
+	SelectedPlayback string           `json:"selectedPlayback"`
 }
 
 type ClientViewDTO struct {
@@ -151,6 +165,14 @@ func audioProfileDTO(profile domain.AudioProfile) AudioProfileDTO {
 		Bitrate:         profile.Bitrate,
 		Application:     application,
 	}
+}
+
+func audioDeviceDTOs(devices []audio.DeviceInfo) []AudioDeviceDTO {
+	result := make([]AudioDeviceDTO, 0, len(devices))
+	for _, device := range devices {
+		result = append(result, AudioDeviceDTO{ID: device.ID, Name: device.Name, IsDefault: device.IsDefault})
+	}
+	return result
 }
 
 func connectionStatus(status voiceclient.ConnectionStatus) string {

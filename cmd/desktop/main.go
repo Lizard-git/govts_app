@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -50,7 +51,7 @@ func main() {
 	app.OnShutdown(shutdown)
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "Govots",
+		Title:            fmt.Sprintf("Govots %s", applicationVersion()),
 		Width:            1180,
 		Height:           760,
 		MinWidth:         900,

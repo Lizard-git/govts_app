@@ -20,12 +20,23 @@ import (
 )
 
 const handshakeAttemptTimeout = 3 * time.Second
+const audioDeviceChangeTimeout = 10 * time.Second
 
 var (
 	ErrAlreadyConnected = errors.New("a connection is already active")
 	ErrNotConnected     = errors.New("client is not connected")
 	ErrClosed           = errors.New("client application is closed")
 )
+
+type AudioDeviceSelection struct {
+	CaptureID  string
+	PlaybackID string
+}
+
+type audioDeviceChange struct {
+	selection AudioDeviceSelection
+	done      chan error
+}
 
 type Options struct {
 	Commands <-chan voiceclient.Command
@@ -40,18 +51,18 @@ type ConnectOptions struct {
 }
 
 type App struct {
-	lifetimeCtx    context.Context
-	cancelLifetime context.CancelFunc
-	state          *voiceclient.State
-	events         *EventLog
-	commands       <-chan voiceclient.Command
-	output         io.Writer
-	logger         *log.Logger
-	newAudioOutput func(audio.CodecConfig) (*audio.OtoOutput, error)
-
-	audioOutputOnce sync.Once
-	audioOutput     *audio.OtoOutput
-	audioOutputErr  error
+	lifetimeCtx         context.Context
+	cancelLifetime      context.CancelFunc
+	state               *voiceclient.State
+	events              *EventLog
+	commands            <-chan voiceclient.Command
+	output              io.Writer
+	logger              *log.Logger
+	listAudioDevices    func() (audio.DeviceList, error)
+	audioDeviceChangeMu sync.Mutex
+	audioDeviceChanges  chan audioDeviceChange
+	captureDeviceID     string
+	playbackDeviceID    string
 
 	mu          sync.Mutex
 	closed      bool
@@ -74,14 +85,15 @@ func New(options Options) *App {
 		options.Logger = log.New(io.Discard, "", 0)
 	}
 	return &App{
-		lifetimeCtx:    ctx,
-		cancelLifetime: cancel,
-		state:          state,
-		events:         newEventLog(),
-		commands:       options.Commands,
-		output:         options.Output,
-		logger:         options.Logger,
-		newAudioOutput: audio.NewOtoOutput,
+		lifetimeCtx:        ctx,
+		cancelLifetime:     cancel,
+		state:              state,
+		events:             newEventLog(),
+		commands:           options.Commands,
+		output:             options.Output,
+		logger:             options.Logger,
+		listAudioDevices:   audio.ListDevices,
+		audioDeviceChanges: make(chan audioDeviceChange),
 	}
 }
 
@@ -187,12 +199,9 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name s
 		a.mu.Lock()
 		a.currentConn = conn
 		a.mu.Unlock()
-		playbackOutput, err := a.playbackOutput()
-		if err != nil {
-			return fmt.Errorf("create audio output: %w", err)
-		}
+		devices := a.AudioDeviceSelection()
 		noticeOutput := io.MultiWriter(a.output, eventWriter{log: a.events})
-		sessionErr := runSession(ctx, conn, a.state, playbackOutput, name, a.preference, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
+		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, a.preference, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
 			backoff.Reset()
 			if everConnected {
 				a.events.append("connection", "Соединение восстановлено", uint64(a.state.SnapshotView().Revision))
@@ -222,14 +231,89 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name s
 	}
 }
 
-// playbackOutput returns the process-wide Oto context owned by this App.
-// Oto does not support creating a second context, even after every player from
-// the first context has been closed, so disconnect/reconnect must reuse it.
-func (a *App) playbackOutput() (*audio.OtoOutput, error) {
-	a.audioOutputOnce.Do(func() {
-		a.audioOutput, a.audioOutputErr = a.newAudioOutput(clientAudioConfig())
-	})
-	return a.audioOutput, a.audioOutputErr
+func (a *App) AudioDevices() (audio.DeviceList, error) { return a.listAudioDevices() }
+
+func (a *App) AudioDeviceSelection() AudioDeviceSelection {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return AudioDeviceSelection{CaptureID: a.captureDeviceID, PlaybackID: a.playbackDeviceID}
+}
+
+func (a *App) SetCaptureDevice(id string) error {
+	return a.setAudioDevice(id, true)
+}
+
+func (a *App) SetPlaybackDevice(id string) error {
+	return a.setAudioDevice(id, false)
+}
+
+func (a *App) setAudioDevice(id string, capture bool) error {
+	a.audioDeviceChangeMu.Lock()
+	defer a.audioDeviceChangeMu.Unlock()
+
+	devices, err := a.listAudioDevices()
+	if err != nil {
+		return err
+	}
+	available := devices.Playback
+	if capture {
+		available = devices.Capture
+	}
+	if id != "" {
+		found := false
+		for _, device := range available {
+			if device.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("audio device is no longer available")
+		}
+	}
+
+	a.mu.Lock()
+	selection := AudioDeviceSelection{CaptureID: a.captureDeviceID, PlaybackID: a.playbackDeviceID}
+	changed := (capture && selection.CaptureID != id) || (!capture && selection.PlaybackID != id)
+	active := a.active
+	a.mu.Unlock()
+	if !changed {
+		return nil
+	}
+	if capture {
+		selection.CaptureID = id
+	} else {
+		selection.PlaybackID = id
+	}
+
+	if active && a.state.ConnectionStatus() == voiceclient.ConnectionConnected {
+		request := audioDeviceChange{selection: selection, done: make(chan error, 1)}
+		timer := time.NewTimer(audioDeviceChangeTimeout)
+		defer timer.Stop()
+		select {
+		case a.audioDeviceChanges <- request:
+		case <-timer.C:
+			return errors.New("timed out while applying audio device")
+		case <-a.lifetimeCtx.Done():
+			return ErrClosed
+		}
+		select {
+		case err := <-request.done:
+			if err != nil {
+				return err
+			}
+		case <-timer.C:
+			return errors.New("timed out while applying audio device")
+		case <-a.lifetimeCtx.Done():
+			return ErrClosed
+		}
+	}
+	a.mu.Lock()
+	a.captureDeviceID = selection.CaptureID
+	a.playbackDeviceID = selection.PlaybackID
+	a.mu.Unlock()
+	a.events.append("audio", "Аудиоустройство изменено", 0)
+	return nil
 }
 
 func (a *App) waitForReconnect(ctx context.Context, delay time.Duration) bool {
