@@ -58,7 +58,7 @@ func EncodeLoopWithPipeline(
 	if len(states) > 0 {
 		defer func() {
 			states[0].Audio.SetVADOpen(false)
-			states[0].Audio.SetAudioMeter(0, 0)
+			states[0].Audio.SetAudioMeter(0, 0, 0)
 		}()
 	}
 
@@ -151,7 +151,7 @@ func EncodeLoopWithPipeline(
 				if len(frames) > 0 {
 					transmittedLevel = processedLevel
 				}
-				states[0].Audio.SetAudioMeter(rawLevel, transmittedLevel)
+				states[0].Audio.SetAudioMeter(rawLevel, processedLevel, transmittedLevel)
 			}
 
 			for _, released := range frames {
@@ -255,7 +255,7 @@ func RecordLoop(
 		if len(controls) > 0 {
 			muted, _, current := controls[0].Snapshot()
 			if muted || current != epoch {
-				controls[0].SetAudioMeter(normalizedMeterLevel(vad.LevelDBFS(frame.Samples)), 0)
+				controls[0].SetAudioMeter(normalizedMeterLevel(vad.LevelDBFS(frame.Samples)), 0, 0)
 				continue
 			}
 		}

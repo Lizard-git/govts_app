@@ -32,10 +32,11 @@ type AudioControlState struct {
 }
 
 // AudioMeterSample contains normalized microphone levels without retaining or
-// exposing PCM samples. Input is measured before filters; Transmitted is the
-// processed signal only while the voice gate lets audio through.
+// exposing PCM samples. Input is measured before filters, Processed after the
+// filter, and Transmitted only while the voice gate lets audio through.
 type AudioMeterSample struct {
 	Input       float32
+	Processed   float32
 	Transmitted float32
 	Sequence    uint64
 }
@@ -49,9 +50,10 @@ func NewAudioControlState(onChange func()) *AudioControlState {
 	}
 }
 
-func (a *AudioControlState) SetAudioMeter(input, transmitted float32) {
+func (a *AudioControlState) SetAudioMeter(input, processed, transmitted float32) {
 	a.meterMu.Lock()
 	a.meter.Input = clampMeterLevel(input)
+	a.meter.Processed = clampMeterLevel(processed)
 	a.meter.Transmitted = clampMeterLevel(transmitted)
 	a.meter.Sequence++
 	a.meterMu.Unlock()

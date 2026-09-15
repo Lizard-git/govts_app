@@ -37,14 +37,14 @@ func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {
 
 func TestAudioMeterClampsAndAdvancesSequence(t *testing.T) {
 	controls := NewAudioControlState(nil)
-	controls.SetAudioMeter(-1, 2)
+	controls.SetAudioMeter(-1, 0.4, 2)
 	first := controls.AudioMeterSnapshot()
-	if first.Input != 0 || first.Transmitted != 1 || first.Sequence != 1 {
+	if first.Input != 0 || first.Processed != 0.4 || first.Transmitted != 1 || first.Sequence != 1 {
 		t.Fatalf("first meter sample = %+v", first)
 	}
-	controls.SetAudioMeter(0.25, 0.5)
+	controls.SetAudioMeter(0.25, 0.35, 0.5)
 	second := controls.AudioMeterSnapshot()
-	if second.Input != 0.25 || second.Transmitted != 0.5 || second.Sequence != 2 {
+	if second.Input != 0.25 || second.Processed != 0.35 || second.Transmitted != 0.5 || second.Sequence != 2 {
 		t.Fatalf("second meter sample = %+v", second)
 	}
 }
