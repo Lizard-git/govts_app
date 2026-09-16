@@ -4,7 +4,6 @@
   background: #111827;
   font-synthesis: none;
   --window: #111827;
-  --sidebar: #151e30;
   --card: #1b263c;
   --card-strong: #202e49;
   --line: #2b3955;
@@ -35,7 +34,7 @@ h2 { margin: 0; font-size: 20px; }
 
 .connection-page { display: grid; min-height: 100%; place-items: center; padding: 32px; background: radial-gradient(circle at 50% 10%, #243553 0, var(--window) 48%); }
 .connection-card { width: min(470px, 100%); padding: 38px; border: 1px solid rgba(122, 148, 196, .17); border-radius: 24px; background: rgba(25, 36, 57, .94); box-shadow: 0 30px 80px rgba(0, 0, 0, .35); }
-.connection-logo, .brand-mark { display: grid; place-items: center; color: #0e1826; font-weight: 900; background: linear-gradient(135deg, var(--accent), var(--accent-blue)); box-shadow: 0 9px 30px rgba(19, 231, 176, .17); }
+.connection-logo { display: grid; place-items: center; color: #0e1826; font-weight: 900; background: linear-gradient(135deg, var(--accent), var(--accent-blue)); box-shadow: 0 9px 30px rgba(19, 231, 176, .17); }
 .connection-logo { width: 54px; height: 54px; margin-bottom: 27px; border-radius: 18px; font-size: 27px; }
 .connection-card h1 { margin-bottom: 12px; font-size: 30px; }
 .lead { margin-bottom: 28px; color: var(--muted); line-height: 1.55; }
@@ -48,25 +47,19 @@ h2 { margin: 0; font-size: 20px; }
 .primary-button:disabled { cursor: not-allowed; opacity: .48; }
 .form-error, .error-banner { color: #ffd5da; border: 1px solid rgba(255, 108, 122, .35); background: rgba(255, 108, 122, .1); }
 .form-error { padding: 11px 13px; border-radius: 9px; font-size: 13px; }
-.connection-hint { margin: 18px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 
-.app-shell { display: grid; height: 100%; grid-template-columns: 184px minmax(0, 1fr); background: var(--window); }
-.sidebar { display: flex; min-width: 0; flex-direction: column; padding: 22px 14px 18px; border-right: 1px solid #202c43; background: var(--sidebar); }
-.brand-mark { width: 42px; height: 42px; margin: 0 9px 30px; border-radius: 14px; font-size: 21px; }
-.sidebar nav { display: grid; gap: 7px; }
-.nav-button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; border: 0; border-radius: 10px; color: #8998b6; background: transparent; cursor: pointer; text-align: left; }
-.nav-button:hover { color: var(--text); background: #1d2940; }
-.nav-button.active { color: var(--text); background: #24324c; box-shadow: inset 3px 0 var(--accent); }
-.nav-button span:first-child { width: 20px; color: #6f83aa; font-size: 18px; text-align: center; }
-.sidebar-spacer { flex: 1; }
-.sidebar-secondary { margin-bottom: 8px; }
-.disconnect-button, .text-button, .voice-control { border: 0; cursor: pointer; }
-.disconnect-button { padding: 10px; border: 1px solid #33415d; border-radius: 9px; color: #99a7c1; background: transparent; font-size: 12px; }
-.disconnect-button:hover { color: #ffd2d6; border-color: rgba(255, 108, 122, .5); }
+.app-shell { --main-gutter: 16px; height: 100%; background: var(--window); }
+.text-button, .voice-control { border: 0; cursor: pointer; }
 
-.main-area { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); padding: 14px 16px 0; overflow: hidden; }
-.status-bar { display: flex; min-width: 0; grid-row: 1; align-items: center; gap: 12px; padding: 0 2px 18px; }
-.status-bar > div:first-child { min-width: 0; margin-right: auto; }
+.main-area { position: relative; display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); padding: 14px var(--main-gutter) 0; overflow: hidden; }
+.status-bar { position: relative; display: flex; min-width: 0; grid-row: 1; align-items: center; gap: 12px; padding: 0 2px 18px; }
+.header-nav-button { display: flex; min-height: 36px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid #30405e; border-radius: 10px; color: #a8b5ce; background: #182338; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.header-nav-button:hover { color: white; background: #25334d; }
+.header-nav-button > span:first-child { color: #8194b7; font-size: 15px; }
+.status-bar > .header-nav-button:first-child { margin-right: auto; }
+.disconnect-button:hover { color: #ffd2d6; border-color: rgba(255, 108, 122, .5); background: rgba(255, 108, 122, .08); }
+.server-summary { position: absolute; left: 0; width: 62.2%; min-width: 0; padding-inline: 0px 24px; text-align: center; pointer-events: none; }
+.server-summary .eyebrow { text-align: center; }
 .status-bar h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill, .sync-pill { display: flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid #30405e; border-radius: 99px; color: #a8b5ce; background: #182338; font-size: 12px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #8390a8; }
@@ -191,13 +184,15 @@ h2 { margin: 0; font-size: 20px; }
 .voice-control { min-width: 96px; padding: 9px 11px; border-radius: 9px; color: #9eadc5; background: #22304a; font-size: 11px; }.voice-control:hover { color: white; }.voice-control.active { color: #ffd4d8; background: #58303b; }
 
 @media (max-width: 980px) {
-  .app-shell { grid-template-columns: 72px minmax(0, 1fr); }
-  .sidebar { padding-inline: 10px; }.brand-mark { margin-inline: 5px; }
-  .nav-button { justify-content: center; }.nav-button span:last-child, .disconnect-button { font-size: 0; }.disconnect-button::after { font-size: 17px; content: "↪"; }
+  .app-shell { --main-gutter: 14px; }
+  .header-nav-button > span:last-child { display: none; }
+  .server-summary { width: 61%; padding-inline: 62px 18px; }
   .channels-layout { grid-template-columns: minmax(0, 1.25fr) minmax(250px, .75fr); }
 }
 
 @media (max-width: 760px) {
-  .main-area { padding-inline: 14px; }.channels-layout { grid-template-columns: 1fr; }.channel-detail { display: none; }
+  .server-summary { position: static; width: auto; margin-right: auto; padding: 0; text-align: left; }
+  .server-summary .eyebrow { text-align: left; }
+  .channels-layout { grid-template-columns: 1fr; }.channel-detail { display: none; }
   .settings-page { margin-right: -14px; padding-right: 14px; }
 }
