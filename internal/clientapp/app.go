@@ -124,6 +124,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	a.runDone = done
 	a.lastError = ""
 	a.preference = newChannelPreference(options.InitialChannel)
+	a.events.clear()
 	a.events.append("connection", "Подключение к "+endpoint.String(), 0)
 	go a.run(runCtx, done, endpoint, options)
 	return nil

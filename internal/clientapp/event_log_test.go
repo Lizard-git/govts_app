@@ -39,6 +39,26 @@ func TestEventLogSubscriptionCoalesces(t *testing.T) {
 	cancel()
 }
 
+func TestEventLogClearRemovesEntriesAndPreservesSequence(t *testing.T) {
+	log := newEventLog()
+	log.append("server", "old event", 0)
+	oldSequence := log.after(0)[0].Sequence
+
+	log.clear()
+	if events := log.after(0); len(events) != 0 {
+		t.Fatalf("events after clear = %#v, want none", events)
+	}
+
+	log.append("connection", "new session", 0)
+	events := log.after(0)
+	if len(events) != 1 || events[0].Message != "new session" {
+		t.Fatalf("events after new append = %#v", events)
+	}
+	if events[0].Sequence <= oldSequence {
+		t.Fatalf("sequence after clear = %d, want greater than %d", events[0].Sequence, oldSequence)
+	}
+}
+
 func TestNoticeKind(t *testing.T) {
 	tests := []struct {
 		line string

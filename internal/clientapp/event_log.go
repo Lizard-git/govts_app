@@ -51,6 +51,12 @@ func (l *EventLog) append(kind, message string, revision uint64) {
 	l.mu.Unlock()
 }
 
+func (l *EventLog) clear() {
+	l.mu.Lock()
+	l.entries = nil
+	l.mu.Unlock()
+}
+
 func (l *EventLog) after(sequence uint64) []ClientEvent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
