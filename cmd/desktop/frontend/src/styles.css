@@ -150,10 +150,9 @@ h2 { margin: 0; font-size: 20px; }
 .switch input:checked + span { border-color: var(--accent); background: #0b5f50; }
 .switch input:checked + span::before { background: #16efb5; transform: translateX(18px); box-shadow: 0 0 9px rgba(19, 231, 176, .5); }
 .switch input:focus-visible + span { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
-.mode-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 2px 18px; }
-.mode-row label { font-size: 13px; font-weight: 700; }
-.mode-row select { min-width: 160px; padding: 8px 30px 8px 11px; border: 1px solid #334563; border-radius: 9px; color: white; background: #273550; }
-.mode-row select:disabled { opacity: .55; }
+.mode-select { margin-top: 8px; }
+.mode-select-heading { display: flex; align-items: center; }
+.mode-select-heading .setting-label { margin-bottom: 0; }
 .gate-indicator { margin-left: auto; color: #70819f; font-size: 11px; }
 .gate-indicator.open { color: var(--accent); }
 .sensitivity-setting { padding-top: 5px; }

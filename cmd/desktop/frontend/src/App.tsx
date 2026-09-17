@@ -1,12 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import type {
-    AudioDeviceDTO,
-    AudioDevicesDTO,
-    ChannelDTO,
-    ClientEventDTO,
-    ClientViewDTO,
-    ParticipantDTO
-} from "./api";
+import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
 import {buildChannelGroups, mergeEventTail} from "./model";
 
@@ -210,7 +203,10 @@ function StatusBar({view, page, onPageChange, invoke}: {
         disconnected: "Отключено"
     };
     return <header className="status-bar">
-        <button className="header-nav-button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}><span aria-hidden="true">{page === "settings" ? "←" : "⚙"}</span><span>{page === "settings" ? "К каналам" : "Настройки"}</span></button>
+        <button className="header-nav-button"
+                onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}><span
+            aria-hidden="true">{page === "settings" ? "←" : "⚙"}</span><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
+        </button>
         <div className="server-summary"><p className="eyebrow">СЕРВЕР</p><h1>{view.server.name || "Govts"}</h1></div>
         <div className="audio-control-island" role="group" aria-label="Управление звуком">
             <button className={`voice-control ${view.audio.muted ? "active" : ""}`} aria-pressed={view.audio.muted}
@@ -222,7 +218,9 @@ function StatusBar({view, page, onPageChange, invoke}: {
         <div className={`status-pill ${view.connectionStatus}`}><span
             className="status-dot"/>{labels[view.connectionStatus] ?? view.connectionStatus}</div>
         {!view.snapshotFresh && <div className="sync-pill">Синхронизация…</div>}
-        <button className="header-nav-button disconnect-button" onClick={() => void invoke(() => desktopAPI.disconnect())}><span aria-hidden="true">↪</span><span>Отключиться</span></button>
+        <button className="header-nav-button disconnect-button"
+                onClick={() => void invoke(() => desktopAPI.disconnect())}><span
+            aria-hidden="true">↪</span><span>Отключиться</span></button>
     </header>;
 }
 
@@ -429,32 +427,25 @@ function SettingsPage({view, invoke}: {
                                                                           value={devices?.selectedCapture ?? ""}
                                                                           disabled={!devices || devicePending}
                                                                           onChange={(id) => selectDevice("capture", id)}/>
-            <SettingToggle title="Шумоподавление RNNoise"
+            <SettingToggle title="Шумоподавление"
                            description="Убирает постоянный фоновый шум до анализа голосовой активности."
                            checked={view.audio.rnnoiseEnabled}
                            onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
-            <SensitivitySlider label="Чувствительность RNNoise"
+            <SensitivitySlider label="Интенсивность шумоподавления"
                                description="Чем выше значение, тем сильнее подавляется фоновый шум."
                                value={rnnoiseSensitivity} disabled={!view.audio.rnnoiseEnabled}
                                onChange={setRNNoiseSensitivity}
                                onCommit={(value) => invoke(() => desktopAPI.setRNNoiseSensitivity(value))}/>
-            <SettingToggle title="Обнаружение голосовой активности (VAD)"
-                           description="Микрофон передаёт звук автоматически, когда обнаружена речь."
+            <SettingToggle title="Обнаружение голоса (VAD)"
+                           description="Микрофон передаёт звук, когда обнаружена речь."
                            checked={view.audio.vadEnabled}
                            onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
-            <div className="mode-row"><label htmlFor="vad-mode">Режим</label><select id="vad-mode"
-                                                                                     value={view.audio.vadMode}
-                                                                                     disabled={!view.audio.vadEnabled}
-                                                                                     onChange={(event) => void invoke(() => desktopAPI.setVADMode(event.target.value))}>
-                <option value="level">По громкости</option>
-                <option value="vad">Распознавание речи</option>
-                <option value="hybrid">Гибридный</option>
-            </select><span
-                className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? "Передача" : "Ожидание речи"}</span>
-            </div>
+            <ModeSelect value={view.audio.vadMode} disabled={!view.audio.vadEnabled}
+                        open={view.audio.vadOpen}
+                        onChange={(value) => invoke(() => desktopAPI.setVADMode(value))}/>
             <div className="sensitivity-setting">
-                <div><span className="setting-label">Чувствительность</span>
-                    <output>{Math.round(sensitivity * 100)}%</output>
+                <div><span className="setting-label">Порог передачи звука</span>
+                    <output>{Math.round((1 - sensitivity) * 100)}%</output>
                 </div>
                 <p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
             <AudioWaveform sensitivity={sensitivity} disabled={!view.audio.vadEnabled}
@@ -672,6 +663,48 @@ function DeviceSelect({id, label, devices, value, disabled, onChange}: {
                                                  onClick={() => choose(device.id)}
                                                  key={device.id}>{device.name}{device.isDefault ?
                     <small>Системное по умолчанию</small> : null}</button>)}</div>}</div>
+    </div>;
+}
+
+function ModeSelect({value, disabled, open, onChange}: {
+    value: string;
+    disabled: boolean;
+    open: boolean;
+    onChange: (value: string) => Promise<void>;
+}) {
+    const [optionsOpen, setOptionsOpen] = useState(false);
+    const options = [
+        {value: "level", label: "По громкости"},
+        {value: "vad", label: "Распознавание речи"},
+        {value: "hybrid", label: "Гибридный"},
+    ];
+    const selectedName = options.find((option) => option.value === value)?.label ?? value;
+    useEffect(() => {
+        if (!optionsOpen) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setOptionsOpen(false);
+        };
+        window.addEventListener("keydown", closeOnEscape);
+        return () => window.removeEventListener("keydown", closeOnEscape);
+    }, [optionsOpen]);
+    const choose = (nextValue: string) => {
+        setOptionsOpen(false);
+        if (nextValue !== value) void onChange(nextValue);
+    };
+    return <div className="device-select mode-select">
+        <div className="mode-select-heading"><span className="setting-label" id="vad-mode-label">Режим</span><span
+            className={`gate-indicator ${open ? "open" : ""}`}>{open ? "Передача" : "Ожидание речи"}</span></div>
+        <div className="device-select-control">
+            <button id="vad-mode" className="device-select-trigger" type="button" disabled={disabled}
+                    aria-labelledby="vad-mode-label vad-mode" aria-haspopup="listbox" aria-expanded={optionsOpen}
+                    onClick={() => setOptionsOpen((current) => !current)}><span>{selectedName}</span></button>
+            {optionsOpen && <div className="device-options" role="listbox" aria-labelledby="vad-mode-label">
+                {options.map((option) => <button type="button" role="option" aria-selected={option.value === value}
+                                                 className={option.value === value ? "selected" : ""}
+                                                 onClick={() => choose(option.value)}
+                                                 key={option.value}>{option.label}</button>)}
+            </div>}
+        </div>
     </div>;
 }
 
