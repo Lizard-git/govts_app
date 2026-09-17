@@ -53,6 +53,10 @@ export function SetRNNoiseEnabled(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(1565027940, value);
 }
 
+export function SetRNNoiseSensitivity(value: number): $CancellablePromise<void> {
+    return $Call.ByID(245222922, value);
+}
+
 export function SetVADEnabled(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(2506937699, value);
 }

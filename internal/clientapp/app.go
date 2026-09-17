@@ -444,6 +444,10 @@ func (a *App) SetDeafened(value bool) error { return a.state.Audio.SetDeafened(v
 
 func (a *App) SetRNNoiseEnabled(value bool) { a.state.Audio.SetRNNoiseEnabled(value) }
 
+func (a *App) SetRNNoiseSensitivity(value float32) error {
+	return a.state.Audio.SetRNNoiseSensitivity(value)
+}
+
 func (a *App) SetVADEnabled(value bool) { a.state.Audio.SetVADEnabled(value) }
 
 func (a *App) SetVADMode(value string) error {

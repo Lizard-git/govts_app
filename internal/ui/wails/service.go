@@ -110,6 +110,13 @@ func (s *Service) SetRNNoiseEnabled(value bool) error {
 	return s.saveSettings()
 }
 
+func (s *Service) SetRNNoiseSensitivity(value float32) error {
+	if err := s.client.SetRNNoiseSensitivity(value); err != nil {
+		return err
+	}
+	return s.saveSettings()
+}
+
 func (s *Service) SetVADEnabled(value bool) error {
 	s.client.SetVADEnabled(value)
 	return s.saveSettings()

@@ -15,20 +15,21 @@ import (
 // SetMuted and Send share the same lock. On return, an earlier send has
 // completed and no later send can use an old capture epoch, even after unmute.
 type AudioControlState struct {
-	mu              sync.Mutex
-	meterMu         sync.RWMutex
-	sendMu          sync.Mutex
-	muted, deafened bool
-	rnnoiseEnabled  bool
-	vadEnabled      bool
-	vadMode         voicegate.Mode
-	vadSensitivity  float32
-	vadOpen         bool
-	epoch           uint64
-	playbackEpoch   uint64
-	player          audio.DeafenPlayer
-	onChange        func()
-	meter           AudioMeterSample
+	mu                 sync.Mutex
+	meterMu            sync.RWMutex
+	sendMu             sync.Mutex
+	muted, deafened    bool
+	rnnoiseEnabled     bool
+	rnnoiseSensitivity float32
+	vadEnabled         bool
+	vadMode            voicegate.Mode
+	vadSensitivity     float32
+	vadOpen            bool
+	epoch              uint64
+	playbackEpoch      uint64
+	player             audio.DeafenPlayer
+	onChange           func()
+	meter              AudioMeterSample
 }
 
 // AudioMeterSample contains normalized microphone levels without retaining or
@@ -43,10 +44,11 @@ type AudioMeterSample struct {
 
 func NewAudioControlState(onChange func()) *AudioControlState {
 	return &AudioControlState{
-		onChange:       onChange,
-		rnnoiseEnabled: true,
-		vadMode:        voicegate.ModeHybrid,
-		vadSensitivity: voicegate.DefaultSensitivity,
+		onChange:           onChange,
+		rnnoiseEnabled:     true,
+		rnnoiseSensitivity: 1,
+		vadMode:            voicegate.ModeHybrid,
+		vadSensitivity:     voicegate.DefaultSensitivity,
 	}
 }
 
@@ -79,6 +81,26 @@ func (a *AudioControlState) RNNoiseEnabled() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.rnnoiseEnabled
+}
+
+func (a *AudioControlState) RNNoiseSensitivity() float32 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.rnnoiseSensitivity
+}
+
+func (a *AudioControlState) SetRNNoiseSensitivity(value float32) error {
+	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
+		return fmt.Errorf("RNNoise sensitivity must be between 0 and 1, got %g", value)
+	}
+	a.mu.Lock()
+	changed := a.rnnoiseSensitivity != value
+	a.rnnoiseSensitivity = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
 }
 
 func (a *AudioControlState) SetRNNoiseEnabled(value bool) {

@@ -30,6 +30,7 @@ type Processor struct {
 
 type Settings interface {
 	RNNoiseEnabled() bool
+	RNNoiseSensitivity() float32
 }
 
 func New(settings ...Settings) (*Processor, error) {
@@ -82,8 +83,13 @@ func (p *Processor) Process(samples []int16) error {
 			p.frame[i] = float32(samples[offset+i])
 		}
 		p.state.ProcessFrame(p.frame, p.frame)
+		strength := float32(1)
+		if p.settings != nil {
+			strength = p.settings.RNNoiseSensitivity()
+		}
 		for i := range FrameSize {
-			samples[offset+i] = pcm16(p.frame[i])
+			dry := float32(samples[offset+i])
+			samples[offset+i] = pcm16(dry + (p.frame[i]-dry)*strength)
 		}
 	}
 	return nil

@@ -19,13 +19,15 @@ func TestProcessorAcceptsClientFrame(t *testing.T) {
 }
 
 type testSettings struct {
-	enabled bool
+	enabled     bool
+	sensitivity float32
 }
 
-func (s *testSettings) RNNoiseEnabled() bool { return s.enabled }
+func (s *testSettings) RNNoiseEnabled() bool        { return s.enabled }
+func (s *testSettings) RNNoiseSensitivity() float32 { return s.sensitivity }
 
 func TestProcessorOwnsEnablePolicy(t *testing.T) {
-	settings := &testSettings{enabled: false}
+	settings := &testSettings{enabled: false, sensitivity: 1}
 	p, err := New(settings)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +41,29 @@ func TestProcessorOwnsEnablePolicy(t *testing.T) {
 	settings.enabled = true
 	if err := p.Process(samples); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestZeroSensitivityPreservesInput(t *testing.T) {
+	settings := &testSettings{enabled: true, sensitivity: 0}
+	p, err := New(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	samples := make([]int16, FrameSize)
+	for i := range samples {
+		samples[i] = int16(i%101 - 50)
+	}
+	want := append([]int16(nil), samples...)
+	if err := p.Process(samples); err != nil {
+		t.Fatal(err)
+	}
+	for i := range samples {
+		if samples[i] != want[i] {
+			t.Fatalf("sample %d = %d, want %d", i, samples[i], want[i])
+		}
 	}
 }
 

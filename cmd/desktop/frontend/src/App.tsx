@@ -36,6 +36,7 @@ const emptyView: ClientViewDTO = {
         muted: false,
         deafened: false,
         rnnoiseEnabled: true,
+        rnnoiseSensitivity: 1,
         vadEnabled: false,
         vadMode: "hybrid",
         vadSensitivity: 0.5,
@@ -384,6 +385,8 @@ function SettingsPage({view, invoke}: {
 }) {
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
+    const [rnnoiseSensitivity, setRNNoiseSensitivity] = useState(view.audio.rnnoiseSensitivity);
+    useEffect(() => setRNNoiseSensitivity(view.audio.rnnoiseSensitivity), [view.audio.rnnoiseSensitivity]);
     const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
     const [devicesError, setDevicesError] = useState("");
     const [devicePending, setDevicePending] = useState(false);
@@ -430,6 +433,11 @@ function SettingsPage({view, invoke}: {
                            description="Убирает постоянный фоновый шум до анализа голосовой активности."
                            checked={view.audio.rnnoiseEnabled}
                            onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
+            <SensitivitySlider label="Чувствительность RNNoise"
+                               description="Чем выше значение, тем сильнее подавляется фоновый шум."
+                               value={rnnoiseSensitivity} disabled={!view.audio.rnnoiseEnabled}
+                               onChange={setRNNoiseSensitivity}
+                               onCommit={(value) => invoke(() => desktopAPI.setRNNoiseSensitivity(value))}/>
             <SettingToggle title="Обнаружение голосовой активности (VAD)"
                            description="Микрофон передаёт звук автоматически, когда обнаружена речь."
                            checked={view.audio.vadEnabled}
@@ -462,6 +470,28 @@ function SettingsPage({view, invoke}: {
             title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
             checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
     </section>;
+}
+
+function SensitivitySlider({label, description, value, disabled, onChange, onCommit}: {
+    label: string;
+    description: string;
+    value: number;
+    disabled: boolean;
+    onChange: (value: number) => void;
+    onCommit: (value: number) => Promise<void>;
+}) {
+    const commit = (value: string) => void onCommit(Number(value));
+    return <div className={`sensitivity-setting slider-setting ${disabled ? "disabled" : ""}`}>
+        <div><label className="setting-label" htmlFor="rnnoise-sensitivity">{label}</label>
+            <output htmlFor="rnnoise-sensitivity">{Math.round(value * 100)}%</output>
+        </div>
+        <p>{description}</p>
+        <input id="rnnoise-sensitivity" aria-label={label} type="range" min="0" max="1" step="0.01"
+               value={value} disabled={disabled}
+               onChange={(event) => onChange(Number(event.target.value))}
+               onPointerUp={(event) => commit(event.currentTarget.value)}
+               onKeyUp={(event) => commit(event.currentTarget.value)}/>
+    </div>;
 }
 
 function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivityCommit}: {

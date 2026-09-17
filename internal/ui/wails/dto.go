@@ -43,13 +43,14 @@ type ParticipantDTO struct {
 }
 
 type AudioStateDTO struct {
-	Muted          bool    `json:"muted"`
-	Deafened       bool    `json:"deafened"`
-	RNNoiseEnabled bool    `json:"rnnoiseEnabled"`
-	VADEnabled     bool    `json:"vadEnabled"`
-	VADMode        string  `json:"vadMode"`
-	VADSensitivity float32 `json:"vadSensitivity"`
-	VADOpen        bool    `json:"vadOpen"`
+	Muted              bool    `json:"muted"`
+	Deafened           bool    `json:"deafened"`
+	RNNoiseEnabled     bool    `json:"rnnoiseEnabled"`
+	RNNoiseSensitivity float32 `json:"rnnoiseSensitivity"`
+	VADEnabled         bool    `json:"vadEnabled"`
+	VADMode            string  `json:"vadMode"`
+	VADSensitivity     float32 `json:"vadSensitivity"`
+	VADOpen            bool    `json:"vadOpen"`
 }
 
 type AudioDeviceDTO struct {
@@ -127,13 +128,14 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		Channels:         channels,
 		Participants:     participants,
 		Audio: AudioStateDTO{
-			Muted:          view.Muted,
-			Deafened:       view.Deafened,
-			RNNoiseEnabled: view.RNNoiseEnabled,
-			VADEnabled:     view.VADEnabled,
-			VADMode:        view.VADMode,
-			VADSensitivity: view.VADSensitivity,
-			VADOpen:        view.VADOpen,
+			Muted:              view.Muted,
+			Deafened:           view.Deafened,
+			RNNoiseEnabled:     view.RNNoiseEnabled,
+			RNNoiseSensitivity: view.RNNoiseSensitivity,
+			VADEnabled:         view.VADEnabled,
+			VADMode:            view.VADMode,
+			VADSensitivity:     view.VADSensitivity,
+			VADOpen:            view.VADOpen,
 		},
 	}
 }

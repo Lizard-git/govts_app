@@ -24,6 +24,7 @@ export const desktopAPI = {
     setMuted: (value: boolean) => Service.SetMuted(value),
     setDeafened: (value: boolean) => Service.SetDeafened(value),
     setRNNoiseEnabled: (value: boolean) => Service.SetRNNoiseEnabled(value),
+    setRNNoiseSensitivity: (value: number) => Service.SetRNNoiseSensitivity(value),
     setVADEnabled: (value: boolean) => Service.SetVADEnabled(value),
     setVADMode: (value: string) => Service.SetVADMode(value),
     setVADSensitivity: (value: number) => Service.SetVADSensitivity(value),

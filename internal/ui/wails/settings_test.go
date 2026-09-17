@@ -25,6 +25,9 @@ func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {
 	if err := first.SetRNNoiseEnabled(false); err != nil {
 		t.Fatal(err)
 	}
+	if err := first.SetRNNoiseSensitivity(0.64); err != nil {
+		t.Fatal(err)
+	}
 	if err := first.SetVADMode("level"); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +44,7 @@ func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := secondClient.Snapshot()
-	if !view.Deafened || view.RNNoiseEnabled || !view.VADEnabled || view.VADMode != "level" || view.VADSensitivity != 0.73 {
+	if !view.Deafened || view.RNNoiseEnabled || view.RNNoiseSensitivity != 0.64 || !view.VADEnabled || view.VADMode != "level" || view.VADSensitivity != 0.73 {
 		t.Fatalf("restored settings = %+v", view)
 	}
 	if got := second.SavedDisplayName(); got != "Alice" {

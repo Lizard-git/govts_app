@@ -29,6 +29,9 @@ func (s *Service) enableSettings(path string) error {
 	if err := s.client.SetVADSensitivity(settings.VADSensitivity); err != nil {
 		restoreErrors = append(restoreErrors, err)
 	}
+	if err := s.client.SetRNNoiseSensitivity(settings.RNNoiseSensitivity); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
 	s.client.SetRNNoiseEnabled(settings.RNNoiseEnabled)
 	s.client.SetVADEnabled(settings.VADEnabled)
 	if err := s.client.SetDeafened(settings.Deafened); err != nil {
@@ -57,14 +60,15 @@ func (s *Service) saveSettings() error {
 	displayName := s.displayName
 	s.settingsMu.RUnlock()
 	return s.settings.Save(clientsettings.Settings{
-		DisplayName:      displayName,
-		CaptureDeviceID:  devices.CaptureID,
-		PlaybackDeviceID: devices.PlaybackID,
-		Deafened:         view.Deafened,
-		RNNoiseEnabled:   view.RNNoiseEnabled,
-		VADEnabled:       view.VADEnabled,
-		VADMode:          view.VADMode,
-		VADSensitivity:   view.VADSensitivity,
+		DisplayName:        displayName,
+		CaptureDeviceID:    devices.CaptureID,
+		PlaybackDeviceID:   devices.PlaybackID,
+		Deafened:           view.Deafened,
+		RNNoiseEnabled:     view.RNNoiseEnabled,
+		RNNoiseSensitivity: view.RNNoiseSensitivity,
+		VADEnabled:         view.VADEnabled,
+		VADMode:            view.VADMode,
+		VADSensitivity:     view.VADSensitivity,
 	})
 }
 

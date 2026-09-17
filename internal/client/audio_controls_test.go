@@ -49,6 +49,22 @@ func TestAudioMeterClampsAndAdvancesSequence(t *testing.T) {
 	}
 }
 
+func TestRNNoiseSensitivityValidation(t *testing.T) {
+	controls := NewAudioControlState(nil)
+	if controls.RNNoiseSensitivity() != 1 {
+		t.Fatalf("default RNNoise sensitivity = %v", controls.RNNoiseSensitivity())
+	}
+	if err := controls.SetRNNoiseSensitivity(0.65); err != nil {
+		t.Fatal(err)
+	}
+	if err := controls.SetRNNoiseSensitivity(1.1); err == nil {
+		t.Fatal("invalid RNNoise sensitivity was accepted")
+	}
+	if controls.RNNoiseSensitivity() != 0.65 {
+		t.Fatalf("RNNoise sensitivity = %v", controls.RNNoiseSensitivity())
+	}
+}
+
 func TestVADResultControlsLocalSpeaking(t *testing.T) {
 	s := liveTestState()
 	now := time.Now()

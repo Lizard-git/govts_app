@@ -33,6 +33,7 @@ export interface AudioStateDTO {
     "muted": boolean;
     "deafened": boolean;
     "rnnoiseEnabled": boolean;
+    "rnnoiseSensitivity": number;
     "vadEnabled": boolean;
     "vadMode": string;
     "vadSensitivity": number;
