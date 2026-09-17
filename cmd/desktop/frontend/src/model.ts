@@ -1,4 +1,4 @@
-import type { ChannelDTO, ClientEventDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import type {ChannelDTO, ClientEventDTO} from "./api";
 
 function compareID(left: string, right: string): number {
   const a = BigInt(left);

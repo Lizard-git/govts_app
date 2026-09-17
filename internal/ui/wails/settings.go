@@ -1,72 +1,18 @@
 package wailsui
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
+
+	"example.com/go-voice-mvp/internal/clientsettings"
 )
 
-const settingsVersion = 1
-
-type persistedSettings struct {
-	Version          int     `json:"version"`
-	DisplayName      string  `json:"displayName"`
-	CaptureDeviceID  string  `json:"captureDeviceId"`
-	PlaybackDeviceID string  `json:"playbackDeviceId"`
-	Deafened         bool    `json:"deafened"`
-	RNNoiseEnabled   bool    `json:"rnnoiseEnabled"`
-	VADEnabled       bool    `json:"vadEnabled"`
-	VADMode          string  `json:"vadMode"`
-	VADSensitivity   float32 `json:"vadSensitivity"`
-}
-
-type settingsStore struct {
-	mu   sync.Mutex
-	path string
-}
-
-func (store *settingsStore) load() (persistedSettings, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	data, err := os.ReadFile(store.path)
-	if err != nil {
-		return persistedSettings{}, err
-	}
-	var settings persistedSettings
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return persistedSettings{}, fmt.Errorf("decode settings: %w", err)
-	}
-	if settings.Version != settingsVersion {
-		return persistedSettings{}, fmt.Errorf("unsupported settings version %d", settings.Version)
-	}
-	return settings, nil
-}
-
-func (store *settingsStore) save(settings persistedSettings) error {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode settings: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
-		return fmt.Errorf("create settings directory: %w", err)
-	}
-	if err := os.WriteFile(store.path, data, 0o600); err != nil {
-		return fmt.Errorf("write settings: %w", err)
-	}
-	return nil
-}
-
 func (s *Service) enableSettings(path string) error {
-	store := &settingsStore{path: path}
+	store := clientsettings.NewStore(path)
 	s.settings = store
-	settings, err := store.load()
+	settings, err := store.Load()
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -110,8 +56,7 @@ func (s *Service) saveSettings() error {
 	s.settingsMu.RLock()
 	displayName := s.displayName
 	s.settingsMu.RUnlock()
-	return s.settings.save(persistedSettings{
-		Version:          settingsVersion,
+	return s.settings.Save(clientsettings.Settings{
 		DisplayName:      displayName,
 		CaptureDeviceID:  devices.CaptureID,
 		PlaybackDeviceID: devices.PlaybackID,
@@ -130,16 +75,8 @@ func (s *Service) setDisplayName(value string) error {
 	return s.saveSettings()
 }
 
-func settingsPath() (string, error) {
-	configPath, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve application data directory: %w", err)
-	}
-	return filepath.Join(configPath, "Govts", "settings.json"), nil
-}
-
 func EnableDefaultSettings(service *Service) error {
-	path, err := settingsPath()
+	path, err := clientsettings.DefaultPath()
 	if err != nil {
 		return err
 	}

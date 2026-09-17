@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/clientapp"
+	"example.com/go-voice-mvp/internal/clientsettings"
 	"example.com/go-voice-mvp/internal/domain"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -30,7 +31,7 @@ type ConnectRequest struct {
 
 type Service struct {
 	client      *clientapp.App
-	settings    *settingsStore
+	settings    *clientsettings.Store
 	settingsMu  sync.RWMutex
 	displayName string
 }

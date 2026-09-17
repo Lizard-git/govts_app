@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"example.com/go-voice-mvp/internal/clientapp"
+	"example.com/go-voice-mvp/internal/clientsettings"
 )
 
 func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {
@@ -63,7 +64,7 @@ func TestSettingsCanRecoverAfterMalformedFile(t *testing.T) {
 	if err := service.SetRNNoiseEnabled(false); err != nil {
 		t.Fatalf("replace malformed settings: %v", err)
 	}
-	if _, err := (&settingsStore{path: path}).load(); err != nil {
+	if _, err := clientsettings.NewStore(path).Load(); err != nil {
 		t.Fatalf("saved replacement settings: %v", err)
 	}
 }

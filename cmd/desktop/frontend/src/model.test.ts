@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChannelDTO, ClientEventDTO } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import type {ChannelDTO, ClientEventDTO} from "./api";
 import { buildChannelGroups, mergeEventTail } from "./model";
 
 const audio = { codec: "opus", sampleRate: 48000, channels: 1, frameDurationMs: 20, bitrate: 24000, application: "voip" };

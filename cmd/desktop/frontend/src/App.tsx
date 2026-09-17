@@ -1,15 +1,13 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import {Events} from "@wailsio/runtime";
 import type {
     AudioDeviceDTO,
     AudioDevicesDTO,
-    AudioMeterDTO,
     ChannelDTO,
     ClientEventDTO,
     ClientViewDTO,
     ParticipantDTO
-} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
-import {Service} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+} from "./api";
+import {desktopAPI} from "./api";
 import {buildChannelGroups, mergeEventTail} from "./model";
 
 type Page = "channels" | "settings";
@@ -59,7 +57,7 @@ function App() {
 
     const refresh = useCallback(async () => {
         try {
-            const next = await Service.Snapshot();
+            const next = await desktopAPI.snapshot();
             next.channels ??= [];
             next.participants ??= [];
             setView(next);
@@ -70,7 +68,7 @@ function App() {
 
     const refreshEvents = useCallback(async () => {
         try {
-            const next = (await Service.EventsAfter(lastSequence.current)) ?? [];
+            const next = (await desktopAPI.eventsAfter(lastSequence.current)) ?? [];
             if (!next.length) return;
             const newestSequence = next[next.length - 1].sequence;
             if (BigInt(newestSequence) > BigInt(lastSequence.current)) {
@@ -90,8 +88,8 @@ function App() {
     useEffect(() => {
         void refresh();
         void refreshEvents();
-        const offState = Events.On("client-state-changed", () => void refresh());
-        const offEvents = Events.On("client-event-log-changed", () => void refreshEvents());
+        const offState = desktopAPI.onStateChanged(() => void refresh());
+        const offEvents = desktopAPI.onEventLogChanged(() => void refreshEvents());
         return () => {
             offState();
             offEvents();
@@ -146,7 +144,7 @@ function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConne
     const [pending, setPending] = useState(false);
     useEffect(() => {
         let active = true;
-        void Service.SavedDisplayName()
+        void desktopAPI.savedDisplayName()
             .then((savedName) => {
                 if (active) setName((current) => current || savedName);
             })
@@ -167,7 +165,7 @@ function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConne
         setPending(true);
         try {
             onClearEvents();
-            await Service.Connect({name, server: address, initialChannel: "main"});
+            await desktopAPI.connect({name, server: address, initialChannel: "main"});
             await onRefresh();
             onConnected();
         } catch (connectError) {
@@ -215,15 +213,15 @@ function StatusBar({view, page, onPageChange, invoke}: {
         <div className="server-summary"><p className="eyebrow">СЕРВЕР</p><h1>{view.server.name || "Govts"}</h1></div>
         <div className="audio-control-island" role="group" aria-label="Управление звуком">
             <button className={`voice-control ${view.audio.muted ? "active" : ""}`} aria-pressed={view.audio.muted}
-                    onClick={() => void invoke(() => Service.SetMuted(!view.audio.muted))}>{view.audio.muted ? "Микрофон выкл." : "Микрофон"}</button>
+                    onClick={() => void invoke(() => desktopAPI.setMuted(!view.audio.muted))}>{view.audio.muted ? "Микрофон выкл." : "Микрофон"}</button>
             <button className={`voice-control ${view.audio.deafened ? "active" : ""}`}
                     aria-pressed={view.audio.deafened}
-                    onClick={() => void invoke(() => Service.SetDeafened(!view.audio.deafened))}>{view.audio.deafened ? "Звук выкл." : "Звук"}</button>
+                    onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}>{view.audio.deafened ? "Звук выкл." : "Звук"}</button>
         </div>
         <div className={`status-pill ${view.connectionStatus}`}><span
             className="status-dot"/>{labels[view.connectionStatus] ?? view.connectionStatus}</div>
         {!view.snapshotFresh && <div className="sync-pill">Синхронизация…</div>}
-        <button className="header-nav-button disconnect-button" onClick={() => void invoke(() => Service.Disconnect())}><span aria-hidden="true">↪</span><span>Отключиться</span></button>
+        <button className="header-nav-button disconnect-button" onClick={() => void invoke(() => desktopAPI.disconnect())}><span aria-hidden="true">↪</span><span>Отключиться</span></button>
     </header>;
 }
 
@@ -251,7 +249,7 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants}
                                                              selectedID={selectedID} currentID={view.channelId}
                                                              onSelect={setSelectedID} onJoin={(id) => {
-                    if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => Service.JoinChannel(id));
+                    if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }}/></div>
             </section>
             <section className="panel channel-detail">{selected ? <><p className="eyebrow">ВЫБРАННЫЙ КАНАЛ</p>
@@ -391,7 +389,7 @@ function SettingsPage({view, invoke}: {
     const [devicePending, setDevicePending] = useState(false);
     const loadDevices = useCallback(async () => {
         try {
-            const next = await Service.AudioDevices();
+            const next = await desktopAPI.audioDevices();
             next.capture ??= [];
             next.playback ??= [];
             setDevices(next);
@@ -408,8 +406,8 @@ function SettingsPage({view, invoke}: {
         setDevicePending(true);
         setDevicesError("");
         try {
-            if (kind === "capture") await Service.SetCaptureDevice(id);
-            else await Service.SetPlaybackDevice(id);
+            if (kind === "capture") await desktopAPI.setCaptureDevice(id);
+            else await desktopAPI.setPlaybackDevice(id);
             await loadDevices();
         } catch (error) {
             setDevicesError(errorText(error));
@@ -431,15 +429,15 @@ function SettingsPage({view, invoke}: {
             <SettingToggle title="Шумоподавление RNNoise"
                            description="Убирает постоянный фоновый шум до анализа голосовой активности."
                            checked={view.audio.rnnoiseEnabled}
-                           onChange={(value) => invoke(() => Service.SetRNNoiseEnabled(value))}/>
+                           onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
             <SettingToggle title="Обнаружение голосовой активности (VAD)"
                            description="Микрофон передаёт звук автоматически, когда обнаружена речь."
                            checked={view.audio.vadEnabled}
-                           onChange={(value) => invoke(() => Service.SetVADEnabled(value))}/>
+                           onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
             <div className="mode-row"><label htmlFor="vad-mode">Режим</label><select id="vad-mode"
                                                                                      value={view.audio.vadMode}
                                                                                      disabled={!view.audio.vadEnabled}
-                                                                                     onChange={(event) => void invoke(() => Service.SetVADMode(event.target.value))}>
+                                                                                     onChange={(event) => void invoke(() => desktopAPI.setVADMode(event.target.value))}>
                 <option value="level">По громкости</option>
                 <option value="vad">Распознавание речи</option>
                 <option value="hybrid">Гибридный</option>
@@ -453,7 +451,7 @@ function SettingsPage({view, invoke}: {
                 <p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
             <AudioWaveform sensitivity={sensitivity} disabled={!view.audio.vadEnabled}
                            onSensitivityChange={setSensitivity}
-                           onSensitivityCommit={(value) => invoke(() => Service.SetVADSensitivity(value))}/>
+                           onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
         </section>
         <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device"
                                                                                               label="Устройство вывода звука"
@@ -462,7 +460,7 @@ function SettingsPage({view, invoke}: {
                                                                                               disabled={!devices || devicePending}
                                                                                               onChange={(id) => selectDevice("playback", id)}/><SettingToggle
             title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
-            checked={view.audio.deafened} onChange={(value) => invoke(() => Service.SetDeafened(value))}/></section>
+            checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
     </section>;
 }
 
@@ -485,8 +483,7 @@ function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivit
         thresholdRef.current?.style.setProperty("--threshold", `${thresholdPosition * 100}%`);
     }, [thresholdLevel, thresholdPosition]);
 
-    useEffect(() => Events.On("audio-meter", (event) => {
-        const sample = event.data as AudioMeterDTO;
+    useEffect(() => desktopAPI.onAudioMeter((sample) => {
         targetRef.current = {
             input: Math.max(0, Math.min(1, sample.input)),
             processed: Math.max(0, Math.min(1, sample.processed ?? sample.input)),
