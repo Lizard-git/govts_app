@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"example.com/go-voice-mvp/internal/clientapp"
 	wailsui "example.com/go-voice-mvp/internal/ui/wails"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 func init() {
@@ -19,6 +22,12 @@ func init() {
 }
 
 func main() {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatalf("resolve application data directory: %v", err)
+	}
+	webviewDataPath := filepath.Join(configDir, "Govts", "WebView2")
+
 	client := clientapp.New(clientapp.Options{Logger: log.Default()})
 	service := wailsui.NewService(client)
 	if err := wailsui.EnableDefaultSettings(service); err != nil {
@@ -35,6 +44,9 @@ func main() {
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		Windows: application.WindowsOptions{
+			WebviewUserDataPath: webviewDataPath,
 		},
 	})
 
@@ -54,7 +66,7 @@ func main() {
 	}
 	app.OnShutdown(shutdown)
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            fmt.Sprintf("Govts %s", applicationVersion()),
 		Width:            1180,
 		Height:           760,
@@ -62,6 +74,9 @@ func main() {
 		MinHeight:        620,
 		BackgroundColour: application.NewRGB(28, 37, 57),
 		URL:              "/",
+	})
+	mainWindow.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
+		app.Quit()
 	})
 
 	if err := app.Run(); err != nil {
