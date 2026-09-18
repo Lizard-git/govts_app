@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"example.com/go-voice-mvp/internal/domain"
 	"example.com/go-voice-mvp/internal/voice"
 	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -24,7 +26,12 @@ var (
 	ErrSubscriptionDenied = errors.New("screen stream subscription denied")
 )
 
-const subscriberQueueSize = 128
+const (
+	subscriberQueueSize = 256
+	nackResponderCache  = 2048
+	recoveryPLIInterval = time.Second
+	startupPLIRequests  = 5
+)
 
 type Manager struct {
 	mu           sync.RWMutex
@@ -43,28 +50,42 @@ type Config struct {
 }
 
 type publisher struct {
-	id          domain.StreamID
-	ownerID     uint64
-	pc          *webrtc.PeerConnection
-	mu          sync.RWMutex
-	codec       webrtc.RTPCodecCapability
-	ssrc        webrtc.SSRC
-	ready       bool
-	starting    bool
-	subscribers map[string]*subscriber
-	closed      chan struct{}
-	closeOnce   sync.Once
-	createdAt   time.Time
+	id            domain.StreamID
+	ownerID       uint64
+	pc            *webrtc.PeerConnection
+	mu            sync.RWMutex
+	codec         webrtc.RTPCodecCapability
+	ssrc          webrtc.SSRC
+	ready         bool
+	starting      bool
+	subscribers   map[string]*subscriber
+	closed        chan struct{}
+	closeOnce     sync.Once
+	createdAt     time.Time
+	inBytes       atomic.Uint64
+	inPackets     atomic.Uint64
+	metricsAt     time.Time
+	lastInBytes   uint64
+	lastInPackets uint64
 }
 
 type subscriber struct {
-	id        string
-	sessionID uint64
-	pc        *webrtc.PeerConnection
-	track     *webrtc.TrackLocalStaticRTP
-	packets   chan *rtp.Packet
-	closed    chan struct{}
-	closeOnce sync.Once
+	id              string
+	sessionID       uint64
+	pc              *webrtc.PeerConnection
+	track           *webrtc.TrackLocalStaticRTP
+	packets         chan *rtp.Packet
+	closed          chan struct{}
+	closeOnce       sync.Once
+	outBytes        atomic.Uint64
+	outPackets      atomic.Uint64
+	drops           atomic.Uint64
+	plis            atomic.Uint64
+	nacks           atomic.Uint64
+	recoveryOnce    sync.Once
+	lastRecoveryPLI atomic.Int64
+	lastOutBytes    uint64
+	lastOutPackets  uint64
 }
 
 type SessionDescription struct {
@@ -94,7 +115,8 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 		return nil, err
 	}
 	registry := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, registry); err != nil {
+	if err := webrtc.RegisterDefaultInterceptorsWithOptions(mediaEngine, registry,
+		webrtc.WithNackResponderOptions(nack.ResponderSize(nackResponderCache))); err != nil {
 		return nil, err
 	}
 	settingEngine := webrtc.SettingEngine{}
@@ -220,10 +242,16 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, packets: make(chan *rtp.Packet, subscriberQueueSize), closed: make(chan struct{})}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
-	go drainRTCP(sender)
+	go drainRTCP(p, s, sender)
 	go runSubscriber(s)
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("screen subscriber state: stream=%d session=%d subscriber=%q state=%s", streamID, sessionID, subscriberID, state)
+		if state == webrtc.PeerConnectionStateConnected {
+			s.recoveryOnce.Do(func() {
+				requestRecoveryKeyframe(p, s)
+				go requestStartupKeyframes(p, s)
+			})
+		}
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			m.Unsubscribe(sessionID, streamID, subscriberID)
 		}
@@ -233,8 +261,6 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		m.Unsubscribe(sessionID, streamID, subscriberID)
 		return SubscribeResult{}, err
 	}
-	requestKeyframe(p)
-	go requestStartupKeyframes(p, s)
 	return SubscribeResult{Answer: answer}, nil
 }
 
@@ -247,20 +273,32 @@ func requestKeyframe(p *publisher) {
 	}
 }
 
+func requestRecoveryKeyframe(p *publisher, s *subscriber) {
+	now := time.Now().UnixNano()
+	previous := s.lastRecoveryPLI.Load()
+	if previous != 0 && time.Duration(now-previous) < recoveryPLIInterval {
+		return
+	}
+	if !s.lastRecoveryPLI.CompareAndSwap(previous, now) {
+		return
+	}
+	requestKeyframe(p)
+}
+
 // A browser may not act on the first PLI while the subscriber ICE/DTLS path is
 // still becoming writable. A short bounded retry window avoids a permanently
 // black late-join view without creating an ongoing keyframe storm.
 func requestStartupKeyframes(p *publisher, s *subscriber) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	for attempts := 0; attempts < 3; attempts++ {
+	for attempts := 1; attempts < startupPLIRequests; attempts++ {
 		select {
 		case <-p.closed:
 			return
 		case <-s.closed:
 			return
 		case <-ticker.C:
-			requestKeyframe(p)
+			requestRecoveryKeyframe(p, s)
 		}
 	}
 }
@@ -317,13 +355,55 @@ func (m *Manager) Close() {
 func (m *Manager) reconcileLoop() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	ticks := 0
 	for {
 		select {
 		case <-m.done:
 			return
 		case <-ticker.C:
 			m.reconcile()
+			ticks++
+			if ticks%10 == 0 {
+				m.logMetrics()
+			}
 		}
+	}
+}
+
+func (m *Manager) logMetrics() {
+	m.mu.RLock()
+	publishers := make([]*publisher, 0, len(m.publishers))
+	for _, p := range m.publishers {
+		publishers = append(publishers, p)
+	}
+	m.mu.RUnlock()
+	now := time.Now()
+	for _, p := range publishers {
+		p.mu.Lock()
+		hasBaseline := !p.metricsAt.IsZero()
+		elapsed := now.Sub(p.metricsAt).Seconds()
+		inBytes := p.inBytes.Load()
+		inPackets := p.inPackets.Load()
+		inBitrate := float64(0)
+		inPacketsPerSecond := float64(0)
+		if hasBaseline && elapsed > 0 {
+			inBitrate = float64(inBytes-p.lastInBytes) * 8 / elapsed
+			inPacketsPerSecond = float64(inPackets-p.lastInPackets) / elapsed
+		}
+		p.metricsAt, p.lastInBytes, p.lastInPackets = now, inBytes, inPackets
+		for _, s := range p.subscribers {
+			outBytes := s.outBytes.Load()
+			outPackets := s.outPackets.Load()
+			outBitrate := float64(0)
+			outPacketsPerSecond := float64(0)
+			if hasBaseline && elapsed > 0 {
+				outBitrate = float64(outBytes-s.lastOutBytes) * 8 / elapsed
+				outPacketsPerSecond = float64(outPackets-s.lastOutPackets) / elapsed
+			}
+			s.lastOutBytes, s.lastOutPackets = outBytes, outPackets
+			log.Printf("screen metrics: stream=%d session=%d in_kbps=%.0f in_pps=%.1f out_kbps=%.0f out_pps=%.1f queue=%d drops=%d pli=%d nack=%d", p.id, s.sessionID, inBitrate/1000, inPacketsPerSecond, outBitrate/1000, outPacketsPerSecond, len(s.packets), s.drops.Load(), s.plis.Load(), s.nacks.Load())
+		}
+		p.mu.Unlock()
 	}
 }
 
@@ -370,15 +450,23 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		if err != nil {
 			return
 		}
+		p.inBytes.Add(uint64(packet.MarshalSize()))
+		p.inPackets.Add(1)
+		var needsRecovery []*subscriber
 		p.mu.RLock()
 		for _, s := range p.subscribers {
 			clone := packet.Clone()
 			select {
 			case s.packets <- clone:
 			default:
+				s.drops.Add(1)
+				needsRecovery = append(needsRecovery, s)
 			}
 		}
 		p.mu.RUnlock()
+		for _, s := range needsRecovery {
+			requestRecoveryKeyframe(p, s)
+		}
 	}
 }
 
@@ -411,14 +499,29 @@ func runSubscriber(s *subscriber) {
 				s.close()
 				return
 			}
+			s.outBytes.Add(uint64(packet.MarshalSize()))
+			s.outPackets.Add(1)
 		}
 	}
 }
-func drainRTCP(sender *webrtc.RTPSender) {
-	buffer := make([]byte, 1500)
+func drainRTCP(p *publisher, s *subscriber, sender *webrtc.RTPSender) {
 	for {
-		if _, _, err := sender.Read(buffer); err != nil {
+		packets, _, err := sender.ReadRTCP()
+		if err != nil {
 			return
+		}
+		for _, packet := range packets {
+			switch packet.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				s.plis.Add(1)
+				requestRecoveryKeyframe(p, s)
+			case *rtcp.TransportLayerNack:
+				s.nacks.Add(1)
+				// Pion retransmits packets still present in its responder cache.
+				// A bounded PLI recovers the decoder when the missing packet is
+				// older than the cache or was already absent on the SFU input.
+				requestRecoveryKeyframe(p, s)
+			}
 		}
 	}
 }

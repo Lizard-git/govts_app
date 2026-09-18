@@ -83,7 +83,10 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 			return handlerErr
 		}
 		mediaServer = &http.Server{Addr: fmt.Sprintf(":%d", mediaPort), Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 30 * time.Second}
-		log.Printf("media signaling configured on https://0.0.0.0:%d fingerprint=%s udp=%d-%d", mediaPort, identity.Fingerprint, mediaMinPort, mediaMaxPort)
+		log.Printf("media signaling configured on https://0.0.0.0:%d fingerprint=%s udp=%d-%d advertised_ip=%q", mediaPort, identity.Fingerprint, mediaMinPort, mediaMaxPort, mediaAdvertisedIP)
+		if mediaAdvertisedIP == "" {
+			log.Printf("media warning: advertised IP is empty; public-IP deployments must set -media-advertised-ip")
+		}
 		go func() { mediaErrCh <- mediaServer.ListenAndServeTLS(identity.CertPath, identity.KeyPath); cancel() }()
 	} else {
 		close(mediaErrCh)
