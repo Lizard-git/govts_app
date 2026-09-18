@@ -65,6 +65,29 @@ func PerformHandshakeAttempt(
 	return performHandshake(ctx, conn, name, requestID, timeout, 1)
 }
 
+// PerformHandshakeAttempts retries the same idempotent Hello request. Reusing
+// its RequestID lets the server request cache return the original session when
+// the request arrived but the acknowledgement was lost.
+func PerformHandshakeAttempts(
+	ctx context.Context,
+	conn *udp.ClientPacketConn,
+	name string,
+	timeout time.Duration,
+	attempts int,
+) (uint64, error) {
+	if len(name) == 0 {
+		return 0, errors.New("client name is required")
+	}
+	if len([]byte(name)) > maxClientNameBytes {
+		return 0, fmt.Errorf("client name too long: %d bytes", len([]byte(name)))
+	}
+	requestID, err := newHandshakeRequestID()
+	if err != nil {
+		return 0, fmt.Errorf("create handshake request ID: %w", err)
+	}
+	return performHandshake(ctx, conn, name, requestID, timeout, attempts)
+}
+
 func newHandshakeRequestID() (uint32, error) {
 	for {
 		var data [4]byte
@@ -102,6 +125,9 @@ func performHandshake(
 	}
 	if timeout <= 0 {
 		return 0, errors.New("handshake timeout must be positive")
+	}
+	if attempts <= 0 {
+		return 0, errors.New("handshake attempts must be positive")
 	}
 
 	hello := protocol.VoicePacket{

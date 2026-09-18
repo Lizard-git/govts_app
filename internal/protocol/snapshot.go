@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion      uint8  = 1
+	SnapshotSchemaVersion      uint8  = 2
 	SnapshotRequestSize               = 16
 	SnapshotResponseHeaderSize        = 18
 	MaxSnapshotPageItems       uint16 = 32
@@ -23,6 +23,7 @@ const (
 	SnapshotKindMetadata SnapshotKind = iota + 1
 	SnapshotKindChannels
 	SnapshotKindParticipants
+	SnapshotKindScreenStreams
 )
 
 type SnapshotStatus uint8
@@ -39,16 +40,18 @@ type SnapshotRequest struct {
 	Limit            uint16
 }
 type SnapshotResponse struct {
-	Kind             SnapshotKind
-	Status           SnapshotStatus
-	Revision         domain.StateRevision
-	NextOffset       uint32
-	HasMore          bool
-	ServerInfo       domain.ServerInfo
-	ChannelCount     uint32
-	ParticipantCount uint32
-	Channels         []domain.Channel
-	Participants     []domain.Participant
+	Kind              SnapshotKind
+	Status            SnapshotStatus
+	Revision          domain.StateRevision
+	NextOffset        uint32
+	HasMore           bool
+	ServerInfo        domain.ServerInfo
+	ChannelCount      uint32
+	ParticipantCount  uint32
+	ScreenStreamCount uint32
+	Channels          []domain.Channel
+	Participants      []domain.Participant
+	ScreenStreams     []domain.ScreenStream
 }
 
 func EncodeSnapshotRequest(request SnapshotRequest) ([]byte, error) {
@@ -82,7 +85,7 @@ func validateSnapshotRequest(r SnapshotRequest) error {
 		if r.ExpectedRevision != 0 || r.Offset != 0 || r.Limit != 0 {
 			return errors.New("metadata request must have zero revision, offset, and limit")
 		}
-	case SnapshotKindChannels, SnapshotKindParticipants:
+	case SnapshotKindChannels, SnapshotKindParticipants, SnapshotKindScreenStreams:
 		if r.ExpectedRevision == 0 {
 			return errors.New("page request revision must not be zero")
 		}
@@ -99,12 +102,13 @@ func EncodedChannelSize(c domain.Channel) int {
 	return 44 + len(c.Name) + len(c.Topic) + len(c.Description)
 }
 func EncodedParticipantSize(p domain.Participant) int { return 18 + len(p.DisplayName) }
+func EncodedScreenStreamSize(domain.ScreenStream) int { return 24 }
 
 func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 	if r.Revision == 0 {
 		return nil, errors.New("snapshot revision must not be zero")
 	}
-	if r.Kind < SnapshotKindMetadata || r.Kind > SnapshotKindParticipants {
+	if r.Kind < SnapshotKindMetadata || r.Kind > SnapshotKindScreenStreams {
 		return nil, fmt.Errorf("unknown snapshot kind: %d", r.Kind)
 	}
 	if r.Status != SnapshotStatusOK && r.Status != SnapshotStatusRevisionChanged {
@@ -122,7 +126,7 @@ func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 	if r.Status == SnapshotStatusOK {
 		switch r.Kind {
 		case SnapshotKindMetadata:
-			if r.NextOffset != 0 || r.HasMore || len(r.Channels) != 0 || len(r.Participants) != 0 {
+			if r.NextOffset != 0 || r.HasMore || len(r.Channels) != 0 || len(r.Participants) != 0 || len(r.ScreenStreams) != 0 {
 				return nil, errors.New("non-canonical metadata response")
 			}
 			var err error
@@ -133,8 +137,10 @@ func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 			if r.ServerInfo.Name == "" || strings.TrimSpace(r.ServerInfo.Name) != r.ServerInfo.Name {
 				return nil, errors.New("invalid server name")
 			}
+			body = binary.BigEndian.AppendUint16(body, r.ServerInfo.MediaPort)
 			body = binary.BigEndian.AppendUint32(body, r.ChannelCount)
 			body = binary.BigEndian.AppendUint32(body, r.ParticipantCount)
+			body = binary.BigEndian.AppendUint32(body, r.ScreenStreamCount)
 		case SnapshotKindChannels:
 			if len(r.Participants) != 0 {
 				return nil, errors.New("channels response contains participants")
@@ -148,8 +154,8 @@ func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 				}
 			}
 		case SnapshotKindParticipants:
-			if len(r.Channels) != 0 {
-				return nil, errors.New("participants response contains channels")
+			if len(r.Channels) != 0 || len(r.ScreenStreams) != 0 {
+				return nil, errors.New("participants response contains other items")
 			}
 			count = len(r.Participants)
 			for _, item := range r.Participants {
@@ -158,6 +164,14 @@ func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
+			}
+		case SnapshotKindScreenStreams:
+			if len(r.Channels) != 0 || len(r.Participants) != 0 {
+				return nil, errors.New("screen streams response contains other items")
+			}
+			count = len(r.ScreenStreams)
+			for _, item := range r.ScreenStreams {
+				body = appendScreenStream(body, item)
 			}
 		}
 	}
@@ -201,7 +215,7 @@ func DecodeSnapshotResponse(p []byte) (SnapshotResponse, error) {
 	}
 	body := p[18:]
 	if r.Status == SnapshotStatusRevisionChanged {
-		if (r.Kind != SnapshotKindChannels && r.Kind != SnapshotKindParticipants) || r.NextOffset != 0 || r.HasMore || count != 0 || len(body) != 0 {
+		if (r.Kind != SnapshotKindChannels && r.Kind != SnapshotKindParticipants && r.Kind != SnapshotKindScreenStreams) || r.NextOffset != 0 || r.HasMore || count != 0 || len(body) != 0 {
 			return SnapshotResponse{}, errors.New("non-canonical revision-changed response")
 		}
 		return r, nil
@@ -222,10 +236,12 @@ func DecodeSnapshotResponse(p []byte) (SnapshotResponse, error) {
 		if err == nil && (r.ServerInfo.Name == "" || strings.TrimSpace(r.ServerInfo.Name) != r.ServerInfo.Name) {
 			err = errors.New("invalid server name")
 		}
-		if err == nil && len(body) >= 8 {
-			r.ChannelCount = binary.BigEndian.Uint32(body[:4])
-			r.ParticipantCount = binary.BigEndian.Uint32(body[4:8])
-			body = body[8:]
+		if err == nil && len(body) >= 14 {
+			r.ServerInfo.MediaPort = binary.BigEndian.Uint16(body[:2])
+			r.ChannelCount = binary.BigEndian.Uint32(body[2:6])
+			r.ParticipantCount = binary.BigEndian.Uint32(body[6:10])
+			r.ScreenStreamCount = binary.BigEndian.Uint32(body[10:14])
+			body = body[14:]
 		} else if err == nil {
 			err = errors.New("metadata body too short")
 		}
@@ -243,6 +259,13 @@ func DecodeSnapshotResponse(p []byte) (SnapshotResponse, error) {
 			item, body, err = takeParticipant(body)
 			r.Participants = append(r.Participants, item)
 		}
+	case SnapshotKindScreenStreams:
+		r.ScreenStreams = make([]domain.ScreenStream, 0, count)
+		for i := 0; i < count && err == nil; i++ {
+			var item domain.ScreenStream
+			item, body, err = takeScreenStream(body)
+			r.ScreenStreams = append(r.ScreenStreams, item)
+		}
 	default:
 		return SnapshotResponse{}, fmt.Errorf("unknown snapshot kind: %d", r.Kind)
 	}
@@ -253,6 +276,23 @@ func DecodeSnapshotResponse(p []byte) (SnapshotResponse, error) {
 		return SnapshotResponse{}, errors.New("trailing snapshot response bytes")
 	}
 	return r, nil
+}
+
+func appendScreenStream(dst []byte, s domain.ScreenStream) []byte {
+	dst = binary.BigEndian.AppendUint64(dst, uint64(s.ID))
+	dst = binary.BigEndian.AppendUint64(dst, s.OwnerSessionID)
+	return binary.BigEndian.AppendUint64(dst, uint64(s.ChannelID))
+}
+
+func takeScreenStream(p []byte) (domain.ScreenStream, []byte, error) {
+	if len(p) < 24 {
+		return domain.ScreenStream{}, nil, errors.New("screen stream item too short")
+	}
+	s := domain.ScreenStream{ID: domain.StreamID(binary.BigEndian.Uint64(p[:8])), OwnerSessionID: binary.BigEndian.Uint64(p[8:16]), ChannelID: domain.ChannelID(binary.BigEndian.Uint64(p[16:24]))}
+	if s.ID == 0 || s.OwnerSessionID == 0 || s.ChannelID == 0 {
+		return domain.ScreenStream{}, nil, errors.New("invalid screen stream item")
+	}
+	return s, p[24:], nil
 }
 
 func appendString(dst []byte, s string, max int) ([]byte, error) {

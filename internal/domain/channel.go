@@ -13,6 +13,16 @@ type ChannelID uint64
 
 type StateRevision uint64
 
+type StreamID uint64
+
+// ScreenStream is channel-visible metadata. Media credentials, SDP and ICE
+// candidates deliberately never enter the replicated server snapshot.
+type ScreenStream struct {
+	ID             StreamID
+	OwnerSessionID uint64
+	ChannelID      ChannelID
+}
+
 type ChannelType uint8
 
 const (
@@ -71,19 +81,22 @@ type Participant struct {
 }
 
 type ServerInfo struct {
-	Name string
+	Name      string
+	MediaPort uint16
 }
 
 // ServerSnapshot is the immutable, client-safe view of authoritative server state.
 type ServerSnapshot struct {
-	Revision     StateRevision
-	Info         ServerInfo
-	Channels     []Channel
-	Participants []Participant
+	Revision      StateRevision
+	Info          ServerInfo
+	Channels      []Channel
+	Participants  []Participant
+	ScreenStreams []ScreenStream
 }
 
 func (snapshot ServerSnapshot) Clone() ServerSnapshot {
 	snapshot.Channels = append([]Channel(nil), snapshot.Channels...)
 	snapshot.Participants = append([]Participant(nil), snapshot.Participants...)
+	snapshot.ScreenStreams = append([]ScreenStream(nil), snapshot.ScreenStreams...)
 	return snapshot
 }

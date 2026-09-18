@@ -36,6 +36,8 @@ func HandlePacket(
 		return HandleJoinChannelPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketStateSnapshotRequest:
 		return HandleStateSnapshotPacket(conn, hub, cache, packet, addr)
+	case protocol.PacketMediaCredentialRequest:
+		return HandleMediaCredentialPacket(conn, hub, cache, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}

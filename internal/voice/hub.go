@@ -17,13 +17,16 @@ import (
 )
 
 var (
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrSessionNotInChannel = errors.New("session has not joined a channel")
-	ErrChannelNotFound     = errors.New("channel not found")
-	ErrChannelFull         = errors.New("channel is full")
-	ErrChannelNameTaken    = errors.New("channel name is already in use")
-	ErrInvalidChannel      = errors.New("invalid channel")
-	ErrInvalidServerInfo   = errors.New("invalid server info")
+	ErrSessionNotFound       = errors.New("session not found")
+	ErrSessionNotInChannel   = errors.New("session has not joined a channel")
+	ErrChannelNotFound       = errors.New("channel not found")
+	ErrChannelFull           = errors.New("channel is full")
+	ErrChannelNameTaken      = errors.New("channel name is already in use")
+	ErrInvalidChannel        = errors.New("invalid channel")
+	ErrInvalidServerInfo     = errors.New("invalid server info")
+	ErrScreenStreamExists    = errors.New("session already has an active screen stream")
+	ErrScreenStreamNotFound  = errors.New("screen stream not found")
+	ErrScreenStreamForbidden = errors.New("screen stream is not owned by session")
 )
 
 const (
@@ -37,6 +40,8 @@ type sessionIDGenerator func() (uint64, error)
 type Hub struct {
 	mu            sync.RWMutex
 	sessions      map[uint64]*Session
+	screenStreams map[domain.StreamID]domain.ScreenStream
+	streamByOwner map[uint64]domain.StreamID
 	channels      map[domain.ChannelID]*domain.Channel
 	newSessionID  sessionIDGenerator
 	nextChannelID domain.ChannelID
@@ -95,6 +100,8 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 
 	hub := &Hub{
 		sessions:      make(map[uint64]*Session),
+		screenStreams: make(map[domain.StreamID]domain.ScreenStream),
+		streamByOwner: make(map[uint64]domain.StreamID),
 		channels:      make(map[domain.ChannelID]*domain.Channel),
 		newSessionID:  newSessionID,
 		nextChannelID: DefaultChannelID,
@@ -132,6 +139,7 @@ func (h *Hub) Remove(id uint64) (Session, bool) {
 		return Session{}, false
 	}
 	delete(h.sessions, id)
+	h.stopScreenShareByOwnerLocked(id)
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
 	return *cloneSession(session), true
@@ -175,6 +183,7 @@ func (h *Hub) joinChannelLocked(id uint64, channelID domain.ChannelID) error {
 	if session.ChannelID == channelID {
 		return nil
 	}
+	h.stopScreenShareByOwnerLocked(id)
 	if channel.MaxUsers > 0 && h.channelMemberCountLocked(channelID) >= channel.MaxUsers {
 		return fmt.Errorf("%w: %q", ErrChannelFull, channel.Name)
 	}
@@ -216,6 +225,18 @@ func (h *Hub) Revision() domain.StateRevision {
 	defer h.mu.RUnlock()
 
 	return h.revision
+}
+
+// SetMediaPort publishes the HTTPS signaling port in the initial snapshot.
+// It is intended for server startup, before accepting clients.
+func (h *Hub) SetMediaPort(port uint16) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.serverInfo.MediaPort == port {
+		return
+	}
+	h.serverInfo.MediaPort = port
+	h.revision++
 }
 
 func (h *Hub) CreateChannel(channel domain.Channel) (domain.Channel, error) {
@@ -302,7 +323,98 @@ func (h *Hub) ClientSnapshot() domain.ServerSnapshot {
 		participants = append(participants, domain.Participant{SessionID: session.ID, DisplayName: session.Name, ChannelID: session.ChannelID})
 	}
 	sort.Slice(participants, func(i, j int) bool { return participants[i].SessionID < participants[j].SessionID })
-	return domain.ServerSnapshot{Revision: h.revision, Info: h.serverInfo, Channels: h.channelsSnapshotLocked(), Participants: participants}
+	streams := h.screenStreamsSnapshotLocked()
+	return domain.ServerSnapshot{Revision: h.revision, Info: h.serverInfo, Channels: h.channelsSnapshotLocked(), Participants: participants, ScreenStreams: streams}
+}
+
+// StartScreenShare publishes channel-visible metadata after the media path is
+// ready. A participant may own one stream, while a channel may have many.
+func (h *Hub) StartScreenShare(ownerID uint64, streamID domain.StreamID) (domain.ScreenStream, error) {
+	if streamID == 0 {
+		return domain.ScreenStream{}, errors.New("screen stream ID must not be zero")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	session, ok := h.sessions[ownerID]
+	if !ok {
+		return domain.ScreenStream{}, ErrSessionNotFound
+	}
+	if session.ChannelID == 0 {
+		return domain.ScreenStream{}, ErrSessionNotInChannel
+	}
+	if _, ok := h.streamByOwner[ownerID]; ok {
+		return domain.ScreenStream{}, ErrScreenStreamExists
+	}
+	if _, ok := h.screenStreams[streamID]; ok {
+		return domain.ScreenStream{}, errors.New("screen stream ID already exists")
+	}
+	stream := domain.ScreenStream{ID: streamID, OwnerSessionID: ownerID, ChannelID: session.ChannelID}
+	h.screenStreams[streamID] = stream
+	h.streamByOwner[ownerID] = streamID
+	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ScreenStreamStarted, ScreenStream: stream})
+	return stream, nil
+}
+
+func (h *Hub) StopScreenShare(ownerID uint64, streamID domain.StreamID) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	stream, ok := h.screenStreams[streamID]
+	if !ok {
+		return ErrScreenStreamNotFound
+	}
+	if stream.OwnerSessionID != ownerID {
+		return ErrScreenStreamForbidden
+	}
+	h.stopScreenShareLocked(stream)
+	return nil
+}
+
+func (h *Hub) ScreenStream(id domain.StreamID) (domain.ScreenStream, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	stream, ok := h.screenStreams[id]
+	return stream, ok
+}
+
+func (h *Hub) ScreenStreams() []domain.ScreenStream {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.screenStreamsSnapshotLocked()
+}
+
+func (h *Hub) CanSubscribeScreen(sessionID uint64, streamID domain.StreamID) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	session, ok := h.sessions[sessionID]
+	stream, streamOK := h.screenStreams[streamID]
+	return ok && streamOK && session.ChannelID != 0 && session.ChannelID == stream.ChannelID
+}
+
+func (h *Hub) stopScreenShareByOwnerLocked(ownerID uint64) {
+	streamID, ok := h.streamByOwner[ownerID]
+	if !ok {
+		return
+	}
+	if stream, exists := h.screenStreams[streamID]; exists {
+		h.stopScreenShareLocked(stream)
+	}
+}
+
+func (h *Hub) stopScreenShareLocked(stream domain.ScreenStream) {
+	delete(h.screenStreams, stream.ID)
+	delete(h.streamByOwner, stream.OwnerSessionID)
+	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ScreenStreamStopped, ScreenStream: domain.ScreenStream{ID: stream.ID}})
+}
+
+func (h *Hub) screenStreamsSnapshotLocked() []domain.ScreenStream {
+	streams := make([]domain.ScreenStream, 0, len(h.screenStreams))
+	for _, stream := range h.screenStreams {
+		streams = append(streams, stream)
+	}
+	sort.Slice(streams, func(i, j int) bool { return streams[i].ID < streams[j].ID })
+	return streams
 }
 
 func (h *Hub) Participants() []domain.Participant {
@@ -408,6 +520,7 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 		for oldID, oldSession := range h.sessions {
 			if sameUDPAddr(oldSession.Addr, addr) {
 				delete(h.sessions, oldID)
+				h.stopScreenShareByOwnerLocked(oldID)
 				h.revision++
 				h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: oldID})
 				replaced = append(replaced, oldID)
@@ -468,6 +581,28 @@ func (h *Hub) Touch(sessionID uint64) error {
 	return h.touchAt(sessionID, time.Now())
 }
 
+func (h *Hub) MediaCredential(sessionID uint64) ([32]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	session, ok := h.sessions[sessionID]
+	if !ok {
+		return [32]byte{}, ErrSessionNotFound
+	}
+	if session.MediaCredential == ([32]byte{}) {
+		if _, err := rand.Read(session.MediaCredential[:]); err != nil {
+			return [32]byte{}, fmt.Errorf("generate media credential: %w", err)
+		}
+	}
+	return session.MediaCredential, nil
+}
+
+func (h *Hub) AuthenticateMedia(sessionID uint64, credential [32]byte) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	session, ok := h.sessions[sessionID]
+	return ok && credential != ([32]byte{}) && session.MediaCredential == credential
+}
+
 func (h *Hub) touchAt(sessionID uint64, now time.Time) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -504,6 +639,7 @@ func (h *Hub) RemoveInactive(now time.Time, timeout time.Duration) []Session {
 			continue
 		}
 		delete(h.sessions, id)
+		h.stopScreenShareByOwnerLocked(id)
 		h.revision++
 		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
 		removed = append(removed, *cloneSession(session))

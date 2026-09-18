@@ -79,7 +79,7 @@ func TestSnapshotPayloadRoundTrip(t *testing.T) {
 }
 
 func TestSnapshotDecodersRejectMalformedPayloads(t *testing.T) {
-	for _, payload := range [][]byte{nil, make([]byte, SnapshotRequestSize-1), {2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}} {
+	for _, payload := range [][]byte{nil, make([]byte, SnapshotRequestSize-1), {255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {SnapshotSchemaVersion, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}} {
 		if _, err := DecodeSnapshotRequest(payload); err == nil {
 			t.Fatalf("accepted malformed request %x", payload)
 		}

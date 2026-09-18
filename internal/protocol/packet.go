@@ -28,6 +28,8 @@ const (
 	PacketHeartbeatAck
 	PacketSessionInvalid
 	PacketStateEvent
+	PacketMediaCredentialRequest
+	PacketMediaCredentialAck
 
 	PacketEnd
 )

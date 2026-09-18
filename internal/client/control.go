@@ -50,7 +50,7 @@ func ControlLoop(
 				}
 				state.ApplyEvent(generation, event)
 			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck,
-				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid:
+				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid, protocol.PacketMediaCredentialAck:
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,
@@ -73,6 +73,19 @@ func ControlLoop(
 			}
 		}
 	}
+}
+
+func RequestMediaCredential(ctx context.Context, conn *udp.ClientPacketConn, state *State) ([32]byte, error) {
+	var credential [32]byte
+	response, err := DoRequest(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketMediaCredentialRequest}, joinRequestTimeout)
+	if err != nil {
+		return credential, err
+	}
+	if response.Type != protocol.PacketMediaCredentialAck || len(response.Payload) != len(credential) {
+		return credential, errors.New("invalid media credential response")
+	}
+	copy(credential[:], response.Payload)
+	return credential, nil
 }
 
 func HeartbeatLoop(

@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	MaxSnapshotChannels     = 4096
-	MaxSnapshotParticipants = 65535
-	snapshotSyncAttempts    = 3
-	snapshotRequestTimeout  = 3 * time.Second
+	MaxSnapshotChannels      = 4096
+	MaxSnapshotParticipants  = 65535
+	MaxSnapshotScreenStreams = 65535
+	snapshotSyncAttempts     = 3
+	snapshotRequestTimeout   = 3 * time.Second
 )
 
 var errSnapshotRevisionChanged = errors.New("snapshot revision changed")
@@ -51,10 +52,10 @@ func loadServerSnapshotOnce(ctx context.Context, conn *udp.ClientPacketConn, sta
 	if metadata.Kind != protocol.SnapshotKindMetadata || metadata.Status != protocol.SnapshotStatusOK {
 		return domain.ServerSnapshot{}, errors.New("metadata response is not OK")
 	}
-	if metadata.ChannelCount > MaxSnapshotChannels || metadata.ParticipantCount > MaxSnapshotParticipants {
+	if metadata.ChannelCount > MaxSnapshotChannels || metadata.ParticipantCount > MaxSnapshotParticipants || metadata.ScreenStreamCount > MaxSnapshotScreenStreams {
 		return domain.ServerSnapshot{}, fmt.Errorf("snapshot totals exceed client limits: channels=%d participants=%d", metadata.ChannelCount, metadata.ParticipantCount)
 	}
-	snapshot := domain.ServerSnapshot{Revision: metadata.Revision, Info: metadata.ServerInfo, Channels: make([]domain.Channel, 0, int(metadata.ChannelCount)), Participants: make([]domain.Participant, 0, int(metadata.ParticipantCount))}
+	snapshot := domain.ServerSnapshot{Revision: metadata.Revision, Info: metadata.ServerInfo, Channels: make([]domain.Channel, 0, int(metadata.ChannelCount)), Participants: make([]domain.Participant, 0, int(metadata.ParticipantCount)), ScreenStreams: make([]domain.ScreenStream, 0, int(metadata.ScreenStreamCount))}
 	channels, err := loadChannelPages(ctx, conn, state, metadata.Revision, metadata.ChannelCount)
 	if err != nil {
 		return domain.ServerSnapshot{}, err
@@ -65,10 +66,38 @@ func loadServerSnapshotOnce(ctx context.Context, conn *udp.ClientPacketConn, sta
 		return domain.ServerSnapshot{}, err
 	}
 	snapshot.Participants = participants
+	streams, err := loadScreenStreamPages(ctx, conn, state, metadata.Revision, metadata.ScreenStreamCount)
+	if err != nil {
+		return domain.ServerSnapshot{}, err
+	}
+	snapshot.ScreenStreams = streams
 	if err := validateServerSnapshot(snapshot); err != nil {
 		return domain.ServerSnapshot{}, fmt.Errorf("validate server snapshot: %w", err)
 	}
 	return snapshot, nil
+}
+func loadScreenStreamPages(ctx context.Context, conn *udp.ClientPacketConn, state *State, revision domain.StateRevision, total uint32) ([]domain.ScreenStream, error) {
+	items := make([]domain.ScreenStream, 0, int(total))
+	offset := uint32(0)
+	for uint32(len(items)) < total {
+		r, err := requestSnapshot(ctx, conn, state, protocol.SnapshotRequest{Kind: protocol.SnapshotKindScreenStreams, ExpectedRevision: revision, Offset: offset, Limit: protocol.MaxSnapshotPageItems})
+		if err != nil {
+			return nil, err
+		}
+		if r.Status == protocol.SnapshotStatusRevisionChanged {
+			return nil, errSnapshotRevisionChanged
+		}
+		if r.Kind != protocol.SnapshotKindScreenStreams || r.Revision != revision {
+			return nil, errors.New("inconsistent screen stream page")
+		}
+		next, err := validatePageProgress(offset, len(r.ScreenStreams), r.NextOffset, r.HasMore, uint32(len(items)), total)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, r.ScreenStreams...)
+		offset = next
+	}
+	return items, nil
 }
 func requestSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *State, r protocol.SnapshotRequest) (protocol.SnapshotResponse, error) {
 	p, err := protocol.EncodeSnapshotRequest(r)
@@ -237,6 +266,26 @@ func validateServerSnapshot(s domain.ServerSnapshot) error {
 		}
 		if i > 0 && s.Participants[i-1].SessionID >= p.SessionID {
 			return errors.New("participants are not sorted")
+		}
+	}
+	streamIDs := make(map[domain.StreamID]bool, len(s.ScreenStreams))
+	owners := make(map[uint64]bool, len(s.ScreenStreams))
+	for i, stream := range s.ScreenStreams {
+		participantFound := participantIDs[stream.OwnerSessionID]
+		channel, channelFound := ids[stream.ChannelID]
+		_ = channel
+		if stream.ID == 0 || streamIDs[stream.ID] || stream.OwnerSessionID == 0 || owners[stream.OwnerSessionID] || !participantFound || !channelFound {
+			return fmt.Errorf("invalid screen stream %d", stream.ID)
+		}
+		for _, participant := range s.Participants {
+			if participant.SessionID == stream.OwnerSessionID && participant.ChannelID != stream.ChannelID {
+				return fmt.Errorf("screen stream %d owner is in another channel", stream.ID)
+			}
+		}
+		streamIDs[stream.ID] = true
+		owners[stream.OwnerSessionID] = true
+		if i > 0 && s.ScreenStreams[i-1].ID >= stream.ID {
+			return errors.New("screen streams are not sorted")
 		}
 	}
 	return nil

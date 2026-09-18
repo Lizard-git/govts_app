@@ -8,9 +8,10 @@ import (
 )
 
 type Session struct {
-	ID        uint64
-	Name      string
-	ChannelID domain.ChannelID
-	Addr      *net.UDPAddr
-	LastSeen  time.Time
+	ID              uint64
+	Name            string
+	ChannelID       domain.ChannelID
+	Addr            *net.UDPAddr
+	LastSeen        time.Time
+	MediaCredential [32]byte
 }

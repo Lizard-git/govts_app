@@ -12,15 +12,16 @@ const version = 1
 
 // Settings contains desktop client preferences that survive application restarts.
 type Settings struct {
-	DisplayName        string  `json:"displayName"`
-	CaptureDeviceID    string  `json:"captureDeviceId"`
-	PlaybackDeviceID   string  `json:"playbackDeviceId"`
-	Deafened           bool    `json:"deafened"`
-	RNNoiseEnabled     bool    `json:"rnnoiseEnabled"`
-	RNNoiseSensitivity float32 `json:"rnnoiseSensitivity"`
-	VADEnabled         bool    `json:"vadEnabled"`
-	VADMode            string  `json:"vadMode"`
-	VADSensitivity     float32 `json:"vadSensitivity"`
+	DisplayName        string            `json:"displayName"`
+	CaptureDeviceID    string            `json:"captureDeviceId"`
+	PlaybackDeviceID   string            `json:"playbackDeviceId"`
+	Deafened           bool              `json:"deafened"`
+	RNNoiseEnabled     bool              `json:"rnnoiseEnabled"`
+	RNNoiseSensitivity float32           `json:"rnnoiseSensitivity"`
+	VADEnabled         bool              `json:"vadEnabled"`
+	VADMode            string            `json:"vadMode"`
+	VADSensitivity     float32           `json:"vadSensitivity"`
+	TrustedMediaKeys   map[string]string `json:"trustedMediaKeys,omitempty"`
 }
 
 type persistedSettings struct {

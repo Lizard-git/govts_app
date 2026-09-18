@@ -16,6 +16,7 @@ type ClientViewState struct {
 	Revision           domain.StateRevision
 	Channels           []domain.Channel
 	Participants       []domain.Participant
+	ScreenStreams      []domain.ScreenStream
 	SessionID          uint64
 	ChannelID          domain.ChannelID
 	SnapshotFresh      bool
@@ -69,7 +70,7 @@ func (s *State) SnapshotView() ClientViewState {
 	rnnoiseSensitivity := s.Audio.RNNoiseSensitivity()
 	vadSettings := s.Audio.VADSnapshot()
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
-		Channels: snapshot.Channels, Participants: snapshot.Participants, SessionID: s.sessionID, ChannelID: s.channelID,
+		Channels: snapshot.Channels, Participants: snapshot.Participants, ScreenStreams: snapshot.ScreenStreams, SessionID: s.sessionID, ChannelID: s.channelID,
 		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
 		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool)}
@@ -207,6 +208,35 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		p := &next.Participants[index]
 		line = fmt.Sprintf("→ %s moved %s → %s", terminalText(p.DisplayName), channelName(p.ChannelID), channelName(e.ChannelID))
 		p.ChannelID = e.ChannelID
+	case domain.ScreenStreamStarted:
+		if len(next.ScreenStreams) >= MaxSnapshotScreenStreams {
+			s.requestResyncLocked()
+			return false
+		}
+		for _, stream := range next.ScreenStreams {
+			if stream.ID == e.ScreenStream.ID || stream.OwnerSessionID == e.ScreenStream.OwnerSessionID {
+				s.requestResyncLocked()
+				return false
+			}
+		}
+		next.ScreenStreams = append(next.ScreenStreams, e.ScreenStream)
+		sort.Slice(next.ScreenStreams, func(i, j int) bool { return next.ScreenStreams[i].ID < next.ScreenStreams[j].ID })
+		line = fmt.Sprintf("%d started screen sharing", e.ScreenStream.OwnerSessionID)
+	case domain.ScreenStreamStopped:
+		streamIndex := -1
+		for i, stream := range next.ScreenStreams {
+			if stream.ID == e.ScreenStream.ID {
+				streamIndex = i
+				break
+			}
+		}
+		if streamIndex < 0 {
+			s.requestResyncLocked()
+			return false
+		}
+		ownerID := next.ScreenStreams[streamIndex].OwnerSessionID
+		next.ScreenStreams = append(next.ScreenStreams[:streamIndex], next.ScreenStreams[streamIndex+1:]...)
+		line = fmt.Sprintf("%d stopped screen sharing", ownerID)
 	}
 	next.Revision = e.Revision
 	if err := validateServerSnapshot(next); err != nil {

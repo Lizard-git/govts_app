@@ -45,12 +45,13 @@ func HandleStateSnapshotPacket(conn *udp.ServerPacketConn, hub *Hub, cache *Requ
 func buildSnapshotResponse(request protocol.SnapshotRequest, snapshot domain.ServerSnapshot) (protocol.SnapshotResponse, error) {
 	response := protocol.SnapshotResponse{Kind: request.Kind, Status: protocol.SnapshotStatusOK, Revision: snapshot.Revision}
 	if request.Kind == protocol.SnapshotKindMetadata {
-		if uint64(len(snapshot.Channels)) > math.MaxUint32 || uint64(len(snapshot.Participants)) > math.MaxUint32 {
+		if uint64(len(snapshot.Channels)) > math.MaxUint32 || uint64(len(snapshot.Participants)) > math.MaxUint32 || uint64(len(snapshot.ScreenStreams)) > math.MaxUint32 {
 			return response, fmt.Errorf("snapshot totals exceed uint32")
 		}
 		response.ServerInfo = snapshot.Info
 		response.ChannelCount = uint32(len(snapshot.Channels))
 		response.ParticipantCount = uint32(len(snapshot.Participants))
+		response.ScreenStreamCount = uint32(len(snapshot.ScreenStreams))
 		return response, nil
 	}
 	if request.ExpectedRevision != snapshot.Revision {
@@ -60,8 +61,10 @@ func buildSnapshotResponse(request protocol.SnapshotRequest, snapshot domain.Ser
 	var total int
 	if request.Kind == protocol.SnapshotKindChannels {
 		total = len(snapshot.Channels)
-	} else {
+	} else if request.Kind == protocol.SnapshotKindParticipants {
 		total = len(snapshot.Participants)
+	} else {
+		total = len(snapshot.ScreenStreams)
 	}
 	if uint64(request.Offset) > uint64(total) {
 		return response, fmt.Errorf("offset %d exceeds total %d", request.Offset, total)
@@ -72,18 +75,22 @@ func buildSnapshotResponse(request protocol.SnapshotRequest, snapshot domain.Ser
 		var size int
 		if request.Kind == protocol.SnapshotKindChannels {
 			size = protocol.EncodedChannelSize(snapshot.Channels[end])
-		} else {
+		} else if request.Kind == protocol.SnapshotKindParticipants {
 			size = protocol.EncodedParticipantSize(snapshot.Participants[end])
+		} else {
+			size = protocol.EncodedScreenStreamSize(snapshot.ScreenStreams[end])
 		}
 		current := protocol.SnapshotResponseHeaderSize
 		if request.Kind == protocol.SnapshotKindChannels {
 			for _, v := range snapshot.Channels[start:end] {
 				current += protocol.EncodedChannelSize(v)
 			}
-		} else {
+		} else if request.Kind == protocol.SnapshotKindParticipants {
 			for _, v := range snapshot.Participants[start:end] {
 				current += protocol.EncodedParticipantSize(v)
 			}
+		} else {
+			current += (end - start) * protocol.EncodedScreenStreamSize(domain.ScreenStream{})
 		}
 		if current+size > protocol.MaxPayloadSize {
 			if end == start {
@@ -95,8 +102,10 @@ func buildSnapshotResponse(request protocol.SnapshotRequest, snapshot domain.Ser
 	}
 	if request.Kind == protocol.SnapshotKindChannels {
 		response.Channels = append([]domain.Channel(nil), snapshot.Channels[start:end]...)
-	} else {
+	} else if request.Kind == protocol.SnapshotKindParticipants {
 		response.Participants = append([]domain.Participant(nil), snapshot.Participants[start:end]...)
+	} else {
+		response.ScreenStreams = append([]domain.ScreenStream(nil), snapshot.ScreenStreams[start:end]...)
 	}
 	if end < total {
 		response.HasMore = true

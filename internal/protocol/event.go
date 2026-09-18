@@ -23,6 +23,10 @@ func EncodeStateEvent(e domain.StateEvent) ([]byte, error) {
 	case domain.ParticipantMoved:
 		b = binary.BigEndian.AppendUint64(b, e.SessionID)
 		b = binary.BigEndian.AppendUint64(b, uint64(e.ChannelID))
+	case domain.ScreenStreamStarted:
+		b = appendScreenStream(b, e.ScreenStream)
+	case domain.ScreenStreamStopped:
+		b = binary.BigEndian.AppendUint64(b, uint64(e.ScreenStream.ID))
 	}
 	return b, nil
 }
@@ -53,6 +57,18 @@ func DecodeStateEvent(b []byte) (domain.StateEvent, error) {
 		}
 		e.SessionID = binary.BigEndian.Uint64(b[:8])
 		e.ChannelID = domain.ChannelID(binary.BigEndian.Uint64(b[8:]))
+		b = nil
+	case domain.ScreenStreamStarted:
+		var err error
+		e.ScreenStream, b, err = takeScreenStream(b)
+		if err != nil {
+			return e, err
+		}
+	case domain.ScreenStreamStopped:
+		if len(b) != 8 {
+			return e, errors.New("invalid screen stream stopped payload")
+		}
+		e.ScreenStream.ID = domain.StreamID(binary.BigEndian.Uint64(b))
 		b = nil
 	default:
 		return e, errors.New("unknown event kind")

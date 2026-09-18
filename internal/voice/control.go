@@ -201,6 +201,32 @@ func HandleJoinChannelPacket(
 	return SendToSession(conn, session, ack)
 }
 
+func HandleMediaCredentialPacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		return err
+	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, packet.SessionID, 0, "media credential request ID is required")
+	}
+	if len(packet.Payload) != 0 {
+		return cacheAndSendSessionError(conn, cache, packet, addr, "media credential request payload must be empty")
+	}
+	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
+		return conn.WritePacket(packet.SessionID, addr, response)
+	}
+	credential, err := hub.MediaCredential(packet.SessionID)
+	if err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+	}
+	ack := protocol.VoicePacket{Type: protocol.PacketMediaCredentialAck, SessionID: packet.SessionID, RequestID: packet.RequestID, Payload: credential[:]}
+	cache.Put(packet.SessionID, packet.RequestID, ack)
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+	return SendToSession(conn, session, ack)
+}
+
 func cacheAndSendSessionError(conn *udp.ServerPacketConn, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr, message string) error {
 	response := protocol.NewErrorPacket(packet.SessionID, packet.RequestID, message)
 	cache.Put(packet.SessionID, packet.RequestID, response)

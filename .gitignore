@@ -13,8 +13,16 @@ coverage/
 .task/
 node_modules/
 .tmp-edge-profile/
+.gocache/
+.gopath/
+.zig-cache/
+.zig-cache-global/
 
 # Archives and local temporary files
 *.zip
 *.tmp
 *.log
+
+# Locally generated default media identity
+/govts-media.crt
+/govts-media.key

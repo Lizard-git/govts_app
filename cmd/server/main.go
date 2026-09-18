@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"example.com/go-voice-mvp/internal/media"
 	"example.com/go-voice-mvp/internal/protocol"
 	"example.com/go-voice-mvp/internal/server"
 	"example.com/go-voice-mvp/internal/transport/udp"
@@ -20,16 +22,24 @@ import (
 func main() {
 	configPath := flag.String("config", "", "path to server JSON config")
 	port := flag.Int("port", 9000, "UDP listen port (1..65535)")
+	mediaPort := flag.Int("media-port", -1, "HTTPS media signaling port; -1 uses voice port + 2, 0 disables screen sharing")
+	mediaMinPort := flag.Int("media-min-port", 20000, "first UDP port used by WebRTC")
+	mediaMaxPort := flag.Int("media-max-port", 20100, "last UDP port used by WebRTC")
+	mediaAdvertisedIP := flag.String("media-advertised-ip", "", "public IP advertised by WebRTC; empty uses local interfaces")
+	mediaIdentity := flag.String("media-identity", "govts-media", "path prefix for generated media TLS certificate and key")
 	flag.Parse()
 
-	if err := run(*configPath, *port); err != nil {
+	if err := run(*configPath, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(configPath string, port int) error {
+func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid UDP port %d: must be 1..65535", port)
+	}
+	if mediaPort == -1 {
+		mediaPort = port + 2
 	}
 	startedAt := time.Now()
 	ctx, cancel := signal.NotifyContext(
@@ -48,6 +58,35 @@ func run(configPath string, port int) error {
 	hub, err := server.BootstrapHub(ctx, source)
 	if err != nil {
 		return fmt.Errorf("bootstrap server channels: %w", err)
+	}
+	if mediaPort != 0 && (mediaPort < 1 || mediaPort > 65535) {
+		return errors.New("invalid media signaling port")
+	}
+	hub.SetMediaPort(uint16(mediaPort))
+	var mediaServer *http.Server
+	var mediaManager *media.Manager
+	mediaErrCh := make(chan error, 1)
+	if mediaPort != 0 {
+		if mediaPort < 1 || mediaPort > 65535 || mediaMinPort < 1 || mediaMaxPort > 65535 || mediaMaxPort < mediaMinPort {
+			return errors.New("invalid media port configuration")
+		}
+		identity, identityErr := media.LoadOrCreateIdentity(mediaIdentity+".crt", mediaIdentity+".key")
+		if identityErr != nil {
+			return fmt.Errorf("media identity: %w", identityErr)
+		}
+		mediaManager, err = media.NewManagerWithConfig(hub, media.Config{MinUDPPort: uint16(mediaMinPort), MaxUDPPort: uint16(mediaMaxPort), AdvertisedIP: mediaAdvertisedIP})
+		if err != nil {
+			return fmt.Errorf("create media manager: %w", err)
+		}
+		handler, handlerErr := media.NewHTTPHandler(hub, mediaManager)
+		if handlerErr != nil {
+			return handlerErr
+		}
+		mediaServer = &http.Server{Addr: fmt.Sprintf(":%d", mediaPort), Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 30 * time.Second}
+		log.Printf("media signaling configured on https://0.0.0.0:%d fingerprint=%s udp=%d-%d", mediaPort, identity.Fingerprint, mediaMinPort, mediaMaxPort)
+		go func() { mediaErrCh <- mediaServer.ListenAndServeTLS(identity.CertPath, identity.KeyPath); cancel() }()
+	} else {
+		close(mediaErrCh)
 	}
 
 	rawConn, err := udp.ListenUDP(port)
@@ -99,6 +138,12 @@ func run(configPath string, port int) error {
 	)
 	serveErr := voice.ServeUDP(ctx, conn, hub, cache)
 	cancel()
+	if mediaServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = mediaServer.Shutdown(shutdownCtx)
+		shutdownCancel()
+		mediaManager.Close()
+	}
 	cleanupErr := <-cleanupErrCh
 	dispatchErr := <-dispatchErrCh
 	if errors.Is(dispatchErr, context.Canceled) {
@@ -112,5 +157,12 @@ func run(configPath string, port int) error {
 		cleanupErr = nil
 	}
 
-	return errors.Join(serveErr, cleanupErr, dispatchErr)
+	var mediaErr error
+	if mediaPort != 0 {
+		mediaErr = <-mediaErrCh
+		if errors.Is(mediaErr, http.ErrServerClosed) {
+			mediaErr = nil
+		}
+	}
+	return errors.Join(serveErr, cleanupErr, dispatchErr, mediaErr)
 }

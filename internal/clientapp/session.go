@@ -152,6 +152,10 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			logger.Printf("cannot resolve initial channel: %v", resolveErr)
 		}
 	}
+	if channelID == 0 && len(snapshot.Channels) > 0 {
+		channelID = snapshot.Channels[0].ID
+		logger.Printf("joining first available channel: id=%d name=%q", channelID, snapshot.Channels[0].Name)
+	}
 	if channelID != 0 {
 		if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
 			logger.Printf("cannot join channel: %v", err)
@@ -179,6 +183,8 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			case <-joinedSignal:
 				channelID = state.ChannelID()
 			}
+		} else {
+			return finish(errors.New("server has no channel available to join"))
 		}
 	}
 	currentSnapshot := state.Snapshot()

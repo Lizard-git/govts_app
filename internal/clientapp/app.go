@@ -19,8 +19,11 @@ import (
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
-const handshakeAttemptTimeout = 3 * time.Second
-const audioDeviceChangeTimeout = 10 * time.Second
+const (
+	handshakeAttemptTimeout  = time.Second
+	handshakeAttempts        = 3
+	audioDeviceChangeTimeout = 10 * time.Second
+)
 
 var (
 	ErrAlreadyConnected = errors.New("a connection is already active")
@@ -64,14 +67,15 @@ type App struct {
 	captureDeviceID     string
 	playbackDeviceID    string
 
-	mu          sync.Mutex
-	closed      bool
-	active      bool
-	runCancel   context.CancelFunc
-	runDone     chan struct{}
-	currentConn *udp.ClientPacketConn
-	preference  *channelPreference
-	lastError   string
+	mu             sync.Mutex
+	closed         bool
+	active         bool
+	runCancel      context.CancelFunc
+	runDone        chan struct{}
+	currentConn    *udp.ClientPacketConn
+	serverEndpoint netip.AddrPort
+	preference     *channelPreference
+	lastError      string
 }
 
 func New(options Options) *App {
@@ -124,6 +128,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	a.runDone = done
 	a.lastError = ""
 	a.preference = newChannelPreference(options.InitialChannel)
+	a.serverEndpoint = endpoint
 	a.events.clear()
 	a.events.append("connection", "Подключение к "+endpoint.String(), 0)
 	go a.run(runCtx, done, endpoint, options)
@@ -172,7 +177,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name s
 		} else {
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
 		}
-		sessionID, err := voiceclient.PerformHandshakeAttempt(ctx, conn, name, handshakeAttemptTimeout)
+		sessionID, err := voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
