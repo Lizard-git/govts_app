@@ -20,17 +20,17 @@ import (
 	"time"
 
 	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/media"
+	"example.com/go-voice-mvp/internal/mediasignal"
 )
 
 const maxMediaResponse = 256 * 1024
 
 type MediaPublishResult struct {
-	StreamID string                   `json:"streamId"`
-	Answer   media.SessionDescription `json:"answer"`
+	StreamID string                         `json:"streamId"`
+	Answer   mediasignal.SessionDescription `json:"answer"`
 }
 type MediaSubscribeResult struct {
-	Answer media.SessionDescription `json:"answer"`
+	Answer mediasignal.SessionDescription `json:"answer"`
 }
 
 func (a *App) MediaServerFingerprint(ctx context.Context) (string, error) {
@@ -56,35 +56,24 @@ func (a *App) MediaServerFingerprint(ctx context.Context) (string, error) {
 	return certificateFingerprint(certificates[0]), nil
 }
 
-func (a *App) PublishScreen(ctx context.Context, offer media.SessionDescription, pinnedFingerprint string) (MediaPublishResult, error) {
+func (a *App) PublishScreen(ctx context.Context, offer mediasignal.SessionDescription, pinnedFingerprint string) (MediaPublishResult, error) {
 	var result MediaPublishResult
-	err := a.mediaRequest(ctx, "/media/publish", struct {
-		Offer media.SessionDescription `json:"offer"`
-	}{offer}, pinnedFingerprint, &result)
+	err := a.mediaRequest(ctx, "/media/publish", mediasignal.PublishRequest{Offer: offer}, pinnedFingerprint, &result)
 	return result, err
 }
 
-func (a *App) SubscribeScreen(ctx context.Context, streamID, subscriberID string, offer media.SessionDescription, pinnedFingerprint string) (MediaSubscribeResult, error) {
+func (a *App) SubscribeScreen(ctx context.Context, streamID, subscriberID string, offer mediasignal.SessionDescription, pinnedFingerprint string) (MediaSubscribeResult, error) {
 	var result MediaSubscribeResult
-	err := a.mediaRequest(ctx, "/media/subscribe", struct {
-		StreamID     string                   `json:"streamId"`
-		SubscriberID string                   `json:"subscriberId"`
-		Offer        media.SessionDescription `json:"offer"`
-	}{streamID, subscriberID, offer}, pinnedFingerprint, &result)
+	err := a.mediaRequest(ctx, "/media/subscribe", mediasignal.SubscribeRequest{StreamID: streamID, SubscriberID: subscriberID, Offer: offer}, pinnedFingerprint, &result)
 	return result, err
 }
 
 func (a *App) StopScreen(ctx context.Context, streamID, pinnedFingerprint string) error {
-	return a.mediaRequest(ctx, "/media/stop", struct {
-		StreamID string `json:"streamId"`
-	}{streamID}, pinnedFingerprint, nil)
+	return a.mediaRequest(ctx, "/media/stop", mediasignal.StreamRequest{StreamID: streamID}, pinnedFingerprint, nil)
 }
 
 func (a *App) UnsubscribeScreen(ctx context.Context, streamID, subscriberID, pinnedFingerprint string) error {
-	return a.mediaRequest(ctx, "/media/unsubscribe", struct {
-		StreamID     string `json:"streamId"`
-		SubscriberID string `json:"subscriberId"`
-	}{streamID, subscriberID}, pinnedFingerprint, nil)
+	return a.mediaRequest(ctx, "/media/unsubscribe", mediasignal.StreamRequest{StreamID: streamID, SubscriberID: subscriberID}, pinnedFingerprint, nil)
 }
 
 func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pin string, responseBody any) error {

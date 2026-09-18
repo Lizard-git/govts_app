@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"example.com/go-voice-mvp/internal/domain"
+	"example.com/go-voice-mvp/internal/mediasignal"
 	"example.com/go-voice-mvp/internal/voice"
 )
 
@@ -55,28 +56,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type publishRequest struct {
-	Offer SessionDescription `json:"offer"`
-}
-type publishResponse struct {
-	StreamID string             `json:"streamId"`
-	Answer   SessionDescription `json:"answer"`
-}
-type subscribeRequest struct {
-	StreamID     string             `json:"streamId"`
-	SubscriberID string             `json:"subscriberId"`
-	Offer        SessionDescription `json:"offer"`
-}
-type subscribeResponse struct {
-	Answer SessionDescription `json:"answer"`
-}
-type streamRequest struct {
-	StreamID     string `json:"streamId"`
-	SubscriberID string `json:"subscriberId,omitempty"`
-}
-
 func (h *HTTPHandler) publish(w http.ResponseWriter, r *http.Request, sessionID uint64) {
-	var request publishRequest
+	var request mediasignal.PublishRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
@@ -87,11 +68,11 @@ func (h *HTTPHandler) publish(w http.ResponseWriter, r *http.Request, sessionID 
 		writeMediaError(w, err)
 		return
 	}
-	writeJSON(w, publishResponse{StreamID: strconv.FormatUint(uint64(result.StreamID), 10), Answer: result.Answer})
+	writeJSON(w, mediasignal.PublishResponse{StreamID: strconv.FormatUint(uint64(result.StreamID), 10), Answer: result.Answer})
 }
 
 func (h *HTTPHandler) subscribe(w http.ResponseWriter, r *http.Request, sessionID uint64) {
-	var request subscribeRequest
+	var request mediasignal.SubscribeRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
@@ -107,11 +88,11 @@ func (h *HTTPHandler) subscribe(w http.ResponseWriter, r *http.Request, sessionI
 		writeMediaError(w, err)
 		return
 	}
-	writeJSON(w, subscribeResponse{Answer: result.Answer})
+	writeJSON(w, mediasignal.SubscribeResponse{Answer: result.Answer})
 }
 
 func (h *HTTPHandler) stop(w http.ResponseWriter, r *http.Request, sessionID uint64) {
-	var request streamRequest
+	var request mediasignal.StreamRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
@@ -125,7 +106,7 @@ func (h *HTTPHandler) stop(w http.ResponseWriter, r *http.Request, sessionID uin
 }
 
 func (h *HTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request, sessionID uint64) {
-	var request streamRequest
+	var request mediasignal.StreamRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}

@@ -3,13 +3,13 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as media$0 from "../media/models.js";
+import * as mediasignal$0 from "../mediasignal/models.js";
 
 export interface MediaPublishResult {
     "streamId": string;
-    "answer": media$0.SessionDescription;
+    "answer": mediasignal$0.SessionDescription;
 }
 
 export interface MediaSubscribeResult {
-    "answer": media$0.SessionDescription;
+    "answer": mediasignal$0.SessionDescription;
 }

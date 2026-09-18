@@ -10,7 +10,7 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as clientapp$0 from "../../clientapp/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as media$0 from "../../media/models.js";
+import * as mediasignal$0 from "../../mediasignal/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -44,7 +44,7 @@ export function OpenScreenWindow(streamID: string, ownerName: string): $Cancella
     return $Call.ByID(393597545, streamID, ownerName);
 }
 
-export function PublishScreen(offer: media$0.SessionDescription): $CancellablePromise<clientapp$0.MediaPublishResult> {
+export function PublishScreen(offer: mediasignal$0.SessionDescription): $CancellablePromise<clientapp$0.MediaPublishResult> {
     return $Call.ByID(3026111448, offer);
 }
 
@@ -96,7 +96,7 @@ export function StopScreen(streamID: string): $CancellablePromise<void> {
     return $Call.ByID(3581875877, streamID);
 }
 
-export function SubscribeScreen(streamID: string, subscriberID: string, offer: media$0.SessionDescription): $CancellablePromise<clientapp$0.MediaSubscribeResult> {
+export function SubscribeScreen(streamID: string, subscriberID: string, offer: mediasignal$0.SessionDescription): $CancellablePromise<clientapp$0.MediaSubscribeResult> {
     return $Call.ByID(1746283899, streamID, subscriberID, offer);
 }
 

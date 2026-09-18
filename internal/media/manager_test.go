@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"example.com/go-voice-mvp/internal/mediasignal"
 	"example.com/go-voice-mvp/internal/voice"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -95,7 +96,7 @@ func TestPublishAndSelectiveSubscribe(t *testing.T) {
 	}
 }
 
-func gatheredOffer(t *testing.T, ctx context.Context, pc *webrtc.PeerConnection) SessionDescription {
+func gatheredOffer(t *testing.T, ctx context.Context, pc *webrtc.PeerConnection) mediasignal.SessionDescription {
 	t.Helper()
 	offer, err := pc.CreateOffer(nil)
 	if err != nil {
@@ -110,7 +111,7 @@ func gatheredOffer(t *testing.T, ctx context.Context, pc *webrtc.PeerConnection)
 		t.Fatal("ICE gathering timed out")
 	case <-gathering:
 	}
-	return SessionDescription{Type: "offer", SDP: pc.LocalDescription().SDP}
+	return mediasignal.SessionDescription{Type: "offer", SDP: pc.LocalDescription().SDP}
 }
 
 func waitUntil(ctx context.Context, condition func() bool) bool {
