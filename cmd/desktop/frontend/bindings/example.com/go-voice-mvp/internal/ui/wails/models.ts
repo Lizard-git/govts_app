@@ -69,6 +69,7 @@ export interface ClientViewDTO {
     "snapshotFresh": boolean;
     "channels": ChannelDTO[] | null;
     "participants": ParticipantDTO[] | null;
+    "screenStreams": ScreenStreamDTO[] | null;
     "audio": AudioStateDTO;
 }
 
@@ -78,12 +79,24 @@ export interface ConnectRequest {
     "initialChannel": string;
 }
 
+export interface MediaTrustDTO {
+    "fingerprint": string;
+    "trusted": boolean;
+    "known": boolean;
+}
+
 export interface ParticipantDTO {
     "sessionId": string;
     "displayName": string;
     "channelId": string;
     "speaking": boolean;
     "local": boolean;
+}
+
+export interface ScreenStreamDTO {
+    "id": string;
+    "ownerSessionId": string;
+    "channelId": string;
 }
 
 export interface ServerDTO {

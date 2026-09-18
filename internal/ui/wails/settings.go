@@ -21,6 +21,10 @@ func (s *Service) enableSettings(path string) error {
 	}
 	s.settingsMu.Lock()
 	s.displayName = settings.DisplayName
+	s.trustedMediaKeys = settings.TrustedMediaKeys
+	if s.trustedMediaKeys == nil {
+		s.trustedMediaKeys = make(map[string]string)
+	}
 	s.settingsMu.Unlock()
 	var restoreErrors []error
 	if err := s.client.SetVADMode(settings.VADMode); err != nil {
@@ -58,6 +62,7 @@ func (s *Service) saveSettings() error {
 	devices := s.client.AudioDeviceSelection()
 	s.settingsMu.RLock()
 	displayName := s.displayName
+	trustedMediaKeys := cloneStringMap(s.trustedMediaKeys)
 	s.settingsMu.RUnlock()
 	return s.settings.Save(clientsettings.Settings{
 		DisplayName:        displayName,
@@ -69,7 +74,16 @@ func (s *Service) saveSettings() error {
 		VADEnabled:         view.VADEnabled,
 		VADMode:            view.VADMode,
 		VADSensitivity:     view.VADSensitivity,
+		TrustedMediaKeys:   trustedMediaKeys,
 	})
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 func (s *Service) setDisplayName(value string) error {

@@ -2,6 +2,8 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
 import {buildChannelGroups, mergeEventTail} from "./model";
+import {ScreenMediaController} from "./screenMedia";
+import {Window as WailsWindow} from "@wailsio/runtime";
 
 type Page = "channels" | "settings";
 const serverAddressStorageKey = "govts.serverAddress";
@@ -24,7 +26,7 @@ function rememberServerAddress(value: string) {
 const emptyView: ClientViewDTO = {
     connectionStatus: "disconnected",
     server: {name: ""}, revision: "0", sessionId: "0", channelId: "0", snapshotFresh: false,
-    channels: [], participants: [],
+    channels: [], participants: [], screenStreams: [],
     audio: {
         muted: false,
         deafened: false,
@@ -41,19 +43,34 @@ function errorText(error: unknown): string {
     return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
 }
 
+function screenPickerCancelled(error: unknown): boolean {
+    if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError")) return true;
+    return /permission denied by user|user cancelled|user canceled/i.test(errorText(error));
+}
+
 function App() {
+    const params = new URLSearchParams(window.location.search);
+    const streamID = params.get("screen");
+    if (streamID) return <ScreenViewerWindow streamID={streamID} ownerName={params.get("owner") || "Участник"}/>;
+    return <MainApp/>;
+}
+
+function MainApp() {
     const [view, setView] = useState<ClientViewDTO>(emptyView);
     const [page, setPage] = useState<Page>("channels");
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
     const [eventPanelHeight, setEventPanelHeight] = useState(135);
     const lastSequence = useRef("0");
+    const screenMedia = useRef<ScreenMediaController | null>(null);
+    if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
 
     const refresh = useCallback(async () => {
         try {
             const next = await desktopAPI.snapshot();
             next.channels ??= [];
             next.participants ??= [];
+            next.screenStreams ??= [];
             setView(next);
         } catch (error) {
             setActionError(errorText(error));
@@ -89,6 +106,10 @@ function App() {
             offEvents();
         };
     }, [refresh, refreshEvents]);
+    useEffect(() => {
+        if (view.connectionStatus === "disconnected") void screenMedia.current?.close();
+    }, [view.connectionStatus]);
+    useEffect(() => () => { void screenMedia.current?.close(); }, []);
 
     const invoke = useCallback(async (operation: () => Promise<unknown>) => {
         setActionError("");
@@ -119,7 +140,7 @@ function App() {
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} eventPanelHeight={eventPanelHeight}
-                                onEventPanelHeightChange={setEventPanelHeight} invoke={invoke}/>
+                                onEventPanelHeightChange={setEventPanelHeight} invoke={invoke} screenMedia={screenMedia.current}/>
                 : <SettingsPage view={view} invoke={invoke}/>}
         </main>
     </div>;
@@ -159,7 +180,7 @@ function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConne
         setPending(true);
         try {
             onClearEvents();
-            await desktopAPI.connect({name, server: address, initialChannel: "main"});
+            await desktopAPI.connect({name, server: address, initialChannel: "default"});
             await onRefresh();
             onConnected();
         } catch (connectError) {
@@ -224,12 +245,13 @@ function StatusBar({view, page, onPageChange, invoke}: {
     </header>;
 }
 
-function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange, invoke}: {
+function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange, invoke, screenMedia}: {
     view: ClientViewDTO;
     events: ClientEventDTO[];
     eventPanelHeight: number;
     onEventPanelHeightChange: (height: number | ((current: number) => number)) => void;
     invoke: (operation: () => Promise<unknown>) => Promise<void>
+    screenMedia: ScreenMediaController;
 }) {
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
@@ -263,9 +285,133 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                     <div><span>Частота</span><strong>{selected.audio.sampleRate / 1000} кГц</strong></div>
                     <div><span>Битрейт</span><strong>{selected.audio.bitrate / 1000} кбит/с</strong></div>
                 </div>
+                <ScreenSharing view={view} channelID={selected.id} participants={participants} controller={screenMedia}/>
             </> : <div className="empty-state">Выберите канал</div>}</section>
         </div>
         <EventPanel events={events} height={eventPanelHeight} onHeightChange={onEventPanelHeightChange}/>
+    </section>;
+}
+
+function ScreenViewerWindow({streamID, ownerName}: {streamID: string; ownerName: string}) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const controller = useRef<ScreenMediaController | null>(null);
+    const [status, setStatus] = useState("Подключение…");
+    const [resolution, setResolution] = useState("");
+    const [error, setError] = useState("");
+    const [fullscreen, setFullscreen] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const media = new ScreenMediaController();
+        controller.current = media;
+        const close = async () => {
+            await media.unsubscribe();
+            if (!cancelled) await WailsWindow.Close();
+        };
+        const validateMembership = async () => {
+            const snapshot = await desktopAPI.snapshot();
+            const stream = (snapshot.screenStreams ?? []).find((item) => item.id === streamID);
+            if (!stream || stream.channelId !== snapshot.channelId) {
+                setStatus("Просмотр завершён: вы покинули канал");
+                await close();
+                return false;
+            }
+            return true;
+        };
+        void (async () => {
+            try {
+                if (!await validateMembership() || cancelled) return;
+                const remote = await media.subscribe(streamID);
+                if (cancelled) { await media.unsubscribe(); return; }
+                if (videoRef.current) {
+                    videoRef.current.srcObject = remote;
+                    await videoRef.current.play();
+                }
+                setStatus("В эфире");
+            } catch (reason) {
+                if (!cancelled) { setError(errorText(reason)); setStatus("Ошибка подключения"); }
+            }
+        })();
+        const offState = desktopAPI.onStateChanged(() => void validateMembership().catch((reason) => setError(errorText(reason))));
+        return () => {
+            cancelled = true;
+            offState();
+            void media.unsubscribe();
+            controller.current = null;
+        };
+    }, [streamID]);
+
+    const close = async () => {
+        await controller.current?.unsubscribe();
+        await WailsWindow.Close();
+    };
+    const toggleFullscreen = async () => {
+        await WailsWindow.ToggleFullscreen();
+        setFullscreen(await WailsWindow.IsFullscreen());
+    };
+    return <main className="screen-viewer-window">
+        <header className="screen-viewer-toolbar">
+            <div><strong>{ownerName}</strong><span>{status}{resolution ? ` · ${resolution}` : ""}</span></div>
+            <button onClick={() => void toggleFullscreen()}>{fullscreen ? "Восстановить окно" : "Во весь экран"}</button>
+            <button onClick={() => void close()}>Закрыть</button>
+        </header>
+        {error && <div className="screen-viewer-error" role="alert">{error}</div>}
+        <video ref={videoRef} autoPlay playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            setResolution(`${video.videoWidth}×${video.videoHeight}`);
+        }}/>
+    </main>;
+}
+
+function ScreenSharing({view, channelID, participants, controller}: {
+    view: ClientViewDTO;
+    channelID: string;
+    participants: ParticipantDTO[];
+    controller: ScreenMediaController;
+}) {
+    const [publishing, setPublishing] = useState(false);
+    const [pending, setPending] = useState(false);
+    const [error, setError] = useState("");
+    const streams = (view.screenStreams ?? []).filter((stream) => stream.channelId === channelID);
+    const own = streams.find((stream) => stream.ownerSessionId === view.sessionId);
+
+    const start = async () => {
+        setPending(true); setError("");
+        try {
+            await controller.publish(() => setPublishing(false));
+            setPublishing(true);
+        } catch (reason) { if (!screenPickerCancelled(reason)) setError(errorText(reason)); }
+        finally { setPending(false); }
+    };
+    const stop = async () => {
+        setPending(true); setError("");
+        try { await controller.stopPublishing(); setPublishing(false); }
+        catch (reason) { setError(errorText(reason)); }
+        finally { setPending(false); }
+    };
+    const watch = async (streamID: string, ownerName: string) => {
+        setPending(true); setError("");
+        try { await desktopAPI.openScreenWindow(streamID, ownerName); }
+        catch (reason) { setError(errorText(reason)); }
+        finally { setPending(false); }
+    };
+
+    return <section className="screen-sharing">
+        <div className="screen-heading"><div><span>Демонстрации экрана</span><strong>{streams.length}</strong></div>
+            {channelID === view.channelId && (publishing || own
+                ? <button disabled={pending} onClick={() => void stop()}>Завершить</button>
+                : <button className="screen-start" disabled={pending} onClick={() => void start()}>Показать экран</button>)}</div>
+        {error && <div className="screen-error" role="alert">{error}</div>}
+        {streams.length ? <div className="screen-cards">{streams.map((stream) => {
+            const owner = participants.find((item) => item.sessionId === stream.ownerSessionId);
+            const ownerName = owner?.displayName ?? "Участник";
+            return <article className="screen-card" key={stream.id}>
+                <span className="screen-icon" aria-hidden="true">▣</span>
+                <div><strong>{ownerName}</strong><small>показывает экран</small></div>
+                {stream.ownerSessionId === view.sessionId ? <span className="screen-own">Вы</span>
+                    : <button disabled={pending || channelID !== view.channelId} onClick={() => void watch(stream.id, ownerName)}>Смотреть</button>}
+            </article>;
+        })}</div> : <p className="screen-empty">Сейчас никто не демонстрирует экран.</p>}
     </section>;
 }
 

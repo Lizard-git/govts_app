@@ -102,6 +102,35 @@ h2 { margin: 0; font-size: 20px; }
 .detail-grid div { display: grid; gap: 5px; padding: 11px; border-radius: 10px; background: #162137; }
 .detail-grid span { color: #6f80a1; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .detail-grid strong { font-size: 13px; }
+.screen-sharing { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.screen-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
+.screen-heading > div { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; color: #a9b8d2; font-size: 12px; font-weight: 750; }
+.screen-heading strong { display: grid; min-width: 22px; height: 20px; place-items: center; border-radius: 7px; color: var(--muted); background: #111b2d; font-size: 10px; }
+.screen-heading button, .screen-card button { padding: 7px 10px; border: 1px solid #3b4c6b; border-radius: 8px; color: #c4d1e7; background: #22304a; cursor: pointer; font-size: 11px; }
+.screen-heading button:hover:not(:disabled), .screen-card button:hover:not(:disabled) { color: white; background: #2b3d5d; }
+.screen-heading .screen-start { color: #d9fff5; border-color: rgba(19, 231, 176, .35); background: rgba(19, 231, 176, .11); }
+.screen-heading button:disabled, .screen-card button:disabled { cursor: not-allowed; opacity: .48; }
+.screen-cards { display: grid; gap: 8px; }
+.screen-card { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 10px; border: 1px solid transparent; border-radius: 10px; background: #162137; }
+.screen-card.active { border-color: rgba(33, 165, 246, .55); background: #172a43; }
+.screen-card > div { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.screen-card > div strong { overflow: hidden; color: #d5deed; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.screen-card small, .screen-empty { color: #7182a0; font-size: 11px; }
+.screen-icon { display: grid; width: 30px; height: 25px; place-items: center; border-radius: 7px; color: var(--accent); background: #20364a; }
+.screen-own { color: var(--accent); font-size: 11px; font-weight: 750; }
+.screen-empty { margin: 0; padding: 10px 0; }
+.screen-error { margin-bottom: 9px; padding: 8px 10px; border: 1px solid rgba(255, 108, 122, .35); border-radius: 8px; color: #ffd5da; background: rgba(255, 108, 122, .1); font-size: 11px; }
+.screen-video { display: none; width: 100%; max-height: 42vh; margin-top: 12px; border-radius: 10px; background: #05080e; }
+.screen-video.visible { display: block; }
+.screen-viewer-window { display: grid; width: 100%; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); background: #080c14; overflow: hidden; }
+.screen-viewer-toolbar { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border-bottom: 1px solid #25334b; background: #121b2b; }
+.screen-viewer-toolbar > div { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.screen-viewer-toolbar strong { overflow: hidden; color: #e5edf9; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.screen-viewer-toolbar span { color: #7485a2; font-size: 10px; }
+.screen-viewer-toolbar button { padding: 7px 11px; border: 1px solid #3b4c6b; border-radius: 8px; color: #c4d1e7; background: #22304a; cursor: pointer; font-size: 11px; }
+.screen-viewer-toolbar button:hover { color: white; background: #2b3d5d; }
+.screen-viewer-window video { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; }
+.screen-viewer-error { padding: 8px 12px; color: #ffd5da; border-bottom: 1px solid rgba(255, 108, 122, .35); background: rgba(255, 108, 122, .1); font-size: 11px; }
 .empty-state, .empty-event { display: grid; min-height: 120px; place-items: center; color: #667694; font-size: 13px; }
 
 .event-dock { display: grid; min-height: 85px; align-self: end; grid-template-rows: 13px minmax(0, 1fr); margin-bottom: 10px; }

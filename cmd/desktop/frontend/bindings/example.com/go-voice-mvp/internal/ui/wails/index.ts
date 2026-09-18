@@ -16,6 +16,8 @@ export type {
     ClientEventDTO,
     ClientViewDTO,
     ConnectRequest,
+    MediaTrustDTO,
     ParticipantDTO,
+    ScreenStreamDTO,
     ServerDTO
 } from "./models.js";

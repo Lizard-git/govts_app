@@ -42,6 +42,12 @@ type ParticipantDTO struct {
 	Local       bool   `json:"local"`
 }
 
+type ScreenStreamDTO struct {
+	ID             string `json:"id"`
+	OwnerSessionID string `json:"ownerSessionId"`
+	ChannelID      string `json:"channelId"`
+}
+
 type AudioStateDTO struct {
 	Muted              bool    `json:"muted"`
 	Deafened           bool    `json:"deafened"`
@@ -73,16 +79,17 @@ type AudioMeterDTO struct {
 }
 
 type ClientViewDTO struct {
-	ConnectionStatus string           `json:"connectionStatus"`
-	LastError        string           `json:"lastError,omitempty"`
-	Server           ServerDTO        `json:"server"`
-	Revision         string           `json:"revision"`
-	SessionID        string           `json:"sessionId"`
-	ChannelID        string           `json:"channelId"`
-	SnapshotFresh    bool             `json:"snapshotFresh"`
-	Channels         []ChannelDTO     `json:"channels"`
-	Participants     []ParticipantDTO `json:"participants"`
-	Audio            AudioStateDTO    `json:"audio"`
+	ConnectionStatus string            `json:"connectionStatus"`
+	LastError        string            `json:"lastError,omitempty"`
+	Server           ServerDTO         `json:"server"`
+	Revision         string            `json:"revision"`
+	SessionID        string            `json:"sessionId"`
+	ChannelID        string            `json:"channelId"`
+	SnapshotFresh    bool              `json:"snapshotFresh"`
+	Channels         []ChannelDTO      `json:"channels"`
+	Participants     []ParticipantDTO  `json:"participants"`
+	ScreenStreams    []ScreenStreamDTO `json:"screenStreams"`
+	Audio            AudioStateDTO     `json:"audio"`
 }
 
 type ClientEventDTO struct {
@@ -117,6 +124,10 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 			Local:       participant.SessionID == view.SessionID,
 		})
 	}
+	streams := make([]ScreenStreamDTO, 0, len(view.ScreenStreams))
+	for _, stream := range view.ScreenStreams {
+		streams = append(streams, ScreenStreamDTO{ID: formatUint64(uint64(stream.ID)), OwnerSessionID: formatUint64(stream.OwnerSessionID), ChannelID: formatUint64(uint64(stream.ChannelID))})
+	}
 	return ClientViewDTO{
 		ConnectionStatus: connectionStatus(view.ConnectionStatus),
 		LastError:        lastError,
@@ -127,6 +138,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		SnapshotFresh:    view.SnapshotFresh,
 		Channels:         channels,
 		Participants:     participants,
+		ScreenStreams:    streams,
 		Audio: AudioStateDTO{
 			Muted:              view.Muted,
 			Deafened:           view.Deafened,

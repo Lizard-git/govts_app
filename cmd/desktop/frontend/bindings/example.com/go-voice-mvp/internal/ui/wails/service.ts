@@ -7,6 +7,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as clientapp$0 from "../../clientapp/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as media$0 from "../../media/models.js";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 export function AudioDevices(): $CancellablePromise<$models.AudioDevicesDTO> {
@@ -27,6 +34,18 @@ export function EventsAfter(sequence: string): $CancellablePromise<$models.Clien
 
 export function JoinChannel(channelID: string): $CancellablePromise<void> {
     return $Call.ByID(136141940, channelID);
+}
+
+export function MediaServerIdentity(): $CancellablePromise<$models.MediaTrustDTO> {
+    return $Call.ByID(891014062);
+}
+
+export function OpenScreenWindow(streamID: string, ownerName: string): $CancellablePromise<void> {
+    return $Call.ByID(393597545, streamID, ownerName);
+}
+
+export function PublishScreen(offer: media$0.SessionDescription): $CancellablePromise<clientapp$0.MediaPublishResult> {
+    return $Call.ByID(3026111448, offer);
 }
 
 export function SavedDisplayName(): $CancellablePromise<string> {
@@ -71,4 +90,20 @@ export function SetVADSensitivity(value: number): $CancellablePromise<void> {
 
 export function Snapshot(): $CancellablePromise<$models.ClientViewDTO> {
     return $Call.ByID(3461296401);
+}
+
+export function StopScreen(streamID: string): $CancellablePromise<void> {
+    return $Call.ByID(3581875877, streamID);
+}
+
+export function SubscribeScreen(streamID: string, subscriberID: string, offer: media$0.SessionDescription): $CancellablePromise<clientapp$0.MediaSubscribeResult> {
+    return $Call.ByID(1746283899, streamID, subscriberID, offer);
+}
+
+export function TrustMediaServer(fingerprint: string): $CancellablePromise<void> {
+    return $Call.ByID(679130948, fingerprint);
+}
+
+export function UnsubscribeScreen(streamID: string, subscriberID: string): $CancellablePromise<void> {
+    return $Call.ByID(4286357958, streamID, subscriberID);
 }

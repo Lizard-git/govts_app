@@ -10,6 +10,8 @@ export type {
     ClientViewDTO,
     ConnectRequest,
     ParticipantDTO,
+    ScreenStreamDTO,
+    MediaTrustDTO,
 } from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
 
 import type {AudioMeterDTO, ConnectRequest} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
@@ -31,6 +33,14 @@ export const desktopAPI = {
     audioDevices: () => Service.AudioDevices(),
     setCaptureDevice: (id: string) => Service.SetCaptureDevice(id),
     setPlaybackDevice: (id: string) => Service.SetPlaybackDevice(id),
+    mediaServerIdentity: () => Service.MediaServerIdentity(),
+    trustMediaServer: (fingerprint: string) => Service.TrustMediaServer(fingerprint),
+    publishScreen: (offer: {type: string; sdp: string}) => Service.PublishScreen(offer),
+    subscribeScreen: (streamID: string, subscriberID: string, offer: {type: string; sdp: string}) =>
+        Service.SubscribeScreen(streamID, subscriberID, offer),
+    stopScreen: (streamID: string) => Service.StopScreen(streamID),
+    unsubscribeScreen: (streamID: string, subscriberID: string) => Service.UnsubscribeScreen(streamID, subscriberID),
+    openScreenWindow: (streamID: string, ownerName: string) => Service.OpenScreenWindow(streamID, ownerName),
     onStateChanged: (listener: () => void) => Events.On("client-state-changed", listener),
     onEventLogChanged: (listener: () => void) => Events.On("client-event-log-changed", listener),
     onAudioMeter: (listener: (sample: AudioMeterDTO) => void) =>
