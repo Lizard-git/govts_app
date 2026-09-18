@@ -2,6 +2,9 @@ version: '3'
 
 vars:
   APP_NAME: Govts
+  # Keep the executable name stable. Wails may override APP_NAME with a
+  # display name containing the application version.
+  BINARY_NAME: Govts
   FRONTEND_DIR: cmd/desktop/frontend
   WAILS_VERSION: v3.0.0-beta.20
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
@@ -46,33 +49,33 @@ tasks:
       # Keep the Vite-backed development executable separate from the
       # standalone application. It only contains the fallback page and must
       # not be mistaken for a distributable build.
-      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.APP_NAME}}-dev.exe ./cmd/desktop
+      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.BINARY_NAME}}-dev.exe ./cmd/desktop
         platforms: [windows]
-      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.APP_NAME}}-dev ./cmd/desktop
+      - cmd: go build -buildvcs=false -gcflags=all="-l" -o bin/{{.BINARY_NAME}}-dev ./cmd/desktop
         platforms: [linux, darwin]
 
   build:
     desc: Build the Wails desktop client
     deps: [frontend:build, version:bump]
     cmds:
-      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s -H windowsgui"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.APP_NAME}}.exe ./cmd/desktop
+      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s -H windowsgui"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.BINARY_NAME}}.exe ./cmd/desktop
         platforms: [windows]
-      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.APP_NAME}} ./cmd/desktop
+      - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.BINARY_NAME}} ./cmd/desktop
         platforms: [linux, darwin]
 
   run:
     cmds:
-      - cmd: bin/{{.APP_NAME}}.exe
+      - cmd: bin/{{.BINARY_NAME}}.exe
         platforms: [windows]
-      - cmd: ./bin/{{.APP_NAME}}
+      - cmd: ./bin/{{.BINARY_NAME}}
         platforms: [linux, darwin]
 
   run:dev:
     internal: true
     cmds:
-      - cmd: bin/{{.APP_NAME}}-dev.exe
+      - cmd: bin/{{.BINARY_NAME}}-dev.exe
         platforms: [windows]
-      - cmd: ./bin/{{.APP_NAME}}-dev
+      - cmd: ./bin/{{.BINARY_NAME}}-dev
         platforms: [linux, darwin]
 
   dev:
