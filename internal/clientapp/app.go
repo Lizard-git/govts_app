@@ -230,7 +230,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name s
 			return sessionErr
 		}
 		delay := backoff.Next()
-		a.events.append("reconnect", fmt.Sprintf("Соединение потеряно; повтор через %s", delay), 0)
+		a.events.append("reconnect", fmt.Sprintf("Соединение потеряно (%s); повтор через %s", sessionErr, delay), 0)
 		if !a.waitForReconnect(ctx, delay) {
 			return nil
 		}

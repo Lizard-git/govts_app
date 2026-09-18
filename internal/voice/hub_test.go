@@ -49,7 +49,7 @@ func TestCreateSessionReplacingEndpointIsAtomic(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
 	first := mustCreateSession(t, hub, "alice", addr)
 	revision := hub.Revision()
-	second, replaced, err := hub.CreateSessionReplacingEndpoint("alice", addr)
+	second, replaced, err := hub.CreateSessionReplacingEndpoint("bob", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +61,38 @@ func TestCreateSessionReplacingEndpointIsAtomic(t *testing.T) {
 	}
 	if hub.Count() != 1 || hub.Revision() != revision+2 {
 		t.Fatalf("count/revision = %d/%d", hub.Count(), hub.Revision())
+	}
+}
+
+func TestCreateSessionResumesSameIdentityAndPreservesScreenStream(t *testing.T) {
+	hub := NewHub()
+	channel := mustCreateChannel(t, hub, domain.Channel{Name: "main"})
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	first := mustCreateSession(t, hub, "alice", addr)
+	if err := hub.JoinChannel(first.ID, channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	const streamID domain.StreamID = 42
+	if _, err := hub.StartScreenShare(first.ID, streamID); err != nil {
+		t.Fatal(err)
+	}
+	revision := hub.Revision()
+
+	resumed, replaced, err := hub.CreateSessionReplacingEndpoint("alice", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.ID != first.ID || len(replaced) != 0 {
+		t.Fatalf("resume = session %d, removed %v; want session %d", resumed.ID, replaced, first.ID)
+	}
+	if resumed.ChannelID != channel.ID {
+		t.Fatalf("resumed channel = %d, want %d", resumed.ChannelID, channel.ID)
+	}
+	if _, ok := hub.ScreenStream(streamID); !ok {
+		t.Fatal("resume removed active screen stream")
+	}
+	if hub.Count() != 1 || hub.Revision() != revision {
+		t.Fatalf("count/revision = %d/%d, want 1/%d", hub.Count(), hub.Revision(), revision)
 	}
 }
 

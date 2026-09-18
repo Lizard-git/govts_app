@@ -309,8 +309,36 @@ func TestHeartbeatProbeTimeoutMeansConnectionLost(t *testing.T) {
 	if strings.Count(err.Error(), ErrConnectionLost.Error()) != 1 {
 		t.Fatalf("heartbeat error repeats connection state: %q", err)
 	}
-	if strings.Contains(err.Error(), "1 attempts") {
-		t.Fatalf("heartbeat error uses invalid singular grammar: %q", err)
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("heartbeat error does not report retries: %q", err)
+	}
+}
+
+func TestHeartbeatProbeRetriesDroppedRequest(t *testing.T) {
+	peer := newJoinTestPeer(t)
+	serverErr := make(chan error, 1)
+	go func() {
+		first, _, err := peer.receiveRequest()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		second, addr, err := peer.receiveRequest()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if second.RequestID != first.RequestID {
+			serverErr <- fmt.Errorf("retry request ID = %d, want %d", second.RequestID, first.RequestID)
+			return
+		}
+		serverErr <- peer.sendResponse(addr, protocol.VoicePacket{Type: protocol.PacketHeartbeatAck, SessionID: second.SessionID, RequestID: second.RequestID})
+	}()
+	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, 300*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -378,7 +406,7 @@ func TestHeartbeatProbeIgnoresWrongRequestAndDuplicateAck(t *testing.T) {
 	}
 }
 
-func TestLateHeartbeatAckDoesNotRestoreLiveness(t *testing.T) {
+func TestLateHeartbeatAckCompletesRetryWindow(t *testing.T) {
 	peer := newJoinTestPeer(t)
 	serverErr := make(chan error, 1)
 	go func() {
@@ -387,22 +415,21 @@ func TestLateHeartbeatAckDoesNotRestoreLiveness(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(15 * time.Millisecond)
 		serverErr <- peer.sendResponse(addr, protocol.VoicePacket{
 			Type:      protocol.PacketHeartbeatAck,
 			SessionID: request.SessionID,
 			RequestID: request.RequestID,
 		})
 	}()
-	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, 10*time.Millisecond); !errors.Is(err, ErrConnectionLost) {
-		t.Fatalf("heartbeat error = %v", err)
+	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, 30*time.Millisecond); err != nil {
+		t.Fatal(err)
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(20 * time.Millisecond)
-	if !peer.state.LastHeartbeatAck().IsZero() {
-		t.Fatal("late heartbeat ACK restored liveness")
+	if peer.state.LastHeartbeatAck().IsZero() {
+		t.Fatal("heartbeat ACK received during retry window did not restore liveness")
 	}
 }
 

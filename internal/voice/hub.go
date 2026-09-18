@@ -511,14 +511,17 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 		return Session{}, nil, err
 	}
 
-	id, err := h.availableSessionID()
-	if err != nil {
-		return Session{}, nil, err
-	}
 	var replaced []uint64
 	if addr != nil {
 		for oldID, oldSession := range h.sessions {
 			if sameUDPAddr(oldSession.Addr, addr) {
+				// A reconnect uses a new Hello request ID but keeps the UDP
+				// endpoint and display name. Resume that session so transient
+				// control-plane loss does not tear down its media publisher.
+				if oldSession.Name == name {
+					oldSession.LastSeen = time.Now()
+					return *cloneSession(oldSession), nil, nil
+				}
 				delete(h.sessions, oldID)
 				h.stopScreenShareByOwnerLocked(oldID)
 				h.revision++
@@ -526,6 +529,10 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 				replaced = append(replaced, oldID)
 			}
 		}
+	}
+	id, err := h.availableSessionID()
+	if err != nil {
+		return Session{}, nil, err
 	}
 	session := &Session{
 		ID:       id,

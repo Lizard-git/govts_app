@@ -17,6 +17,7 @@ var ErrConnectionLost = errors.New("connection lost")
 const (
 	HeartbeatInterval    = 5 * time.Second
 	HeartbeatACKDeadline = 3 * time.Second
+	heartbeatAttempts    = 3
 )
 
 func ControlLoop(
@@ -116,7 +117,11 @@ func heartbeatLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State
 }
 
 func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *State, deadline time.Duration) error {
-	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat}, deadline, 1)
+	if deadline <= 0 {
+		return fmt.Errorf("%w: heartbeat deadline must be positive", ErrConnectionLost)
+	}
+	attemptTimeout := deadline / heartbeatAttempts
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat}, attemptTimeout, heartbeatAttempts)
 	if err != nil {
 		return fmt.Errorf("%w: heartbeat: %w", ErrConnectionLost, err)
 	}
