@@ -19,12 +19,6 @@ import (
 	"example.com/go-voice-mvp/internal/transport/udp"
 )
 
-const (
-	sampleRate      = 48000
-	channels        = 1
-	samplesPerFrame = 960
-)
-
 func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
 	output = &lockedOutput{writer: output}
 	noticeOutput = &lockedOutput{writer: noticeOutput}
@@ -188,6 +182,13 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		}
 	}
 	currentSnapshot := state.Snapshot()
+	activeProfile, err := channelAudioProfile(currentSnapshot, state.ChannelID())
+	if err != nil {
+		return finish(err)
+	}
+	if err := encoder.Configure(activeProfile); err != nil {
+		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
+	}
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
 	if shouldRenderConnectionTree(firstConnection, treePrinted, topologyUnchanged) {
 		if !firstConnection {
@@ -206,10 +207,32 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return voiceclient.EncodeLoopWithPipeline(ctx, encoder, filter, detector, gate, pcmCh, audioCh, state)
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.RecordLoop(ctx, recorder, pcmCh, samplesPerFrame, state.Audio)
+		return voiceclient.RecordLoop(ctx, recorder, pcmCh, codecConfig.SamplesPerFrame, state.Audio)
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh, state.Audio) })
+	})
+	supervisor.Go(func(ctx context.Context) error {
+		changed, unsubscribe := state.Subscribe(ctx)
+		defer unsubscribe()
+		channelID := state.ChannelID()
+		profile := activeProfile
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-changed:
+				nextChannelID := state.ChannelID()
+				nextProfile, profileErr := channelAudioProfile(state.Snapshot(), nextChannelID)
+				if profileErr != nil || (nextChannelID == channelID && nextProfile == profile) {
+					continue
+				}
+				if err := encoder.Configure(nextProfile); err != nil {
+					return fmt.Errorf("configure Opus encoder for channel %d: %w", nextChannelID, err)
+				}
+				channelID, profile = nextChannelID, nextProfile
+			}
+		}
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		current := devices
@@ -303,7 +326,27 @@ func classifyNetworkLoopError(operation string, err error) error {
 }
 
 func clientAudioConfig() audio.CodecConfig {
-	return audio.CodecConfig{SampleRate: sampleRate, Channels: channels, SamplesPerFrame: samplesPerFrame}
+	profile := domain.DefaultAudioProfile()
+
+	return audio.CodecConfig{
+		SampleRate:      int(profile.SampleRate),
+		Channels:        int(profile.Channels),
+		SamplesPerFrame: int(profile.SampleRate) * int(profile.FrameDurationMS) / 1000,
+		Bitrate:         int(profile.Bitrate),
+		Application:     profile.Application,
+	}
+}
+
+func channelAudioProfile(snapshot domain.ServerSnapshot, channelID domain.ChannelID) (domain.AudioProfile, error) {
+	for _, channel := range snapshot.Channels {
+		if channel.ID == channelID {
+			if err := domain.ValidateAudioProfile(channel.Audio); err != nil {
+				return domain.AudioProfile{}, fmt.Errorf("channel %d audio profile: %w", channelID, err)
+			}
+			return channel.Audio, nil
+		}
+	}
+	return domain.AudioProfile{}, fmt.Errorf("channel %d is missing from server snapshot", channelID)
 }
 
 func wrapError(operation string, err error) error {

@@ -222,7 +222,7 @@ func validateServerSnapshot(s domain.ServerSnapshot) error {
 		if _, ok := ids[c.ID]; ok {
 			return fmt.Errorf("duplicate channel ID %d", c.ID)
 		}
-		if !validSnapshotText(c.Name, domain.MaxChannelNameBytes, true) || !validSnapshotText(c.Topic, domain.MaxChannelTopicBytes, false) || !validSnapshotText(c.Description, domain.MaxChannelDescriptionBytes, false) || c.Type != domain.ChannelTypePermanent || c.Audio != domain.DefaultAudioProfile() {
+		if !validSnapshotText(c.Name, domain.MaxChannelNameBytes, true) || !validSnapshotText(c.Topic, domain.MaxChannelTopicBytes, false) || !validSnapshotText(c.Description, domain.MaxChannelDescriptionBytes, false) || c.Type != domain.ChannelTypePermanent || domain.ValidateAudioProfile(c.Audio) != nil {
 			return fmt.Errorf("invalid channel %d", c.ID)
 		}
 		ids[c.ID] = c

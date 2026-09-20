@@ -591,8 +591,8 @@ func validateChannel(channel domain.Channel) error {
 	if channel.Type != domain.ChannelTypePermanent {
 		return fmt.Errorf("%w: unsupported channel type %d", ErrInvalidChannel, channel.Type)
 	}
-	if channel.Audio != domain.DefaultAudioProfile() {
-		return fmt.Errorf("%w: unsupported audio profile", ErrInvalidChannel)
+	if err := domain.ValidateAudioProfile(channel.Audio); err != nil {
+		return fmt.Errorf("%w: unsupported audio profile: %v", ErrInvalidChannel, err)
 	}
 	return nil
 }

@@ -26,6 +26,7 @@ type ChannelDefinition struct {
 	Description string
 	Position    uint32
 	MaxUsers    uint32
+	Audio       domain.AudioProfile
 	Children    []ChannelDefinition
 }
 
@@ -68,7 +69,17 @@ type ChannelSpec struct {
 	Description string        `json:"description,omitempty"`
 	Position    uint32        `json:"position,omitempty"`
 	MaxUsers    uint32        `json:"max_users,omitempty"`
+	Audio       *AudioSpec    `json:"audio,omitempty"`
 	Children    []ChannelSpec `json:"children,omitempty"`
+}
+
+type AudioSpec struct {
+	Codec           string `json:"codec,omitempty"`
+	SampleRate      uint32 `json:"sample_rate,omitempty"`
+	Channels        uint8  `json:"channels,omitempty"`
+	FrameDurationMS uint16 `json:"frame_duration_ms,omitempty"`
+	Bitrate         uint32 `json:"bitrate,omitempty"`
+	Application     string `json:"application,omitempty"`
 }
 
 func (source JSONBootstrapSource) Load(ctx context.Context) (ServerDefinition, error) {
@@ -204,6 +215,7 @@ func createChannelTree(
 		Description: definition.Description,
 		Position:    definition.Position,
 		MaxUsers:    definition.MaxUsers,
+		Audio:       definition.Audio,
 	})
 	if err != nil {
 		return fmt.Errorf("%s (%q): %w", path, definition.Name, err)
@@ -226,8 +238,40 @@ func definitionsFromSpecs(specs []ChannelSpec) []ChannelDefinition {
 			Description: spec.Description,
 			Position:    spec.Position,
 			MaxUsers:    spec.MaxUsers,
+			Audio:       audioProfileFromSpec(spec.Audio),
 			Children:    definitionsFromSpecs(spec.Children),
 		}
 	}
 	return definitions
+}
+
+func audioProfileFromSpec(spec *AudioSpec) domain.AudioProfile {
+	profile := domain.DefaultAudioProfile()
+	if spec == nil {
+		return profile
+	}
+	if spec.Codec != "" && spec.Codec != "opus" {
+		profile.Codec = 0
+	}
+	if spec.SampleRate != 0 {
+		profile.SampleRate = spec.SampleRate
+	}
+	if spec.Channels != 0 {
+		profile.Channels = spec.Channels
+	}
+	if spec.FrameDurationMS != 0 {
+		profile.FrameDurationMS = spec.FrameDurationMS
+	}
+	if spec.Bitrate != 0 {
+		profile.Bitrate = spec.Bitrate
+	}
+	switch spec.Application {
+	case "", "voip":
+		profile.Application = domain.OpusApplicationVoIP
+	case "audio":
+		profile.Application = domain.OpusApplicationAudio
+	default:
+		profile.Application = 0
+	}
+	return profile
 }

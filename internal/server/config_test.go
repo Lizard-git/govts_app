@@ -101,6 +101,43 @@ func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	}
 }
 
+func TestJSONBootstrapSourceAppliesChannelAudioProfile(t *testing.T) {
+	path := writeTestConfig(t, `{
+  "server": {"name": "Test Server"},
+  "channels": [{
+    "name": "high-quality",
+    "audio": {
+      "codec": "opus",
+      "sample_rate": 48000,
+      "channels": 1,
+      "frame_duration_ms": 20,
+      "bitrate": 48000,
+      "application": "audio"
+    }
+  }]
+}`)
+
+	hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := testChannelNamed(t, hub.ListChannels(), "high-quality")
+	if channel.Audio.Bitrate != 48_000 || channel.Audio.Application != domain.OpusApplicationAudio {
+		t.Fatalf("audio profile = %+v", channel.Audio)
+	}
+}
+
+func TestJSONBootstrapSourceRejectsUnsupportedChannelAudioProfile(t *testing.T) {
+	path := writeTestConfig(t, `{
+  "server": {"name": "Test Server"},
+  "channels": [{"name": "invalid", "audio": {"bitrate": 1000}}]
+}`)
+
+	if _, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path}); err == nil || !strings.Contains(err.Error(), "bitrate") {
+		t.Fatalf("BootstrapHub() error = %v, want bitrate validation error", err)
+	}
+}
+
 func TestJSONBootstrapSourceRejectsEmptyChannelList(t *testing.T) {
 	path := writeTestConfig(t, `{"server":{"name":"Test Server"},"channels": []}`)
 	if hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path}); hub != nil || err == nil || !strings.Contains(err.Error(), "at least one channel") {

@@ -392,7 +392,7 @@ func validateSnapshotChannel(c domain.Channel) error {
 	if c.Name == "" || strings.TrimSpace(c.Name) != c.Name {
 		return errors.New("invalid channel name")
 	}
-	if c.Type != domain.ChannelTypePermanent || c.Audio != domain.DefaultAudioProfile() {
+	if c.Type != domain.ChannelTypePermanent || domain.ValidateAudioProfile(c.Audio) != nil {
 		return errors.New("unsupported channel properties")
 	}
 	return nil

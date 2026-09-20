@@ -1,5 +1,7 @@
 package domain
 
+import "fmt"
+
 const (
 	MaxChannelNameBytes        = 64
 	MaxChannelTopicBytes       = 128
@@ -58,8 +60,27 @@ func DefaultAudioProfile() AudioProfile {
 		Channels:        1,
 		FrameDurationMS: 20,
 		Bitrate:         24_000,
-		Application:     OpusApplicationAudio,
+		Application:     OpusApplicationVoIP,
 	}
+}
+
+// ValidateAudioProfile validates the audio settings currently supported by the
+// client audio pipeline. Bitrate and Opus application may vary per channel;
+// the PCM format remains fixed because RNNoise and WebRTC VAD require it.
+func ValidateAudioProfile(profile AudioProfile) error {
+	if profile.Codec != AudioCodecOpus {
+		return fmt.Errorf("unsupported audio codec %d", profile.Codec)
+	}
+	if profile.SampleRate != 48_000 || profile.Channels != 1 || profile.FrameDurationMS != 20 {
+		return fmt.Errorf("unsupported PCM format %d Hz/%d channels/%d ms", profile.SampleRate, profile.Channels, profile.FrameDurationMS)
+	}
+	if profile.Bitrate < 6_000 || profile.Bitrate > 510_000 {
+		return fmt.Errorf("Opus bitrate %d is outside 6000..510000", profile.Bitrate)
+	}
+	if profile.Application != OpusApplicationAudio && profile.Application != OpusApplicationVoIP {
+		return fmt.Errorf("unsupported Opus application %d", profile.Application)
+	}
+	return nil
 }
 
 type Channel struct {

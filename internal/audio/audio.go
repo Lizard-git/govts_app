@@ -3,6 +3,8 @@ package audio
 import (
 	"encoding/binary"
 	"time"
+
+	"example.com/go-voice-mvp/internal/domain"
 )
 
 type Frame struct {
@@ -48,6 +50,8 @@ type CodecConfig struct {
 	SampleRate      int
 	Channels        int
 	SamplesPerFrame int
+	Bitrate         int
+	Application     domain.OpusApplication
 }
 
 type Player interface {
