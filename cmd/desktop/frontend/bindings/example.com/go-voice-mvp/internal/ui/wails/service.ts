@@ -44,6 +44,10 @@ export function OpenScreenWindow(streamID: string, ownerName: string): $Cancella
     return $Call.ByID(393597545, streamID, ownerName);
 }
 
+export function ParticipantVolume(sessionID: string): $CancellablePromise<number> {
+    return $Call.ByID(3981274204, sessionID);
+}
+
 export function PublishScreen(offer: mediasignal$0.SessionDescription): $CancellablePromise<clientapp$0.MediaPublishResult> {
     return $Call.ByID(3026111448, offer);
 }
@@ -64,6 +68,10 @@ export function SetMuted(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(2056801774, value);
 }
 
+export function SetParticipantVolume(sessionID: string, value: number): $CancellablePromise<void> {
+    return $Call.ByID(3934601354, sessionID, value);
+}
+
 export function SetPlaybackDevice(id: string): $CancellablePromise<void> {
     return $Call.ByID(2957827556, id);
 }
@@ -74,6 +82,10 @@ export function SetRNNoiseEnabled(value: boolean): $CancellablePromise<void> {
 
 export function SetRNNoiseSensitivity(value: number): $CancellablePromise<void> {
     return $Call.ByID(245222922, value);
+}
+
+export function SetTheme(value: string): $CancellablePromise<void> {
+    return $Call.ByID(2726855576, value);
 }
 
 export function SetVADEnabled(value: boolean): $CancellablePromise<void> {
@@ -98,6 +110,10 @@ export function StopScreen(streamID: string): $CancellablePromise<void> {
 
 export function SubscribeScreen(streamID: string, subscriberID: string, offer: mediasignal$0.SessionDescription): $CancellablePromise<clientapp$0.MediaSubscribeResult> {
     return $Call.ByID(1746283899, streamID, subscriberID, offer);
+}
+
+export function Theme(): $CancellablePromise<string> {
+    return $Call.ByID(3829928486);
 }
 
 export function TrustMediaServer(fingerprint: string): $CancellablePromise<void> {

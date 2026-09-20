@@ -37,6 +37,9 @@ func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {
 	if err := first.SetVADEnabled(true); err != nil {
 		t.Fatal(err)
 	}
+	if err := first.SetTheme(clientsettings.ThemeLight); err != nil {
+		t.Fatal(err)
+	}
 
 	secondClient := clientapp.New(clientapp.Options{})
 	second := NewService(secondClient)
@@ -49,6 +52,9 @@ func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {
 	}
 	if got := second.SavedDisplayName(); got != "Alice" {
 		t.Fatalf("restored display name = %q", got)
+	}
+	if got := second.Theme(); got != clientsettings.ThemeLight {
+		t.Fatalf("restored theme = %q", got)
 	}
 }
 

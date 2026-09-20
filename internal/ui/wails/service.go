@@ -39,6 +39,7 @@ type Service struct {
 	displayName      string
 	serverAddress    string
 	trustedMediaKeys map[string]string
+	theme            string
 }
 
 func NewService(client *clientapp.App) *Service { return &Service{client: client} }
@@ -186,6 +187,39 @@ func (s *Service) SavedDisplayName() string {
 	s.settingsMu.RLock()
 	defer s.settingsMu.RUnlock()
 	return s.displayName
+}
+
+func (s *Service) Theme() string {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return clientsettings.NormalizeTheme(s.theme)
+}
+
+func (s *Service) SetTheme(value string) error {
+	normalized := clientsettings.NormalizeTheme(strings.TrimSpace(value))
+	if normalized != value {
+		return &validationError{Field: "theme", Message: "неизвестная тема"}
+	}
+	s.settingsMu.Lock()
+	s.theme = normalized
+	s.settingsMu.Unlock()
+	return s.saveSettings()
+}
+
+func (s *Service) ParticipantVolume(sessionID string) (float32, error) {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return 0, err
+	}
+	return s.client.ParticipantVolume(id), nil
+}
+
+func (s *Service) SetParticipantVolume(sessionID string, value float32) error {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return err
+	}
+	return s.client.SetParticipantVolume(id, value)
 }
 
 func (s *Service) Disconnect() error {

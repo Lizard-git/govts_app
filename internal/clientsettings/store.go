@@ -22,6 +22,22 @@ type Settings struct {
 	VADMode            string            `json:"vadMode"`
 	VADSensitivity     float32           `json:"vadSensitivity"`
 	TrustedMediaKeys   map[string]string `json:"trustedMediaKeys,omitempty"`
+	Theme              string            `json:"theme,omitempty"`
+}
+
+const (
+	ThemeSystem = "system"
+	ThemeDark   = "dark"
+	ThemeLight  = "light"
+)
+
+func NormalizeTheme(value string) string {
+	switch value {
+	case ThemeDark, ThemeLight:
+		return value
+	default:
+		return ThemeSystem
+	}
 }
 
 type persistedSettings struct {
@@ -57,6 +73,7 @@ func (store *Store) Load() (Settings, error) {
 			persisted.RNNoiseSensitivity = 1
 		}
 	}
+	persisted.Theme = NormalizeTheme(persisted.Theme)
 	return persisted.Settings, nil
 }
 

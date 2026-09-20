@@ -21,6 +21,7 @@ func (s *Service) enableSettings(path string) error {
 	}
 	s.settingsMu.Lock()
 	s.displayName = settings.DisplayName
+	s.theme = clientsettings.NormalizeTheme(settings.Theme)
 	s.trustedMediaKeys = settings.TrustedMediaKeys
 	if s.trustedMediaKeys == nil {
 		s.trustedMediaKeys = make(map[string]string)
@@ -63,6 +64,7 @@ func (s *Service) saveSettings() error {
 	s.settingsMu.RLock()
 	displayName := s.displayName
 	trustedMediaKeys := cloneStringMap(s.trustedMediaKeys)
+	theme := clientsettings.NormalizeTheme(s.theme)
 	s.settingsMu.RUnlock()
 	return s.settings.Save(clientsettings.Settings{
 		DisplayName:        displayName,
@@ -75,6 +77,7 @@ func (s *Service) saveSettings() error {
 		VADMode:            view.VADMode,
 		VADSensitivity:     view.VADSensitivity,
 		TrustedMediaKeys:   trustedMediaKeys,
+		Theme:              theme,
 	})
 }
 
