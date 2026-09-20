@@ -47,6 +47,30 @@ function waitForConnected(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<vo
     });
 }
 
+function waitForRemoteVideo(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<MediaStream> {
+    return new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => finish(undefined, new Error("Не удалось получить видеотрек демонстрации")), timeoutMs);
+        const onTrack = (event: RTCTrackEvent) => {
+            if (event.track.kind !== "video") return;
+            finish(event.streams[0] ?? new MediaStream([event.track]));
+        };
+        const onConnectionStateChanged = () => {
+            if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+                finish(undefined, new Error("WebRTC media-соединение закрылось до получения видеотрека"));
+            }
+        };
+        const finish = (stream?: MediaStream, error?: Error) => {
+            window.clearTimeout(timeout);
+            pc.removeEventListener("track", onTrack);
+            pc.removeEventListener("connectionstatechange", onConnectionStateChanged);
+            if (error) reject(error);
+            else if (stream) resolve(stream);
+        };
+        pc.addEventListener("track", onTrack);
+        pc.addEventListener("connectionstatechange", onConnectionStateChanged);
+    });
+}
+
 async function ensureTrusted(): Promise<void> {
     const identity = await desktopAPI.mediaServerIdentity();
     if (identity.trusted) return;
@@ -104,7 +128,34 @@ export class ScreenMediaController {
             await waitForConnected(pc);
             if (this.pendingPublisher !== pending) throw new DOMException("Операция отменена", "AbortError");
             this.pendingPublisher = undefined;
-            this.publisher = {streamID, pc, capture};
+            const active = {streamID, pc, capture};
+            this.publisher = active;
+            let disconnectedTimer: number | undefined;
+            let disconnectExpired = false;
+            const connectionChanged = () => {
+                window.clearTimeout(disconnectedTimer);
+                disconnectedTimer = undefined;
+                if (pc.connectionState === "disconnected" && !disconnectExpired) {
+                    // A short ICE interruption can recover. Do not tear down a
+                    // healthy capture unless the disconnect persists.
+                    disconnectedTimer = window.setTimeout(() => {
+                        disconnectExpired = true;
+                        connectionChanged();
+                    }, 5_000);
+                    return;
+                }
+                if (pc.connectionState !== "failed" && pc.connectionState !== "closed" &&
+                    !(disconnectExpired && pc.connectionState === "disconnected")) return;
+                if (this.publisher !== active) return;
+                this.publisher = undefined;
+                this.publisherStats.reset();
+                capture.getTracks().forEach((track) => track.stop());
+                pc.removeEventListener("connectionstatechange", connectionChanged);
+                if (pc.connectionState !== "closed") pc.close();
+                void desktopAPI.stopScreen(streamID).catch(() => undefined);
+                onEnded();
+            };
+            pc.addEventListener("connectionstatechange", connectionChanged);
             captureTrack.onended = () => void this.stopPublishing().finally(onEnded);
             return result.streamId;
         } catch (error) {
@@ -136,13 +187,17 @@ export class ScreenMediaController {
         await this.unsubscribe();
         await ensureTrusted();
         const pc = new RTCPeerConnection({iceServers: []});
-        const remote = new MediaStream();
-        pc.ontrack = (event) => remote.addTrack(event.track);
+        // Install the listener before applying the answer: WebRTC dispatches `track`
+        // from setRemoteDescription, before the signaling call below returns.
+        const remoteVideo = waitForRemoteVideo(pc);
+        void remoteVideo.catch(() => undefined);
         pc.addTransceiver("video", {direction: "recvonly"});
         const subscriberID = crypto.randomUUID();
         try {
             const result = await desktopAPI.subscribeScreen(streamID, subscriberID, await localOffer(pc));
             await pc.setRemoteDescription({type: "answer", sdp: result.answer.sdp});
+            const remote = await remoteVideo;
+            await waitForConnected(pc);
             this.viewer = {streamID, subscriberID, pc};
             this.viewerStats.reset();
             return remote;

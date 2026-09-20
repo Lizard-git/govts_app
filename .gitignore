@@ -17,6 +17,7 @@ node_modules/
 .gopath/
 .zig-cache/
 .zig-cache-global/
+/readme_docs/
 
 # Archives and local temporary files
 *.zip

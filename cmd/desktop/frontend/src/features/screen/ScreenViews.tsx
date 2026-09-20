@@ -89,7 +89,7 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
             <button onClick={() => void close()}>Закрыть</button>
         </header>
         {error && <div className="screen-viewer-error" role="alert">{error}</div>}
-        <video ref={videoRef} autoPlay playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={(event) => {
+        <video ref={videoRef} autoPlay muted playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={(event) => {
             const video = event.currentTarget;
             setResolution(`${video.videoWidth}×${video.videoHeight}`);
         }}/>
