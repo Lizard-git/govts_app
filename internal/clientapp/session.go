@@ -94,7 +94,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond)
+		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond, state.NotificationSounds())
 	})
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })

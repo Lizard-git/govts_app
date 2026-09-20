@@ -30,6 +30,7 @@ type AudioControlState struct {
 	player             audio.DeafenPlayer
 	onChange           func()
 	meter              AudioMeterSample
+	participantVolumes map[uint64]float32
 }
 
 // AudioMeterSample contains normalized microphone levels without retaining or
@@ -49,7 +50,51 @@ func NewAudioControlState(onChange func()) *AudioControlState {
 		rnnoiseSensitivity: 1,
 		vadMode:            voicegate.ModeHybrid,
 		vadSensitivity:     voicegate.DefaultSensitivity,
+		participantVolumes: make(map[uint64]float32),
 	}
+}
+
+const (
+	DefaultParticipantVolume = float32(1)
+	MaxParticipantVolume     = float32(2)
+)
+
+func (a *AudioControlState) ParticipantVolume(id uint64) float32 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if value, ok := a.participantVolumes[id]; ok {
+		return value
+	}
+	return DefaultParticipantVolume
+}
+
+func (a *AudioControlState) SetParticipantVolume(id uint64, value float32) error {
+	if id == 0 {
+		return errors.New("participant ID must not be zero")
+	}
+	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > MaxParticipantVolume {
+		return fmt.Errorf("participant volume must be between 0 and 2, got %g", value)
+	}
+	a.mu.Lock()
+	if value == DefaultParticipantVolume {
+		delete(a.participantVolumes, id)
+	} else {
+		a.participantVolumes[id] = value
+	}
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *AudioControlState) RemoveParticipantVolume(id uint64) {
+	a.mu.Lock()
+	delete(a.participantVolumes, id)
+	a.mu.Unlock()
+}
+
+func (a *AudioControlState) ClearParticipantVolumes() {
+	a.mu.Lock()
+	clear(a.participantVolumes)
+	a.mu.Unlock()
 }
 
 func (a *AudioControlState) SetAudioMeter(input, processed, transmitted float32) {

@@ -84,6 +84,45 @@ func TestLiveSemanticFailureIsAtomicAndInitialEventsRemembered(t *testing.T) {
 	}
 }
 
+func TestParticipantChannelNotificationSounds(t *testing.T) {
+	s := liveTestState()
+	gen := s.Generation()
+	if !s.ApplyEvent(gen, domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 2, ChannelID: 2}) {
+		t.Fatal("move out was not applied")
+	}
+	if sound := <-s.NotificationSounds(); sound.Kind != NotificationLeft {
+		t.Fatalf("move out sound = %v", sound.Kind)
+	}
+	if !s.ApplyEvent(gen, domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 12, SessionID: 2, ChannelID: 1}) {
+		t.Fatal("move in was not applied")
+	}
+	if sound := <-s.NotificationSounds(); sound.Kind != NotificationJoined {
+		t.Fatalf("move in sound = %v", sound.Kind)
+	}
+
+	self := liveTestState()
+	if !self.ApplyEvent(self.Generation(), domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 1, ChannelID: 2}) {
+		t.Fatal("self move was not applied")
+	}
+	select {
+	case sound := <-self.NotificationSounds():
+		t.Fatalf("self move emitted sound %v", sound.Kind)
+	default:
+	}
+}
+
+func TestInvalidEventDoesNotEmitSound(t *testing.T) {
+	s := liveTestState()
+	if s.ApplyEvent(s.Generation(), domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 2, ChannelID: 999}) {
+		t.Fatal("invalid move was applied")
+	}
+	select {
+	case sound := <-s.NotificationSounds():
+		t.Fatalf("invalid move emitted sound %v", sound.Kind)
+	default:
+	}
+}
+
 func TestViewSubscriptionsCoalesceAndCleanUp(t *testing.T) {
 	s := liveTestState()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -10,16 +10,17 @@ import (
 )
 
 type State struct {
-	mu               sync.RWMutex
-	syncMu           sync.Mutex
-	syncSerial       uint64
-	syncedGeneration uint64
-	observedRevision domain.StateRevision
-	resync           chan struct{}
-	subscribers      map[chan struct{}]struct{}
-	notices          chan string
-	speaking         map[uint64]time.Time
-	Audio            *AudioControlState
+	mu                 sync.RWMutex
+	syncMu             sync.Mutex
+	syncSerial         uint64
+	syncedGeneration   uint64
+	observedRevision   domain.StateRevision
+	resync             chan struct{}
+	subscribers        map[chan struct{}]struct{}
+	notices            chan string
+	notificationSounds chan NotificationSound
+	speaking           map[uint64]time.Time
+	Audio              *AudioControlState
 
 	sessionID        uint64
 	name             string
@@ -51,15 +52,16 @@ type ControlResponse struct {
 
 func NewState(sessionID uint64, name string) *State {
 	s := &State{
-		sessionID:   sessionID,
-		name:        name,
-		generation:  1,
-		status:      ConnectionConnecting,
-		pending:     make(map[uint32]chan ControlResponse),
-		resync:      make(chan struct{}, 1),
-		subscribers: make(map[chan struct{}]struct{}),
-		notices:     make(chan string, 64),
-		speaking:    make(map[uint64]time.Time),
+		sessionID:          sessionID,
+		name:               name,
+		generation:         1,
+		status:             ConnectionConnecting,
+		pending:            make(map[uint32]chan ControlResponse),
+		resync:             make(chan struct{}, 1),
+		subscribers:        make(map[chan struct{}]struct{}),
+		notices:            make(chan string, 64),
+		notificationSounds: make(chan NotificationSound, 4),
+		speaking:           make(map[uint64]time.Time),
 	}
 	s.Audio = NewAudioControlState(func() { s.audioChanged() })
 	return s
@@ -123,6 +125,8 @@ func (s *State) PrepareConnection() error {
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
 	clear(s.speaking)
+	s.Audio.ClearParticipantVolumes()
+	s.clearNotificationSoundsLocked()
 	s.notifyLocked()
 	return nil
 }
@@ -146,8 +150,20 @@ drainNotices:
 		}
 	}
 	clear(s.speaking)
+	s.Audio.ClearParticipantVolumes()
+	s.clearNotificationSoundsLocked()
 	s.notifyLocked()
 	return s.generation
+}
+
+func (s *State) clearNotificationSoundsLocked() {
+	for {
+		select {
+		case <-s.notificationSounds:
+		default:
+			return
+		}
+	}
 }
 
 func (s *State) StartSession(sessionID uint64) (uint64, error) {

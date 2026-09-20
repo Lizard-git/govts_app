@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -126,6 +127,7 @@ func DecodeLoop(
 					continue
 				}
 				pcmFrame.PlaybackEpoch = epoch
+				pcmFrame.Samples = scalePCM(pcmFrame.Samples, states[0].Audio.ParticipantVolume(frame.SenderID))
 			}
 
 			select {
@@ -135,4 +137,15 @@ func DecodeLoop(
 			}
 		}
 	}
+}
+
+func scalePCM(samples []int16, gain float32) []int16 {
+	if gain == DefaultParticipantVolume {
+		return samples
+	}
+	result := make([]int16, len(samples))
+	for i, sample := range samples {
+		result[i] = clampInt16(int64(math.Round(float64(sample) * float64(gain))))
+	}
+	return result
 }

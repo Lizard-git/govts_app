@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"example.com/go-voice-mvp/internal/audio"
@@ -114,6 +115,7 @@ func MixLoop(
 	decodedCh <-chan audio.MediaPCMFrame,
 	mixedCh chan<- audio.PCMFrame,
 	interval time.Duration,
+	notifications ...<-chan NotificationSound,
 ) error {
 	defer close(mixedCh)
 	if interval <= 0 {
@@ -123,6 +125,11 @@ func MixLoop(
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	mixer := newPCMMixer()
+	effects := make([]audio.MediaPCMFrame, 0, 14)
+	var notificationCh <-chan NotificationSound
+	if len(notifications) > 0 {
+		notificationCh = notifications[0]
+	}
 
 	for {
 		select {
@@ -133,7 +140,18 @@ func MixLoop(
 				return drainMixer(ctx, mixer, mixedCh)
 			}
 			mixer.Push(frame)
+		case sound := <-notificationCh:
+			frames := notificationFrames(sound)
+			available := 14 - len(effects)
+			if available > len(frames) {
+				available = len(frames)
+			}
+			effects = append(effects, frames[:available]...)
 		case <-ticker.C:
+			if len(effects) > 0 {
+				mixer.Push(effects[0])
+				effects = effects[1:]
+			}
 			frame, ok := mixer.Mix()
 			if !ok {
 				continue
@@ -143,6 +161,31 @@ func MixLoop(
 			}
 		}
 	}
+}
+
+func notificationFrames(sound NotificationSound) []audio.MediaPCMFrame {
+	const sampleRate = 48000
+	frequencies := []float64{520, 700}
+	if sound.Kind == NotificationLeft {
+		frequencies = []float64{620, 420}
+	}
+	const (
+		frameSamples   = sampleRate * 20 / 1000
+		segmentSamples = sampleRate * 60 / 1000
+	)
+	samples := make([]int16, segmentSamples*len(frequencies))
+	for segment, frequency := range frequencies {
+		for i := 0; i < segmentSamples; i++ {
+			envelope := math.Sin(math.Pi * float64(i) / float64(segmentSamples))
+			samples[segment*segmentSamples+i] = int16(math.Sin(2*math.Pi*frequency*float64(i)/sampleRate) * envelope * 5200)
+		}
+	}
+	frames := make([]audio.MediaPCMFrame, 0, len(samples)/frameSamples)
+	for offset := 0; offset < len(samples); offset += frameSamples {
+		chunk := samples[offset:min(offset+frameSamples, len(samples))]
+		frames = append(frames, audio.MediaPCMFrame{PlaybackEpoch: sound.PlaybackEpoch, SenderID: 0, Samples: chunk, Duration: 20 * time.Millisecond})
+	}
+	return frames
 }
 
 func drainMixer(

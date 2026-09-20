@@ -30,6 +30,31 @@ type ClientViewState struct {
 	Speaking           map[uint64]bool
 }
 
+type NotificationSound struct {
+	Kind          NotificationSoundKind
+	PlaybackEpoch uint64
+}
+
+type NotificationSoundKind uint8
+
+const (
+	NotificationJoined NotificationSoundKind = iota + 1
+	NotificationLeft
+)
+
+func (s *State) NotificationSounds() <-chan NotificationSound { return s.notificationSounds }
+
+func (s *State) queueNotificationSoundLocked(sound NotificationSoundKind) {
+	deafened, epoch := s.Audio.PlaybackSnapshot()
+	if deafened {
+		return
+	}
+	select {
+	case s.notificationSounds <- NotificationSound{Kind: sound, PlaybackEpoch: epoch}:
+	default:
+	}
+}
+
 func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revision domain.StateRevision) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,6 +200,11 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 			break
 		}
 	}
+	localChannel := s.channelID
+	oldChannel := domain.ChannelID(0)
+	if index >= 0 {
+		oldChannel = next.Participants[index].ChannelID
+	}
 	channelName := func(id domain.ChannelID) string {
 		for _, c := range next.Channels {
 			if c.ID == id {
@@ -184,6 +214,8 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		return "Unjoined"
 	}
 	var line string
+	var notification NotificationSoundKind
+	var removeVolumeID uint64
 	switch e.Kind {
 	case domain.ParticipantJoined:
 		if index >= 0 || len(next.Participants) >= MaxSnapshotParticipants {
@@ -193,12 +225,19 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		next.Participants = append(next.Participants, e.Participant)
 		sort.Slice(next.Participants, func(i, j int) bool { return next.Participants[i].SessionID < next.Participants[j].SessionID })
 		line = fmt.Sprintf("+ %s connected (%s)", terminalText(e.Participant.DisplayName), channelName(e.Participant.ChannelID))
+		if e.Participant.SessionID != s.sessionID && e.Participant.ChannelID == localChannel {
+			notification = NotificationJoined
+		}
 	case domain.ParticipantLeft:
 		if index < 0 {
 			s.requestResyncLocked()
 			return false
 		}
 		line = fmt.Sprintf("- %s left", terminalText(next.Participants[index].DisplayName))
+		if e.SessionID != s.sessionID && oldChannel == localChannel {
+			notification = NotificationLeft
+		}
+		removeVolumeID = e.SessionID
 		next.Participants = append(next.Participants[:index], next.Participants[index+1:]...)
 	case domain.ParticipantMoved:
 		if index < 0 {
@@ -207,6 +246,13 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		}
 		p := &next.Participants[index]
 		line = fmt.Sprintf("→ %s moved %s → %s", terminalText(p.DisplayName), channelName(p.ChannelID), channelName(e.ChannelID))
+		if e.SessionID != s.sessionID {
+			if oldChannel != localChannel && e.ChannelID == localChannel {
+				notification = NotificationJoined
+			} else if oldChannel == localChannel && e.ChannelID != localChannel {
+				notification = NotificationLeft
+			}
+		}
 		p.ChannelID = e.ChannelID
 	case domain.ScreenStreamStarted:
 		if len(next.ScreenStreams) >= MaxSnapshotScreenStreams {
@@ -244,6 +290,12 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		return false
 	}
 	s.snapshot = next
+	if removeVolumeID != 0 {
+		s.Audio.RemoveParticipantVolume(removeVolumeID)
+	}
+	if notification != 0 {
+		s.queueNotificationSoundLocked(notification)
+	}
 	if id == s.sessionID {
 		if e.Kind == domain.ParticipantMoved {
 			s.channelID = e.ChannelID

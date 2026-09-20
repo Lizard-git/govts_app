@@ -447,6 +447,25 @@ func (a *App) SetMuted(value bool) { a.state.Audio.SetMuted(value) }
 
 func (a *App) SetDeafened(value bool) error { return a.state.Audio.SetDeafened(value) }
 
+func (a *App) ParticipantVolume(id uint64) float32 { return a.state.Audio.ParticipantVolume(id) }
+
+func (a *App) SetParticipantVolume(id uint64, value float32) error {
+	if id == a.state.SessionID() {
+		return errors.New("cannot change local participant playback volume")
+	}
+	found := false
+	for _, participant := range a.state.Snapshot().Participants {
+		if participant.SessionID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("participant %d not found", id)
+	}
+	return a.state.Audio.SetParticipantVolume(id, value)
+}
+
 func (a *App) SetRNNoiseEnabled(value bool) { a.state.Audio.SetRNNoiseEnabled(value) }
 
 func (a *App) SetRNNoiseSensitivity(value float32) error {
