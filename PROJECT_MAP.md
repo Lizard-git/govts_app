@@ -321,9 +321,10 @@ reconnect с задержками `1s → 2s → 4s → 4s...`, безопасн
 #### `configs/server.example.json`
 
 Строгий пример стартового дерева: корневой `main` и дочерние `Private I`/`Private II`
-с position, topic и `max_users`. Runtime `ChannelID`, channel type и
-аудиопрофиль намеренно не задаются в JSON. Файл можно передать серверу через
-`-config configs/server.example.json`.
+с position, topic, `max_users` и серверным аудиопрофилем. Runtime `ChannelID`
+и channel type в JSON не задаются. Файл можно передать серверу через
+`-config configs/server.example.json`; отсутствующая секция `audio` получает
+профиль по умолчанию.
 
 ### `.github/`
 
@@ -698,9 +699,11 @@ WebRTC VAD для mono PCM16 48 кГц/20 мс и дополняет бинар�
 Определяет не зависящие от transport и runtime типы для дерева каналов и
 будущих snapshots: `ChannelID`, `StateRevision`, `Channel`, `ChannelType`,
 `AudioProfile`, `Participant`, `ServerInfo` и client-safe `ServerSnapshot`. Здесь же зафиксированы пределы
-имени, темы, описания и глубины дерева, а также единственный текущий профиль
-Opus: 48 кГц, mono, frame 20 мс, bitrate 24 кбит/с. `ChannelID == 0` означает,
-что участник ещё не присоединился к каналу.
+имени, темы, описания и глубины дерева. `ValidateAudioProfile` фиксирует
+поддерживаемый PCM-формат Opus: 48 кГц, mono, frame 20 мс, разрешая каналу
+выбирать bitrate 6–510 кбит/с и application `audio`/`voip`. Профиль по
+умолчанию использует 24 кбит/с и `voip`. `ChannelID == 0` означает, что
+участник ещё не присоединился к каналу.
 
 ### `internal/voice/` — серверные сессии, control и media routing
 
@@ -816,7 +819,9 @@ revision, формирует bounded страницы по limit и byte budget,
 Граница загрузки стартового состояния. Нейтральный `BootstrapSource` отделяет
 bootstrap от формата хранения; `BuiltinBootstrapSource` возвращает имя сервера
 и `default`, а `JSONBootstrapSource` строго декодирует файл размером до 64 КиБ
-и требует хотя бы один канал. Bootstrap создаёт пустой Hub, ограничивает полное
+и требует хотя бы один канал. Вложенная секция `audio` задаёт профиль канала;
+пропущенные поля получают безопасные значения по умолчанию, а неподдерживаемые
+значения отклоняются до запуска сети. Bootstrap создаёт пустой Hub, ограничивает полное
 дерево источника 256 каналами, создаёт его parent-first через
 `Hub.CreateChannel` и возвращает Hub только после полного успеха. JSON не
 назначает runtime ID и не дополняется системными каналами.
@@ -825,7 +830,7 @@ bootstrap от формата хранения; `BuiltinBootstrapSource` воз�
 
 Проверяет единственный встроенный `default`, полное JSON-дерево и parent-first
 ID, отклонение пустого списка,
-malformed/unknown/trailing/oversized JSON, depth/count/metadata/duplicate
+malformed/unknown/trailing/oversized JSON, аудиопрофили, depth/count/metadata/duplicate
 ошибки, отмену context, атомарность bootstrap и routing в загруженном канале.
 
 #### `internal/server/console.go`

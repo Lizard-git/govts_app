@@ -8,6 +8,14 @@
       "topic": "Основной голосовой канал",
       "position": 10,
       "max_users": 0,
+      "audio": {
+        "codec": "opus",
+        "sample_rate": 48000,
+        "channels": 1,
+        "frame_duration_ms": 20,
+        "bitrate": 32000,
+        "application": "voip"
+      },
       "children": [
         {
           "name": "Private I",
