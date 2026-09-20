@@ -15,6 +15,34 @@
   --danger: #ff6c7a;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  --window: #eef3fa;
+  --card: #ffffff;
+  --card-strong: #e7eef8;
+  --line: #c9d4e5;
+  --muted: #5d6d86;
+  --text: #172033;
+  --accent: #087f69;
+  --accent-blue: #0878bd;
+  --danger: #c93548;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+    --window: #eef3fa;
+    --card: #ffffff;
+    --card-strong: #e7eef8;
+    --line: #c9d4e5;
+    --muted: #5d6d86;
+    --text: #172033;
+    --accent: #087f69;
+    --accent-blue: #0878bd;
+    --danger: #c93548;
+  }
+}
+
 * { box-sizing: border-box; }
 * { scrollbar-width: thin; scrollbar-color: #536078 transparent; }
 *::-webkit-scrollbar { width: 7px; height: 7px; }
@@ -87,13 +115,37 @@ h2 { margin: 0; font-size: 20px; }
 .channel-icon { color: #7183a7; font-size: 20px; }
 .channel-name { min-width: 0; flex: 1; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .channel-count { color: #7383a1; font-size: 11px; }
-.participant-row { display: flex; align-items: center; min-height: 33px; gap: 8px; color: #8291ad; font-size: 12px; }
+.participant-row { display: flex; align-items: center; min-height: 33px; gap: 8px; color: var(--muted); font-size: 12px; border-radius: 7px; outline: none; }
+.participant-row[tabindex="0"] { cursor: context-menu; }
+.participant-row[tabindex="0"]:hover, .participant-row[tabindex="0"]:focus-visible { background: var(--card-strong); }
 .avatar { display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #aab7cd; background: #34425a; font-weight: 800; }
 .avatar { width: 22px; height: 22px; font-size: 10px; }
 .speaking-ring { width: 7px; height: 7px; margin-left: auto; margin-right: 12px; border-radius: 50%; background: #3c4961; }
 .participant-row.speaking { color: #ddfff5; }
 .participant-row.speaking .avatar { outline: 2px solid var(--accent); }
 .participant-row.speaking .speaking-ring { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.participant-menu { position: fixed; z-index: 1000; width: 276px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--card); box-shadow: 0 14px 38px rgba(3, 8, 19, .48), 0 0 0 1px rgba(19, 231, 176, .035); user-select: none; }
+.participant-menu-user { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 7px 8px 8px; }
+.participant-menu-user strong { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.participant-menu-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #d9fff5; background: #176b5d; box-shadow: inset 0 0 0 1px rgba(19, 231, 176, .25); font-size: 12px; font-weight: 800; }
+.participant-menu-separator { height: 1px; margin: 2px 4px 9px; background: var(--line); }
+.participant-volume-heading { display: flex; align-items: baseline; padding: 0 8px 7px; }
+.participant-volume-heading label { color: var(--muted); font-size: 11px; font-weight: 650; }
+.participant-volume-heading output { margin-left: auto; color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.participant-volume-control { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 5px; padding: 0 7px 11px; }
+.participant-volume-icon { color: var(--muted); font-size: 18px; transform: rotate(180deg); }
+.participant-volume-control input { width: 100%; height: 18px; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+.participant-volume-control input::-webkit-slider-runnable-track { height: 4px; border-radius: 99px; background: linear-gradient(90deg, var(--accent) 0 var(--participant-volume), #3b4962 var(--participant-volume) 100%); }
+.participant-volume-control input::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -5px; border: 0; border-radius: 50%; appearance: none; background: #e9fff9; box-shadow: 0 1px 3px rgba(0, 0, 0, .5); }
+.participant-volume-control input:focus-visible { outline: none; }
+.participant-volume-control input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(19, 231, 176, .32); }
+.participant-menu-actions { display: grid; gap: 2px; padding-top: 4px; border-top: 1px solid var(--line); }
+.participant-menu-actions button { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 9px; padding: 0 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
+.participant-menu-actions button span { display: inline-grid; width: 17px; place-items: center; color: var(--muted); font-size: 13px; }
+.participant-menu-actions button:hover:not(:disabled), .participant-menu-actions button:focus-visible { color: #eafff9; outline: 0; background: #176052; }
+.participant-menu-actions button:hover:not(:disabled) span, .participant-menu-actions button:focus-visible span { color: var(--accent); }
+.participant-menu-actions button.active { color: var(--danger); }
+.participant-menu-actions button:disabled { cursor: default; opacity: .36; }
 .channel-detail { min-width: 0; padding: 22px; overflow: auto; }
 .channel-detail h2 { margin: 5px 0 7px; font-size: 25px; overflow-wrap: anywhere; }
 .channel-topic { color: #a9b8d2; font-size: 13px; font-weight: 650; }
@@ -219,6 +271,9 @@ h2 { margin: 0; font-size: 20px; }
 .threshold-meter.disabled input { cursor: default; }
 .compact-card h3 { margin-bottom: 8px; }
 .compact-card .setting-toggle { border-top: 0; }
+.theme-setting { display: grid; gap: 8px; }
+.theme-setting select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--card-strong); }
+.theme-setting small { color: var(--muted); font-size: 11px; }
 .voice-control { min-width: 96px; padding: 9px 11px; border-radius: 9px; color: #9eadc5; background: #22304a; font-size: 11px; }.voice-control:hover { color: white; }.voice-control.active { color: #ffd4d8; background: #58303b; }
 
 @media (max-width: 980px) {
@@ -233,4 +288,50 @@ h2 { margin: 0; font-size: 20px; }
   .server-summary .eyebrow { text-align: left; }
   .channels-layout { grid-template-columns: 1fr; }.channel-detail { display: none; }
   .settings-page { margin-right: -14px; padding-right: 14px; }
+}
+
+:root[data-theme="light"] .connection-page,
+:root[data-theme="light"] .app-shell,
+:root[data-theme="light"] .screen-viewer-window { color: var(--text); }
+:root[data-theme="light"] .connection-card,
+:root[data-theme="light"] .connection-card input,
+:root[data-theme="light"] .header-nav-button,
+:root[data-theme="light"] .status-pill,
+:root[data-theme="light"] .sync-pill,
+:root[data-theme="light"] .audio-control-island,
+:root[data-theme="light"] .count-badge,
+:root[data-theme="light"] .detail-grid div,
+:root[data-theme="light"] .screen-card,
+:root[data-theme="light"] .event-panel,
+:root[data-theme="light"] .event-list,
+:root[data-theme="light"] .device-select-trigger,
+:root[data-theme="light"] .audio-waveform canvas { background: var(--card-strong); color: var(--text); }
+:root[data-theme="light"] .channel-row { color: #3c4c65; }
+:root[data-theme="light"] .channel-row:hover,
+:root[data-theme="light"] .channel-row.selected,
+:root[data-theme="light"] .device-select-trigger:hover { color: var(--text); background: #dce6f3; }
+:root[data-theme="light"] .event-row { color: #42526a; }
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .connection-page,
+  :root[data-theme="system"] .app-shell,
+  :root[data-theme="system"] .screen-viewer-window { color: var(--text); }
+  :root[data-theme="system"] .connection-card,
+  :root[data-theme="system"] .connection-card input,
+  :root[data-theme="system"] .header-nav-button,
+  :root[data-theme="system"] .status-pill,
+  :root[data-theme="system"] .sync-pill,
+  :root[data-theme="system"] .audio-control-island,
+  :root[data-theme="system"] .count-badge,
+  :root[data-theme="system"] .detail-grid div,
+  :root[data-theme="system"] .screen-card,
+  :root[data-theme="system"] .event-panel,
+  :root[data-theme="system"] .event-list,
+  :root[data-theme="system"] .device-select-trigger,
+  :root[data-theme="system"] .audio-waveform canvas { background: var(--card-strong); color: var(--text); }
+  :root[data-theme="system"] .channel-row { color: #3c4c65; }
+  :root[data-theme="system"] .channel-row:hover,
+  :root[data-theme="system"] .channel-row.selected,
+  :root[data-theme="system"] .device-select-trigger:hover { color: var(--text); background: #dce6f3; }
+  :root[data-theme="system"] .event-row { color: #42526a; }
 }

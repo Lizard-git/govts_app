@@ -5,6 +5,7 @@ import {buildChannelGroups, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
 import {ScreenSharing, ScreenViewerWindow} from "./features/screen/ScreenViews";
 import {ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
+import {ParticipantRow} from "./features/participants/ParticipantRow";
 
 
 const emptyView: ClientViewDTO = {
@@ -28,13 +29,31 @@ function errorText(error: unknown): string {
 }
 
 function App() {
+    const [theme, setThemeState] = useState(localStorage.getItem("govts-theme") || "system");
+    useEffect(() => {
+        let active = true;
+        void desktopAPI.theme().then((value) => {
+            if (active) setThemeState(value);
+        });
+        return () => { active = false; };
+    }, []);
+    useEffect(() => {
+        document.documentElement.dataset.theme = theme;
+        localStorage.setItem("govts-theme", theme);
+    }, [theme]);
+    const setTheme = async (value: string) => {
+        const previous = theme;
+        setThemeState(value);
+        try { await desktopAPI.setTheme(value); }
+        catch (error) { setThemeState(previous); throw error; }
+    };
     const params = new URLSearchParams(window.location.search);
     const streamID = params.get("screen");
     if (streamID) return <ScreenViewerWindow streamID={streamID} ownerName={params.get("owner") || "Участник"}/>;
-    return <MainApp/>;
+    return <MainApp theme={theme} setTheme={setTheme}/>;
 }
 
-function MainApp() {
+function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) => Promise<void>}) {
     const [view, setView] = useState<ClientViewDTO>(emptyView);
     const [page, setPage] = useState<Page>("channels");
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
@@ -126,19 +145,21 @@ function MainApp() {
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} eventPanelHeight={eventPanelHeight}
-                                onEventPanelHeightChange={setEventPanelHeight} invoke={invoke} screenMedia={screenMedia.current}/>
-                : <SettingsPage view={view} invoke={invoke}/>}
+                                onEventPanelHeightChange={setEventPanelHeight} invoke={invoke} screenMedia={screenMedia.current}
+                                onError={setActionError}/>
+                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
         </main>
     </div>;
 }
 
-function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange, invoke, screenMedia}: {
+function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange, invoke, screenMedia, onError}: {
     view: ClientViewDTO;
     events: ClientEventDTO[];
     eventPanelHeight: number;
     onEventPanelHeightChange: (height: number | ((current: number) => number)) => void;
     invoke: (operation: () => Promise<unknown>) => Promise<void>
     screenMedia: ScreenMediaController;
+    onError: (message: string) => void;
 }) {
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
@@ -156,7 +177,7 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                     <span className="count-badge">{participants.length}</span></div>
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants}
                                                              selectedID={selectedID} currentID={view.channelId}
-                                                             onSelect={setSelectedID} onJoin={(id) => {
+                                                             onError={onError} onSelect={setSelectedID} onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }}/></div>
             </section>
@@ -179,13 +200,14 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
     </section>;
 }
 
-function ChannelTree({channels, participants, selectedID, currentID, onSelect, onJoin}: {
+function ChannelTree({channels, participants, selectedID, currentID, onSelect, onJoin, onError}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
     selectedID: string;
     currentID: string;
     onSelect: (id: string) => void;
     onJoin: (id: string) => void
+    onError: (message: string) => void;
 }) {
     const children = useMemo(() => {
         return buildChannelGroups(channels);
@@ -200,17 +222,10 @@ function ChannelTree({channels, participants, selectedID, currentID, onSelect, o
                 className="channel-name">{channel.name}</span><span className="channel-count">{members.length}</span>
             </button>
             {members.map((participant) => <ParticipantRow key={participant.sessionId} participant={participant}
-                                                          depth={depth}/>)}{renderLevel(channel.id, depth + 1)}</div>;
+                                                          depth={depth} onError={onError}/>)}{renderLevel(channel.id, depth + 1)}</div>;
     });
     return <div className="channel-tree">{channels.length ? renderLevel("0", 0) :
         <div className="empty-state">Каналы ещё не загружены</div>}</div>;
-}
-
-function ParticipantRow({participant, depth}: { participant: ParticipantDTO; depth: number }) {
-    return <div className={`participant-row ${participant.speaking ? "speaking" : ""}`}
-                style={{paddingLeft: 46 + depth * 18}}><span
-        className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span><span>{participant.displayName}{participant.local ? " (вы)" : ""}</span><span
-        className="speaking-ring" aria-label={participant.speaking ? "Говорит" : "Не говорит"}/></div>;
 }
 
 function EventPanel({events, height, onHeightChange}: {
@@ -287,9 +302,11 @@ function EventPanel({events, height, onHeightChange}: {
     </div>;
 }
 
-function SettingsPage({view, invoke}: {
+function SettingsPage({view, invoke, theme, setTheme}: {
     view: ClientViewDTO;
-    invoke: (operation: () => Promise<unknown>) => Promise<void>
+    invoke: (operation: () => Promise<unknown>) => Promise<void>;
+    theme: string;
+    setTheme: (value: string) => Promise<void>;
 }) {
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
@@ -370,6 +387,13 @@ function SettingsPage({view, invoke}: {
                                                                                               onChange={(id) => selectDevice("playback", id)}/><SettingToggle
             title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
             checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
+        <section className="settings-card compact-card"><h3>Интерфейс</h3>
+            <label className="theme-setting"><span className="setting-label">Тема оформления</span>
+                <select value={theme} onChange={(event) => void invoke(() => setTheme(event.target.value))}>
+                    <option value="system">Системная</option><option value="dark">Тёмная</option><option value="light">Светлая</option>
+                </select><small>Системная тема следует настройкам Windows.</small>
+            </label>
+        </section>
     </section>;
 }
 
