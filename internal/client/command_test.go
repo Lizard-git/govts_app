@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
+	"uniclog.io/govts/internal/voice"
 )
 
 func TestReadCommandLoopParsesCommands(t *testing.T) {

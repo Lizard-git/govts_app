@@ -30,6 +30,7 @@ const (
 	PacketStateEvent
 	PacketMediaCredentialRequest
 	PacketMediaCredentialAck
+	PacketServerVersionTooOld
 
 	PacketEnd
 )

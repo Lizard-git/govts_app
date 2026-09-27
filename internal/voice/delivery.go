@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 var ErrInvalidSessionAddr = errors.New("invalid session address")

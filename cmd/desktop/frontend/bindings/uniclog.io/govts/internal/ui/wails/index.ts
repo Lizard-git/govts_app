@@ -16,6 +16,7 @@ export type {
     ClientEventDTO,
     ClientViewDTO,
     ConnectRequest,
+    ConnectionStatsDTO,
     MediaTrustDTO,
     ParticipantDTO,
     ScreenStreamDTO,

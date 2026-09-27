@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 func HandleHelloPacket(
@@ -28,6 +29,16 @@ func HandleHelloPacket(
 	endpoint := addr.AddrPort()
 	if response, ok := cache.GetHandshake(endpoint, packet.RequestID); ok {
 		return conn.WritePacket(response.SessionID, addr, response)
+	}
+	serverVersion := hub.ServerVersion()
+	if uint32(serverVersion) < packet.Sequence {
+		response := protocol.VoicePacket{
+			Type:      protocol.PacketServerVersionTooOld,
+			RequestID: packet.RequestID,
+			Sequence:  uint32(serverVersion),
+		}
+		cache.PutHandshake(endpoint, packet.RequestID, response)
+		return conn.WritePacket(0, addr, response)
 	}
 
 	if len(packet.Payload) == 0 {
@@ -67,6 +78,7 @@ func HandleHelloPacket(
 		Type:      protocol.PacketHelloAck,
 		SessionID: session.ID,
 		RequestID: packet.RequestID,
+		Sequence:  uint32(serverVersion),
 	}
 	cache.PutHandshake(endpoint, packet.RequestID, ack)
 	if err := SendToSession(conn, session, ack); err != nil {
@@ -131,6 +143,16 @@ func HandleHeartbeatPacket(
 		Type:      protocol.PacketHeartbeatAck,
 		SessionID: packet.SessionID,
 		RequestID: packet.RequestID,
+	}
+	// Match the client's 30-second sequence range with packets received here.
+	sent := packet.Sequence & 0x3fff
+	end := uint16(packet.Sequence >> 14)
+	received := hub.VoiceReceivedWindow(packet.SessionID, time.Now(), end, uint16(sent))
+	if received > sent {
+		received = sent
+	}
+	if sent > 0 {
+		ack.Sequence = uint32(uint64(sent-received) * 10000 / uint64(sent))
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	return conn.WritePacket(packet.SessionID, addr, ack)

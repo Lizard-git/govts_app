@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type Frame struct {

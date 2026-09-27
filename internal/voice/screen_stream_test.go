@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestScreenStreamsAllowMultipleAuthorsAndOnePerOwner(t *testing.T) {

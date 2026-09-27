@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/audio/voicegate"
 )
 
 // SetMuted and Send share the same lock. On return, an earlier send has

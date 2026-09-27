@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 type decoderFunc func([]byte) ([]int16, error)

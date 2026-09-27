@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 type joinTestPeer struct {
@@ -130,6 +130,7 @@ func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
 			Type:      protocol.PacketHelloAck,
 			SessionID: 99,
 			RequestID: second.RequestID,
+			Sequence:  1 << 16,
 		})
 	}()
 
@@ -184,6 +185,31 @@ func TestPerformHandshakeFinalTimeout(t *testing.T) {
 	}
 }
 
+func TestPerformHandshakeRejectsServerBelowMinimum(t *testing.T) {
+	serverConn, clientConn := newHandshakeTestConnections(t)
+	serverErr := make(chan error, 1)
+	go func() {
+		request, addr, err := serverConn.ReadPacket()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if request.Sequence != 2<<16 {
+			serverErr <- fmt.Errorf("minimum = %x, want 0.2.0", request.Sequence)
+			return
+		}
+		serverErr <- serverConn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketServerVersionTooOld, RequestID: request.RequestID, Sequence: 1 << 16})
+	}()
+	_, err := PerformHandshakeAttempts(context.Background(), clientConn, "alice", time.Second, 1, "0.2.0")
+	var versionErr *ServerVersionTooOldError
+	if !errors.As(err, &versionErr) || versionErr.Server.String() != "0.1.0" || versionErr.Required.String() != "0.2.0" {
+		t.Fatalf("version error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
 	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
@@ -217,6 +243,7 @@ func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
 			Type:      protocol.PacketHelloAck,
 			SessionID: 99,
 			RequestID: request.RequestID,
+			Sequence:  1 << 16,
 		}
 		if err := serverConn.WritePacket(99, addr, response); err != nil {
 			serverErrCh <- err
@@ -256,7 +283,7 @@ func TestPerformHandshakeSkipsStaleControlPacket(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		serverErr <- serverConn.WritePacket(99, addr, protocol.VoicePacket{Type: protocol.PacketHelloAck, SessionID: 99, RequestID: request.RequestID})
+		serverErr <- serverConn.WritePacket(99, addr, protocol.VoicePacket{Type: protocol.PacketHelloAck, SessionID: 99, RequestID: request.RequestID, Sequence: 1 << 16})
 	}()
 	sessionID, err := performHandshakeWithRequestID(context.Background(), clientConn, "alice", 17, time.Second)
 	if err != nil {
@@ -297,6 +324,36 @@ func TestHeartbeatProbeHandlesAckAndInvalidSession(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestHeartbeatProbeRecordsServerVoiceLoss(t *testing.T) {
+	peer := newJoinTestPeer(t)
+	peer.state.SetConnectionStatus(ConnectionConnected)
+	for i := uint32(1); i <= 8; i++ {
+		peer.state.RecordVoiceSent(i)
+	}
+	serverErr := make(chan error, 1)
+	go func() {
+		request, addr, err := peer.receiveRequest()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if request.Sequence != 8<<14|8 {
+			serverErr <- fmt.Errorf("window range = %x, want count 8 ending at 8", request.Sequence)
+			return
+		}
+		serverErr <- peer.sendResponse(addr, protocol.VoicePacket{Type: protocol.PacketHeartbeatAck, SessionID: request.SessionID, RequestID: request.RequestID, Sequence: 1250})
+	}()
+	if err := heartbeatProbe(peer.ctx, peer.clientConn, peer.state, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	if got := peer.state.ConnectionStats(); !got.OutgoingKnown || got.OutgoingLoss != 12.5 {
+		t.Fatalf("outgoing stats = %+v", got)
 	}
 }
 

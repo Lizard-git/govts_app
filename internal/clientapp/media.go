@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/mediasignal"
+	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/mediasignal"
 )
 
 const maxMediaResponse = 256 * 1024

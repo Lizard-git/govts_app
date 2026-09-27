@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/clientapp"
-	"example.com/go-voice-mvp/internal/clientsettings"
+	"uniclog.io/govts/internal/clientapp"
+	"uniclog.io/govts/internal/clientsettings"
 )
 
 func TestServicePersistsAndRestoresAudioSettings(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 func TestJitterBufferReordersFrames(t *testing.T) {

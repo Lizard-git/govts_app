@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 func HandlePacket(

@@ -1,1004 +1,157 @@
-# Карта проекта Go Voice
+# Карта проекта Govts
 
-Документ описывает фактическое состояние рабочей копии проекта: назначение каталогов и файлов, точки входа, потоки данных, зависимости и тестовое покрытие. Это карта текущей реализации, а не план целевой архитектуры. Продуктовые планы вынесены в `go-voice-roadmap.md`, а краткая инструкция по запуску — в `README.md`.
+Карта описывает текущую рабочую копию проекта. Go-модуль — `uniclog.io/govts`.
+Сценарии запуска и пользовательские ограничения приведены в [README](README.md).
+Локальные заметки `readme_docs/` не входят в Git и здесь не перечисляются.
 
-## 1. Назначение проекта
+## Состав системы
 
-`govots` — полноценное развиваемое приложение для голосового общения и совместной работы в реальном времени. Проект создаёт самостоятельную современную платформу, которая должна превзойти традиционные голосовые клиенты качеством связи, удобством и набором новых возможностей. Текущая UDP-реализация является фундаментом продукта: несколько клиентов уже могут проходить handshake, входить в зарегистрированные сервером каналы и обмениваться Opus-аудио.
+| Часть | Где искать | Ответственность |
+| --- | --- | --- |
+| Сервер | `cmd/server/`, `internal/server/`, `internal/voice/` | Запуск, конфигурация, сессии, каналы, доставка голосовых пакетов и событий |
+| Клиентское ядро | `internal/clientapp/`, `internal/client/` | Жизненный цикл соединения, reconnect, состояние, UDP-запросы и обработка звука |
+| Звук | `internal/audio/` | Устройства malgo, PCM, Opus, RNNoise, VAD, voice gate и воспроизведение |
+| Экран | `internal/media/`, `internal/mediasignal/`, `internal/clientapp/media.go` | HTTPS signaling, WebRTC/SFU, учет потоков и подписок |
+| Desktop UI | `cmd/desktop/`, `internal/ui/wails/`, `cmd/desktop/frontend/` | Wails 3, сервис для React/TypeScript, настройки и окна |
+| Общий контракт | `internal/domain/`, `internal/protocol/`, `internal/transport/udp/` | Модели состояния, бинарный UDP-протокол, граница сокета и кодека |
 
-Цели проекта:
+Пакеты `internal/` доступны только коду этого Go-модуля: публичного Go API
+проект пока не предоставляет.
 
-- обеспечить качественную голосовую связь с низкой задержкой и устойчивостью к реальным сетевым условиям;
-- поддерживать каналы, одновременную речь нескольких участников и гибкое управление пользовательскими аудиопотоками;
-- развить надёжную синхронизацию состояния, reconnect и восстановление сессий;
-- добавить современные средства управления голосом: PTT, VAD, mute/deafen, индивидуальную громкость и обработку звука;
-- обеспечить аутентификацию, шифрование, защиту от подмены и безопасное управление доступом;
-- предоставить удобный GUI и расширяемую основу для новых сценариев общения и совместной работы;
-- превратить текущую архитектуру в production-ready систему с наблюдаемостью, масштабированием и дальнейшими возможностями, выходящими за рамки традиционных голосовых клиентов.
+## Точки входа и сборка
 
-Сервер в текущей версии звук не декодирует: он проверяет сессию отправителя, находит участников того же канала и пересылает исходный payload всем получателям, кроме отправителя. Такая модель сохраняет серверный media path лёгким и оставляет пространство для дальнейшего развития транспортной и медиаархитектуры.
+- `cmd/server/main.go` запускает голосовой UDP-сервер, локальную read-only
+  консоль и, если не отключён, HTTPS-сервер сигнализации и WebRTC SFU.
+  `cmd/server/version.go` встраивает версию из `version.txt`.
+- `cmd/desktop/main.go` запускает Wails-приложение. Файлы
+  `assets_development.go` и `assets_production.go` выбирают способ
+  доставки frontend; production-сборка встраивает собранные ресурсы.
+  Desktop-версия также хранится в `cmd/desktop/version.txt`.
+- `cmd/versionbump/` обновляет patch-версию для локальных сборок через
+  `Taskfile.yml`. Поэтому локальная сборка может изменить файл версии и
+  `build/config.yml`.
+- `Taskfile.yml` связывает генерацию Wails bindings, сборку frontend,
+  режим разработки и сборку desktop. Корневой `package.json` содержит
+  npm-обёртки; зависимости и скрипты самого UI находятся в
+  `cmd/desktop/frontend/package.json`.
+- `configs/server.example.json` — пример конфигурации сервера. Без
+  `-config` сервер создаёт встроенный канал `default`; JSON-конфигурация
+  задаёт полное дерево каналов.
 
-Основные параметры текущей реализации:
+Отдельного исполняемого консольного голосового клиента в текущем дереве нет.
+Низкоуровневые клиентские команды в `internal/client/command.go` остаются
+частью пакета, но точка входа `cmd/client2` удалена.
 
-| Параметр | Значение |
-|---|---:|
-| UDP-адрес сервера | `0.0.0.0:9000` |
-| Адрес, к которому подключается клиент | `127.0.0.1:9000` |
-| Частота дискретизации | 48 000 Гц |
-| Каналы аудио | 1, mono |
-| Размер аудиокадра | 960 samples, то есть 20 мс |
-| Кодек | Opus |
-| Заголовок протокола | 17 байт |
-| Максимальный payload | 1200 байт |
-| Максимальная UDP-датаграмма | 1217 байт |
-| Heartbeat | каждые 5 секунд |
-| Тайм-аут сессии | 30 секунд |
-| Очистка сессий и кэша | каждые 5 секунд |
-| Попытки control-запроса | 3 |
-| Тайм-аут одной попытки | 3 секунды |
-| Глубина jitter buffer | 3 кадра |
-
-## 2. Архитектура верхнего уровня
-
-```text
-┌──────────────────────────── client A ────────────────────────────┐
-│ microphone → PCM → Opus → VoicePacket → UDP                     │
-│                                                                  │
-│ UDP → demux → per-sender jitter → per-sender Opus decoder       │
-│     → PCM mixer → Oto player                                     │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ UDP :9000
-                               ▼
-┌──────────────────────────── server ──────────────────────────────┐
-│ decode packet → validate session/address → touch LastSeen        │
-│               → find same-channel recipients → forward bytes    │
-│                                                                  │
-│ Hub: sessions/channels     RequestCache: idempotent control      │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ UDP
-                               ▼
-                       client B, client C, ...
-```
-
-В одном UDP-сокете мультиплексированы две логические плоскости:
-
-- media plane — `PacketVoice`, где payload содержит Opus-кадр, а `Sequence` задаёт порядок кадров;
-- control plane — handshake, heartbeat, disconnect, join и ответы, где `RequestID` связывает запрос с ответом и позволяет безопасно повторять запрос.
-
-Слои зависят друг от друга сверху вниз:
+## Голос и состояние
 
 ```text
-cmd/client2 ─────┐
-                 ├→ internal/clientapp ─→ internal/client ─┬→ internal/audio
-cmd/desktop ─────┘                         │               ├→ internal/protocol
-       └→ internal/ui/wails ───────────────┘               └→ internal/transport/udp
-
-cmd/desktop/frontend ↔ generated Wails bindings ↔ internal/ui/wails
-
-cmd/server ──┬→ internal/server → internal/voice
-             ├→ internal/voice ─┬→ internal/protocol
-             │                  └→ internal/transport/udp
-             └→ internal/transport/udp
-
-internal/transport/udp → internal/protocol.DatagramCodec
+React UI
+  -> Wails service -> clientapp -> client -> transport/udp -> protocol
+  -> voice Hub (сервер) -> UDP-получатели того же канала
 ```
 
-## 3. Главные сценарии выполнения
+1. `internal/ui/wails/service.go` принимает команды UI и переводит их в
+   операции `clientapp`. DTO и проверки входных данных расположены в
+   `internal/ui/wails/dto.go`; события для WebView — в `event_bridge.go`.
+2. `internal/clientapp/app.go`, `session.go`, `supervisor.go` и
+   `reconnect.go` управляют соединением, параллельными циклами, остановкой
+   и повторным подключением без зависимости от Wails.
+3. `internal/client/` выполняет handshake, контрольные запросы, heartbeat,
+   прием пакетов, обновление состояния и сбор статистики. `internal/protocol/`
+   описывает формат пакетов и полезных нагрузок;
+   `internal/transport/udp/` читает/пишет датаграммы.
+4. `internal/voice/hub.go` — источник истины о сессиях, каналах,
+   участниках, потоках экрана и ревизии состояния. `control.go`,
+   `delivery.go`, `events.go`, `snapshot.go` и `screen.go` обслуживают
+   соответствующие операции. `internal/server/config.go` загружает
+   стартовое дерево, `pipeline.go` — фоновые процессы сервера.
+5. Клиент получает snapshot и затем live-события; при расхождении ревизий
+   запрашивает снимок заново. Для control-пакетов используется `RequestID`,
+   на сервере повторы обрабатывает `voice.RequestCache`.
 
-### 3.1. Запуск клиента и handshake
+Аудиотракт: `malgo` захватывает PCM → опционально применяются RNNoise и
+VAD/voice gate → Opus-кодер формирует голосовой UDP-пакет → сервер пересылает
+его участникам канала, не декодируя → клиентский jitter buffer, Opus-декодер
+и микшер передают звук в `malgo`-плеер. Основная сборка трактов находится в
+`internal/clientapp/session.go`; устройства и кодеки — в `internal/audio/`,
+приём, jitter, декодирование и микшер — в `internal/client/`.
+Индивидуальная громкость и mute участников применяются на стороне клиента.
 
-1. `cmd/client2/main.go` читает flags и process signals, затем запускает общий
-   `internal/clientapp.App`. Desktop entrypoint использует тот же service через
-   Wails adapter. Открытие UDP socket, reconnect и session lifetime принадлежат
-   `internal/clientapp`.
-2. `internal/client/request.go` отправляет `PacketHello` с криптографически случайным ненулевым `RequestID` и именем в payload.
-3. `internal/voice/control.go` проверяет имя и ищет `(IP:port, RequestID)` в handshake-кэше.
-4. При cache miss `Hub.CreateSession` выдаёт криптографически случайный ненулевой `SessionID`; сервер сохраняет и отправляет `PacketHelloAck`.
-5. После `HelloAck` клиент привязывает `ClientPacketConn` к выданному `SessionID`; при потере ACK он повторяет тот же Hello с тем же request ID, а сервер возвращает закэшированный ответ, не создавая вторую сессию.
+UDP-заголовок определён в `internal/protocol/packet.go`: 1 байт типа,
+8 байт `SessionID`, по 4 байта `Sequence` и `RequestID`. Итого 17 байт
+заголовка, до 1200 байт payload и до 1217 байт на проводе. Типы охватывают
+handshake, голос, heartbeat, смену канала, snapshot, события, media
+credentials и проверку минимальной версии сервера. Голосовой/control UDP
+трафик сейчас не шифруется.
 
-### 3.2. Присоединение к каналу
-
-1. Клиент сначала запускает receive/control и входящий аудиоконвейер, потому что ответ на join приходит через `ReceiveLoop` и `ControlLoop`.
-2. `JoinChannel` вызывает общий `DoRequest`: регистрирует ожидающий ответ в `State.pending`, присваивает новый `RequestID` и до трёх раз отправляет один логический запрос.
-3. Сервер валидирует соответствие `SessionID` исходному `IP:port`, проверяет request cache и меняет канал в `Hub` только при cache miss.
-4. `PacketJoinChannelAck` проходит через `ReceiveLoop → controlCh → ControlLoop → State.CompleteRequest`.
-5. Клиент сверяет подтверждённый `ChannelID`, повторно загружает полный snapshot и только после успеха запускает захват микрофона. Поэтому voice-пакеты не отправляются до подтверждённого join и финальной синхронизации.
-
-### 3.3. Исходящий звук
+## Демонстрация экрана
 
 ```text
-MalgoRecorder
-  → RecordLoop: []int16 / PCMFrame
-  → EncodeLoop: Opus / Frame
-  → SendLoop: SessionID + возрастающий Sequence / VoicePacket
-  → ClientPacketConn.SendPacket
-  → DatagramCodec.Encode(client→server, session, endpoint)
+React screenMedia / ScreenViews
+  -> Wails service -> clientapp/media.go -> HTTPS signaling
+  -> media.HTTPHandler -> media.Manager / Pion WebRTC SFU
+  -> подписчики выбранного потока
 ```
 
-Кадр содержит 960 mono samples при 48 кГц, то есть примерно 20 мс аудио. Нумерация `Sequence` начинается с 1 для каждой запущенной клиентской сессии и естественно допускает переполнение `uint32`.
-
-### 3.4. Маршрутизация на сервере
-
-```text
-ServerPacketConn.ReadPacket
-  → DatagramCodec.Decode(client→server, endpoint)
-  → voice.ServeUDP
-  → voice.HandlePacket
-  → HandleVoicePacket
-  → ValidateSessionAddr + Hub.Touch
-  → Hub.RecipientsFor
-  → SendToSessions
-```
-
-Сервер не преобразует Opus payload. Отправитель без канала отклоняется; получателями становятся снимки всех остальных сессий в том же канале.
-
-### 3.5. Входящий звук
-
-```text
-ClientPacketConn.ReceivePacket
-  → DatagramCodec.Decode(server→client, session, endpoint)
-  → ReceiveLoop
-  → MediaFrame{SenderID, Sequence}
-  → JitterLoop: отдельный буфер на SenderID
-  → DecodeLoop: отдельный Opus decoder на SenderID
-  → MixLoop: один очередной PCM-кадр от каждого активного отправителя
-  → PlaybackLoop
-  → MalgoPlayer выбранного устройства вывода
-```
-
-Раздельные jitter buffers и декодеры принципиальны: Opus-декодер хранит состояние потока, поэтому один экземпляр нельзя безопасно использовать попеременно для разных говорящих.
-
-### 3.6. Остановка и очистка
-
-- Любая неожиданная ошибка клиентского loop вызывает `loopSupervisor.Cancel`, после чего останавливаются остальные loops.
-- До ожидания goroutine закрываются session-scoped Malgo recorder и player,
-  чтобы разблокировать потенциально блокирующие `Read`/`Write` и освободить
-  выбранные системные устройства.
-- Клиент в конце пытается отправить `PacketDisconnect`, затем `run` закрывает UDP socket.
-- Сервер удаляет сессию сразу по disconnect либо через 30 секунд неактивности. Связанные записи request cache также удаляются.
-- Отмена серверного контекста устанавливает немедленный read deadline и выводит `ServeUDP` из блокирующего чтения.
-
-## 4. Бинарный UDP-протокол
-
-Каждая датаграмма имеет одинаковый big-endian заголовок:
-
-| Смещение | Поле | Тип | Назначение |
-|---:|---|---|---|
-| `0` | `Type` | `uint8` | Тип пакета, значение 1–8 |
-| `1..8` | `SessionID` | `uint64` | Сессия клиента/отправителя |
-| `9..12` | `Sequence` | `uint32` | Порядок voice-кадров |
-| `13..16` | `RequestID` | `uint32` | Корреляция control request/response |
-| `17..N` | `Payload` | `[]byte` | Имя, канал, ошибка или Opus-данные |
-
-| Type | Константа | Направление и смысл |
-|---:|---|---|
-| 1 | `PacketHello` | клиент → сервер; имя клиента в payload |
-| 2 | `PacketVoice` | клиент → сервер → клиенты; Opus в payload |
-| 3 | `PacketHelloAck` | сервер → клиент; назначенный `SessionID` |
-| 4 | `PacketHeartbeat` | клиент → сервер; обновление `LastSeen` |
-| 5 | `PacketDisconnect` | клиент → сервер; явное удаление сессии |
-| 6 | `PacketJoinChannel` | клиент → сервер; big-endian `ChannelID` |
-| 7 | `PacketJoinChannelAck` | сервер → клиент; `ChannelID` и `StateRevision` |
-| 8 | `PacketError` | сервер → клиент; текст ошибки в payload |
-| 9 | `PacketStateSnapshotRequest` | клиент → сервер; metadata/page request |
-| 10 | `PacketStateSnapshotAck` | сервер → клиент; versioned snapshot response |
-
-## 5. Карта каталогов и файлов
-
-### Корень проекта
-
-#### `go.mod`
-
-Манифест Go-модуля `example.com/go-voice-mvp`, рассчитанный на Go `1.27.1`. Прямые зависимости:
-
-- `github.com/gen2brain/malgo` — захват и воспроизведение PCM через выбранные
-  системные устройства;
-- `github.com/ebitengine/oto/v3` — воспроизведение PCM;
-- `github.com/pion/opus` — Opus encoder/decoder;
-- `github.com/MarcosTypeAP/go-rnnoise` — pure-Go RNNoise-фильтр;
-- `github.com/rolandhe/go-vad` — pure-Go порт WebRTC VAD.
-
-Также фиксирует косвенные `purego` и `golang.org/x/sys`; последний нужен, в частности, для распознавания Windows-ошибки `WSAEMSGSIZE`.
-
-#### `go.sum`
-
-Контрольные суммы модулей из `go.mod` и их `go.mod`-файлов. Обеспечивает воспроизводимую и проверяемую загрузку зависимостей; вручную обычно не редактируется.
-
-#### `README.md`
-
-Основная пользовательская документация: позиционирование проекта, фактическая
-архитектура, команды запуска, формат UDP-пакета, возможности и ограничения.
-Это лучший первый файл для запуска проекта; порядок будущих работ вынесен в
-`readme_docs/development-plan.md`.
-
-#### `go-voice-roadmap.md`
-
-Укрупнённая продуктовая дорожная карта: реализованная основа, ближайшая
-последовательность и поздние направления. Фактическое состояние остаётся в
-README, а исполняемый порядок — в `readme_docs/development-plan.md`.
-
-#### `PROJECT_MAP.md`
-
-Этот документ. Даёт архитектурный обзор и подробный индекс рабочей копии по файлам; его следует обновлять при добавлении пакетов, изменении wire format или перестройке runtime pipeline.
-
-#### `readme_docs/patch-1.md`
-
-Завершённый технический патч укрепления границы `DatagramCodec`/UDP transport. Фиксирует исходные риски, целевые контракты context, размера, ошибок и владения socket, выполненные шаги и тестовую матрицу. Не реализованные security-идеи из него перенесены в backlog без назначения следующим патчем.
-
-#### `readme_docs/patch-2.md`
-
-Завершённый чеклист доменной модели каналов: общие channel domain types, server-side registry и revision, миграция server routing с имени канала на `ChannelID`, сохранение текущего wire format и тесты контрактов.
-
-#### `readme_docs/patch-3.md`
-
-Завершённый план конфигурации стартового дерева каналов: нейтральный
-`BootstrapSource`, строгий bounded JSON как его первая внешняя реализация,
-атомарный bootstrap Hub, встроенный канал `default`, server CLI flag, fail-fast
-validation, локальную read-only консоль состояния и тесты без изменения wire
-format. SQLite сможет заменить источник чтения для bootstrap, но стабильные ID
-и writable repository остаются отдельным этапом persistence. Удалённый RCON
-отложен до security/permissions, а paged state snapshot выделен в следующий
-патч.
-
-#### `readme_docs/patch-4.md`
-
-Завершённый план initial state synchronization: versioned binary metadata,
-paged channels/participants, проверка одной `StateRevision`, атомарная
-публикация client snapshot и полный перевод join payload на `ChannelID` без
-name-based compatibility layer. Live events и GUI в патч не входят.
-
-#### `readme_docs/backlog.md`
-
-Единый список направлений, которые сознательно не входят в ближайшую разработку: security и шифрование, защита от нагрузки, наблюдаемость, альтернативные transports и поздние продуктовые расширения. Активные этапы из этого файла исключены.
-
-#### `readme_docs/README.md`
-
-Краткий индекс актуальных, исторических и справочных документов с правилами
-выбора источника при расхождении статусов.
-
-#### `readme_docs/channel-ui.md`
-
-Исторические требования к backend-модели интерфейса каналов: иерархия,
-метаданные, участники, производные counters, аудиопрофиль и границы ещё не
-реализованных действий. Документ также отмечает выполненную read-only часть.
-
-#### `readme_docs/development-plan.md`
-
-Источник порядка активной разработки: приёмка первого desktop UI, persistence
-и mutation API каналов, управление звуком, диагностика и security prerequisites.
-
-#### `readme_docs/patch-5.md`
-
-Выполненный план lifecycle: подтверждаемый heartbeat, автоматический
-reconnect с задержками `1s → 2s → 4s → 4s...`, безопасная смена session binding
-и временное консольное дерево каналов/участников поверх `ServerSnapshot`.
-
-#### `readme_docs/patch-6.md`
-
-Завершённый план live participant events, восстановления snapshot по revision,
-локальных speaking/mute/deafen и immutable view/subscription-границы для UI.
-
-#### `readme_docs/patch-7.md`
-
-Реализованный план и открытые критерии ручной приёмки первого Wails 3 desktop-клиента: общий
-`internal/clientapp`, безопасные DTO, React shell, дерево каналов, журнал
-событий, voice controls, сборка и shutdown.
-
-#### `readme_docs/client-settings.md`
-
-Рабочий перечень реализованных и будущих настроек desktop-клиента. Отдельно
-фиксирует границы существующих backend-контрактов и функции, которым ещё нужна
-поддержка audio pipeline или application service.
-
-#### `readme_docs/desktop-ui-improvements.md`
-
-Сводка доработок после первой версии Patch 7: компоновка UI, горячий выбор
-аудиоустройств, waveform и порог VAD, правила перехода по каналам, persistence,
-брендинг Govts и особенности dev/production build.
-
-#### `package.json`
-
-Не содержит JavaScript-кода или npm-зависимостей; используется только как набор удобных npm run scripts для Go-команд. `dev:server` запускает сервер. `dev:client-42` и `dev:client-43` сейчас запускают одинаковую команду с одним именем `G712`, поэтому для моделирования разных участников их параметры стоит различать вручную.
-
-#### `.gitignore`
-
-Исключает настройки IDE, Go-бинарники и результаты тестов, каталоги сборки/coverage, архивы, временные файлы и логи. Благодаря правилам `*.exe` и `*.zip` локальные `gomon.exe` и `go.zip` не должны становиться частью репозитория.
-
-#### `govots.iml`
-
-Локальное описание модуля IntelliJ IDEA/GoLand. Включает поддержку Go module и исключает каталог `readme` из content root. Это IDE-метаданные, на сборку через Go toolchain не влияют и по `.gitignore` не предназначены для хранения в Git.
-
-#### `go.zip`
-
-Локальный архив более раннего снимка проекта. Внутри присутствуют уже отсутствующие в рабочей структуре `cmd/client`, `cmd/main.go` и монолитные `internal/client/pipeline.go`, `internal/voice/router.go`. Это не runtime-зависимость и не источник актуальной архитектуры.
-
-#### `gomon.exe`
-
-Локальный Windows-бинарник. Исходный Go-код его не импортирует и команды запуска на него не ссылаются; для сборки, тестов и работы текущих `cmd/server`/`cmd/client2` он не требуется.
-
-### `configs/` — примеры конфигурации сервера
-
-#### `configs/server.example.json`
-
-Строгий пример стартового дерева: корневой `main` и дочерние `Private I`/`Private II`
-с position, topic, `max_users` и серверным аудиопрофилем. Runtime `ChannelID`
-и channel type в JSON не задаются. Файл можно передать серверу через
-`-config configs/server.example.json`; отсутствующая секция `audio` получает
-профиль по умолчанию.
-
-### `.github/`
-
-#### `.github/workflows/test.yml`
-
-CI workflow `Go checks`, запускаемый на push, pull request и вручную. На Ubuntu checkout-ит репозиторий, выбирает версию Go из `go.mod`, устанавливает ALSA headers (`libasound2-dev`), выполняет `go vet ./...` и `go test -race ./...`. Разрешения workflow ограничены чтением содержимого.
-
-### `cmd/server/` — исполняемый сервер
-
-#### `cmd/server/main.go`
-
-Точка входа UDP-сервера.
-
-- `main` разбирает `-config` и остаётся единственным местом с `log.Fatal`.
-- `run` создаёт signal-aware context и до открытия UDP socket атомарно строит
-  Hub через выбранный `BootstrapSource`.
-- Без файла используется единственный встроенный канал `default`; с файлом
-  `channels` считается полным непустым пользовательским деревом без
-  автоматического добавления `default`.
-- Параллельно запускает `server.CleanupLoop` и локальную read-only консоль, а в
-  основном потоке — `voice.ServeUDP`.
-- После завершения одного контура отменяет контекст, ждёт cleanup goroutine и объединяет независимые ошибки через `errors.Join`.
-
-Файл отвечает только за composition root и lifecycle процесса; протокол и бизнес-логика вынесены в `internal`.
-
-### `cmd/client2/` — исполняемый голосовой клиент
-
-#### `cmd/client2/main.go`
-
-Минимальная точка входа клиента.
-
-- Объявляет flags `-name` (обязательный) и `-channel` (по умолчанию `default`).
-- Подключается к адресу из `-server IP[:port]`, по умолчанию `127.0.0.1:9000`.
-- Создаёт signal-aware context, единственный reader stdin и
-  `clientapp.App` с консольными adapter dependencies.
-- Передаёт connect options общему application service и ждёт его завершения.
-- При process signal или `/quit` выполняет bounded `App.Close`.
-
-### `internal/clientapp/` — общий runtime клиента
-
-Пакет владеет desired connection, reconnect/session lifecycle, channel
-preference, supervisor и bounded журналом событий. Он не импортирует Wails и
-используется консольным и desktop entrypoints.
-
-#### `internal/clientapp/session.go`
-
-Composition root одной активной клиентской сессии и главный файл связывания pipeline.
-
-- Задаёт аудиопараметры `48000/mono/960`.
-- Создаёт каналы между loops: исходные PCM/Opus, входящие media/control, упорядоченные и декодированные кадры, mixed PCM.
-- Создаёт Malgo player выбранного устройства вывода и Opus encoder.
-- До join запускает receive, control, heartbeat, jitter, decode, mix и playback.
-- После подтверждённого join создаёт Malgo recorder выбранного устройства
-  ввода и запускает record, encode и send.
-- Запускает CLI-команды из stdin.
-- При любой ошибке закрывает блокирующие аудиоресурсы, ждёт loops и отправляет disconnect.
-- `wrapError` добавляет контекст операции, не создавая ошибку для `nil`.
-
-#### `internal/clientapp/supervisor.go`
-
-Локальный errgroup-подобный координатор goroutine.
-
-- Хранит общий дочерний context и `WaitGroup`.
-- `Go` запускает loop; завершение любого loop сигнализирует `done` и отменяет остальные.
-- `Wait` ждёт первого сигнала, затем вызывает shutdown callback до `WaitGroup.Wait`, что важно для разблокировки audio I/O.
-- `Shutdown` инициирует тот же порядок явно, например при ошибке join.
-- Собирает все неожиданные ошибки потокобезопасно и объединяет их.
-- `unexpectedLoopError` считает штатными `context.Canceled`, `io.EOF` и `io.ErrClosedPipe`.
-
-#### `internal/clientapp/supervisor_test.go`
-
-Проверяет lifecycle supervisor: ошибка одного loop отменяет другой; shutdown callback вызывается до ожидания заблокированной goroutine; явный `Shutdown` завершает supervisor даже если ни один loop сам не успел вернуть результат.
-
-#### `internal/clientapp/app.go` и `event_log.go`
-
-- `App` предоставляет `Connect`, `Disconnect`, `Close`, `JoinChannel`, immutable
-  snapshot/subscription, перечисление и выбор аудиоустройств и локальные audio
-  controls.
-- Новый connect очищает server-owned state, сохраняя app-lifetime настройки
-  аудио и подписки.
-- Event log хранит последние 200 наблюдаемых событий, выдаёт tail после
-  локального sequence и уведомляет подписчиков с coalescing.
-
-### `cmd/desktop/` и `internal/ui/wails/` — desktop UI
-
-- `cmd/desktop/main.go` встраивает production frontend, регистрирует Wails
-  service/events, создаёт одно окно и координирует shutdown.
-- `internal/ui/wails/service.go` публикует только высокоуровневые операции
-  application service.
-- `internal/ui/wails/settings.go` загружает и сохраняет versioned настройки в
-  `%APPDATA%\Govts\settings.json`: display name, выбор устройств, deafen,
-  RNNoise и параметры VAD.
-- `dto.go` преобразует все `uint64` identifiers/revisions в десятичные строки,
-  чтобы JavaScript не терял точность.
-- `cmd/desktop/frontend` содержит React/TypeScript UI: страницу подключения,
-  каналы с закреплённой снизу изменяемой по высоте панелью server events,
-  настройки и voice-панель в верхней строке.
-- Выбор capture/playback device горячо заменяет только соответствующий
-  audio endpoint внутри действующей session и не переподключает клиента к
-  серверу.
-- `audio-meter` передаёт уровни до фильтров, после обработки и после voice gate;
-  frontend рисует совмещённые ленты переданного и отсечённого звука и шкалу
-  порога VAD.
-
-### `internal/audio/` — типы, кодек и системные устройства
-
-#### `internal/audio/audio.go`
-
-Общие контракты аудиослоя.
-
-- `Frame` — закодированный исходящий кадр.
-- `MediaFrame` — входящий закодированный кадр с сохранёнными `SenderID` и `Sequence`.
-- `PCMFrame` — PCM для локальной записи или итогового воспроизведения.
-- `MediaPCMFrame` — декодированный PCM конкретного удалённого отправителя.
-- `Encoder`, `Decoder`, `Recorder`, `Player` — малые интерфейсы, отделяющие pipeline от реализаций.
-- `CodecConfig` — общие sample rate, channel count и frame size.
-- `PCM16Encoder` и `int16ToBytes` — простой little-endian PCM16 encoder и общая функция сериализации samples; Opus encoder также использует эту функцию.
-
-#### `internal/audio/devices.go`, `malgo.go` и `malgo_player.go`
-
-Перечисление системных устройств и реализации `Recorder`/`Player` поверх
-`gen2brain/malgo`/miniaudio.
-
-- Возвращает стабильные в пределах системной сессии ID, имена и признак
-  устройства по умолчанию отдельно для capture и playback.
-- Инициализирует выбранные capture/playback device в signed 16-bit PCM с
-  параметрами `CodecConfig`; пустой ID означает системное устройство по
-  умолчанию.
-- Real-time callback копирует входной chunk в буферизованный `dataCh`; при переполнении канал не блокирует аудиопоток и отбрасывает chunk.
-- `Read` собирает требуемое число `int16` из произвольных byte chunks, сохраняя неиспользованный хвост в `pending`.
-- Playback callback читает bounded PCM-буфер и заполняет тишиной underrun.
-- Смена выбранного устройства горячо заменяет только recorder или player;
-  UDP-сессия, сетевые loops, `SessionID` и текущий канал не изменяются.
-- `Close` останавливает и uninit-ит device, освобождает context и объединяет
-  ошибки.
-
-#### `internal/audio/opus.go`
-
-Адаптеры `pion/opus` к интерфейсам проекта.
-
-- `OpusEncoder` конвертирует `[]int16` в little-endian bytes и кодирует их во временный буфер максимум 4000 байт.
-- `OpusDecoder` выделяет PCM-буфер по `SamplesPerFrame × Channels` и возвращает только реально декодированное число samples.
-- Encoder создаётся один на локальный микрофон, decoder — отдельный на каждого удалённого `SenderID`.
-
-### `internal/protocol/` — wire format
-
-#### `internal/protocol/packet.go`
-
-Единственный источник истины для бинарного формата UDP-пакета.
-
-- Объявляет конкретные ошибки формата и верхнеуровневую категорию `ErrRejectedDatagram` для безопасно отбрасываемого входа.
-- Задаёт десять packet types и границу `PacketEnd` для валидации.
-- `VoicePacket` — универсальный envelope control и voice сообщений.
-- `HeaderSize`, `MaxPayloadSize`, `MaxWireDatagramSize` фиксируют сетевые лимиты; `MaxDatagramSize` временно оставлен совместимым alias.
-- `EncodePacket` проверяет type и payload, затем пишет big-endian header.
-- `DecodePacket` проверяет полный размер и type до разбора полей и сохраняет через `errors.Is` одновременно категорию rejected input и конкретную причину.
-- `NewVoicePacket` и `NewErrorPacket` — конструкторы двух частых вариантов.
-- `packetName`, `makePayload`, `encodeSessionID` — внутренние вспомогательные функции; основной encode path использует `encodeHeader`.
-
-#### `internal/protocol/join.go`
-
-Строгий ID-based payload-контракт join: request содержит ровно один big-endian
-`ChannelID`, ACK — `ChannelID` и `StateRevision`. Нулевые значения, усечённый и
-расширенный payload отклоняются.
-
-#### `internal/protocol/snapshot.go`
-
-Versioned бинарный контракт metadata/channels/participants. Запрос содержит
-kind, ожидаемую revision, offset и limit; ответ — статус `OK` или
-`RevisionChanged`, progression страницы и типизированные items. Codec проверяет
-каноническую структуру, UTF-8/лимиты строк, enum-поля и предел payload 1200 байт.
-
-#### `internal/protocol/codec.go`
-
-Алгоритм-независимая граница между логическим `VoicePacket` и сетевой датаграммой.
-
-- `DatagramCodec` определяет `Encode` и `Decode`, принимающие `DatagramContext` с направлением, владельцем ключа и удалённым endpoint.
-- `PlainDatagramCodec` сохраняет текущий незашифрованный 17-байтный формат и делегирует существующим `EncodePacket`/`DecodePacket`.
-- Общий wire limit принадлежит протоколу, а не codec; будущий защищённый codec должен разместить envelope и authentication tag внутри него.
-- При серверной отправке `KeyOwnerID` обозначает получателя независимо от `VoicePacket.SessionID`; при серверном чтении ID пока равен нулю и будущий codec должен извлечь предварительный идентификатор из открытой части versioned envelope, используя endpoint как дополнительный контекст.
-
-#### `internal/protocol/proto_test.go`
-
-Покрывает допустимые и недопустимые type values, round trip всех полей и payload, короткий пакет, HelloAck, максимальный payload, превышение лимитов при encode/decode и отклонение неизвестного типа. Эти тесты защищают совместимость wire format.
-
-### `internal/transport/udp/` — UDP I/O без бизнес-логики
-
-#### `internal/transport/udp/client.go`
-
-Создание raw connected `net.UDPConn`.
-
-- `ConnectUDP` принимает только строку с IP, а не DNS hostname, и выполняет `net.DialUDP`.
-- Публичных plaintext read/write helpers здесь больше нет: дальнейшая работа выполняется только через `ClientPacketConn`.
-
-#### `internal/transport/udp/client_test.go`
-
-Отправляет клиенту oversized UDP datagram и проверяет, что `ClientPacketConn.ReceivePacket` возвращает одновременно `protocol.ErrRejectedDatagram` и `protocol.ErrPacketTooLarge`, а не передаёт усечённые данные выше по pipeline.
-
-#### `internal/transport/udp/server.go`
-
-Создание raw unconnected UDP socket.
-
-- `ListenUDP` слушает все IPv4-интерфейсы на переданном порту.
-- Публичных plaintext read/write helpers здесь больше нет: socket передаётся `ServerPacketConn`.
-
-#### `internal/transport/udp/server_test.go`
-
-Проверяет серверную половину защиты от слишком большой датаграммы и обе категории ошибки: `protocol.ErrRejectedDatagram` и `protocol.ErrPacketTooLarge`.
-
-#### `internal/transport/udp/packet_conn.go`
-
-Два типобезопасных пакетных фасада над общей внутренней реализацией, связывающей `net.UDPConn` с внедрённым `protocol.DatagramCodec`.
-
-- `ClientPacketConn` предоставляет только `SendPacket`/`ReceivePacket` для connected socket; `BindSession` один раз привязывает будущий security context к локальному `SessionID`.
-- `ServerPacketConn` предоставляет только `ReadPacket`/`WritePacket` для unconnected socket; `WritePacket` принимает recipient ID отдельно от логического пакета.
-- Конструкторы проверяют режим socket. При успехе владение raw connection переходит фасаду, при ошибке остаётся у вызывающего; `Close` идемпотентен и разблокирует чтение.
-- Read buffer всегда равен `MaxWireDatagramSize + 1`, а превышение единого предела отклоняется на входе и выходе независимо от codec.
-- Отдельные mutex сериализуют чтение и полный encode/write path; общий codec mutex позволяет позднее использовать stateful codec с nonce/replay state безопасно при одновременных heartbeat, voice и control sends.
-- Методы lifecycle/deadline/address скрывают raw socket от верхних слоёв, но сохраняют необходимые операции завершения.
-
-#### `internal/transport/udp/packet_conn_test.go`
-
-Проверяет передачу полного context в codec, различие sender/recipient ID, общий wire limit, проверку socket mode, правила `BindSession`, идемпотентный `Close` и разблокирование read.
-
-#### `internal/transport/udp/msgsize_windows.go`
-
-Windows-only реализация, выбранная build tag `windows`. Распознаёт `windows.WSAEMSGSIZE`, которое `net.UDPConn` может вернуть при усечении входящей датаграммы, и позволяет преобразовать его в доменную ошибку `ErrPacketTooLarge`.
-
-#### `internal/transport/udp/msgsize_other.go`
-
-Реализация для всех не-Windows платформ (`!windows`). Возвращает `false`: там oversized packet обнаруживается по длине дополнительного байта, а специальная системная ошибка Windows отсутствует.
-
-### `internal/client/` — состояние и конкурентный аудиоконвейер клиента
-
-#### `internal/client/state.go`
-
-Потокобезопасное состояние активной клиентской сессии.
-
-- Под mutex хранит `sessionID`, имя, текущий `ChannelID`, глубокую копию
-  последнего полного `ServerSnapshot` и map ожидающих control-запросов.
-- `atomic.Uint32` выдаёт монотонные request IDs для запросов после handshake.
-- `RegisterRequest` создаёт одноэлементный response channel.
-- `CompleteRequest` атомарно извлекает pending request, затем вне lock доставляет ответ и закрывает канал.
-- `CancelRequest` очищает запись при timeout/cancel.
-- `Snapshot` возвращает глубокую копию, а `ReplaceSnapshot` атомарно публикует
-  только полностью собранное состояние.
-
-#### `internal/client/request.go`
-
-Надёжные request/response операции поверх UDP.
-
-- `PerformHandshake` валидирует имя, генерирует случайный request ID и запускает retry-цикл до создания обычного `State`/`ReceiveLoop`.
-- Handshake сам временно управляет read deadline и синхронно читает ACK из socket.
-- `DoRequest` работает уже внутри runtime: регистрирует pending response в `State`, повторяет отправку до трёх раз и ждёт `ControlLoop` через канал.
-- Один `RequestID` сохраняется на всех попытках, что вместе с серверным cache даёт идемпотентность.
-- `PacketError`, timeout и context cancellation превращаются в осмысленные ошибки.
-
-#### `internal/client/snapshot.go`
-
-Загружает metadata, затем все страницы каналов и участников одной revision.
-Проверяет totals до allocation, progression offset, сортировку, уникальность ID,
-иерархию и ссылки участников. При `RevisionChanged` полностью повторяет загрузку
-не более трёх раз. Здесь же имя или числовой selector локально разрешается в
-однозначный `ChannelID`.
-
-#### `internal/client/control.go`
-
-Control plane после handshake.
-
-- `ControlLoop` принимает демультиплексированные control-пакеты, игнорирует чужой `SessionID` и завершает pending join/snapshot/error requests.
-- `HeartbeatLoop` каждые пять секунд отправляет session heartbeat.
-- `Disconnect` посылает одноразовый пакет без ожидания ACK.
-- `JoinChannel` использует `DoRequest`, отправляет только `ChannelID`, проверяет
-  ID и revision строгого ACK, затем обновляет `State`.
-
-#### `internal/client/command.go`
-
-Простой интерактивный CLI поверх stdin. `/join <id|name>` разрешает канал по
-локальному snapshot, выполняет ID-join и после ACK обновляет snapshot; `/quit`
-отменяет общий context. Завершение stdin само по себе не отменяет клиент.
-
-#### `internal/client/capture.go`
-
-Три последовательных loop исходящего media pipeline.
-
-- `RecordLoop` читает один PCM frame из `Recorder`, присваивает длительность 20 мс и закрывает `pcmCh` при завершении.
-- `EncodeLoopWithPipeline` последовательно применяет optional `PCMFilter`, VAD detector и voice gate до Opus encoder. Закрытый gate не создаёт encoded frame.
-- До обработки и перед кодированием каждого выпущенного pre-roll кадра проверяются mute и `ControlEpoch`, поэтому старый буфер не проходит после быстрого mute/unmute.
-- `SendLoop` оборачивает encoded frame в `PacketVoice`, назначает возрастающий `Sequence` и отправляет через UDP.
-- Все передачи между стадиями учитывают отмену context и создают естественный backpressure через небуферизованные runtime channels.
-
-#### `internal/audio/vad/` и `internal/audio/voicegate/`
-
-`vad.Detector` отделяет анализ PCM от шумоподавления. Первый backend оборачивает
-WebRTC VAD для mono PCM16 48 кГц/20 мс и дополняет бинарное решение уровнем RMS
-в dBFS. `voicegate.Gate` реализует режимы `disabled`, `level`, `vad`, `hybrid`,
-состояния closed/candidate/open/hangover и bounded pre-roll до 100 мс. RNNoise
-реализует независимый transform-only `audio.PCMFilter`.
-
-#### `internal/client/receive.go`
-
-Единственная goroutine, читающая UDP socket после handshake.
-
-- Ставит read deadline на 500 мс, чтобы регулярно проверять отмену context.
-- Преобразует `PacketVoice` в `MediaFrame`, сохраняя `SessionID` как `SenderID` и сетевой `Sequence`.
-- Все остальные типы отправляет в `controlCh`.
-- При выходе закрывает оба выходных канала, каскадно завершая downstream loops.
-
-#### `internal/client/jitter.go`
-
-Переупорядочивание входящих кадров отдельно для каждого отправителя.
-
-- `jitterBuffer` хранит ожидаемый sequence, pending map, состояние запуска и статистику `Lost/Duplicates/TooOld`.
-- До старта накапливает `depth` кадров; затем выдаёт непрерывную последовательность.
-- `Tick` после нескольких интервалов ожидания считает пропуск потерянным и продвигается к ближайшему кадру.
-- `sequenceBefore` корректно сравнивает номера при wraparound `uint32`.
-- `streamJitterBuffers` маршрутизирует по `SenderID` и удаляет неактивный stream через 30 секунд.
-- `JitterLoop` тикает каждые 20 мс, flush-ит остатки при закрытии входа и закрывает `orderedCh`.
-
-Ограничение: реализован фиксированный буфер без адаптивной задержки и Opus packet-loss concealment.
-
-#### `internal/client/jitter_test.go`
-
-Проверяет reorder, переход через пропущенный кадр при заполненном окне, выпуск короткого потока по timer tick, отбрасывание duplicate/too-old кадров, wraparound sequence, независимость отправителей и удаление неактивных stream buffers.
-
-#### `internal/client/decode.go`
-
-Декодирование упорядоченных Opus-потоков.
-
-- `DecoderFactory` позволяет создавать новый stateful decoder для каждого sender и подменять его в тестах.
-- `streamDecoders` хранит decoder и `lastSeen` по `SenderID`.
-- Результат сохраняет sender/sequence metadata до стадии mixer.
-- Неактивные decoder instances удаляются через 30 секунд; cleanup запускается раз в 5 секунд.
-- Любая ошибка создания или decode завершает `DecodeLoop` и через supervisor инициирует общий shutdown.
-
-#### `internal/client/decode_test.go`
-
-С помощью fake decoder доказывает, что разные отправители получают независимое состояние декодера, а неактивные decoder entries удаляются по timeout.
-
-#### `internal/client/mixer.go`
-
-Объединяет PCM нескольких говорящих в один playback stream.
-
-- Для каждого sender хранится FIFO decoded frames.
-- На каждом `Mix` берётся не более одного кадра от каждого sender.
-- Samples суммируются по индексам; разная длина поддерживается выбором максимальной длины.
-- Сумма насыщается границами `int16`, предотвращая integer wrap/clipping overflow.
-- `MixLoop` выдаёт кадр по ticker, по умолчанию раз в 20 мс; при закрытии входа дренирует остаток очередей.
-
-#### `internal/client/mixer_test.go`
-
-Проверяет сложение samples с насыщением по минимуму/максимуму `int16` и правило «один кадр от каждого sender за один mix tick».
-
-#### `internal/client/playback.go`
-
-Последняя стадия входящего pipeline. Последовательно передаёт mixed `PCMFrame.Samples` внедрённому `audio.Player`, завершается по context, закрытию канала или ошибке устройства. Закрытием самого player управляет runtime, а не loop.
-
-#### `internal/client/pipeline_test.go`
-
-Интеграционные тесты клиентской control/receive логики на локальных UDP sockets.
-
-- `joinTestPeer` моделирует сервер и умеет принимать request/отправлять response.
-- Проверяются пустое имя канала, успешный join, серверный `PacketError`, потерянный ACK с повтором и окончательный timeout.
-- Handshake-тесты подтверждают повтор с тем же request ID и финальный timeout.
-- Receive-тест доказывает сохранение `SenderID` и `Sequence` из voice packet.
-- Отдельно проверяется строгая валидация join response.
-
-### `internal/domain/` — общая модель состояния сервера
-
-#### `internal/domain/channel.go`
-
-Определяет не зависящие от transport и runtime типы для дерева каналов и
-будущих snapshots: `ChannelID`, `StateRevision`, `Channel`, `ChannelType`,
-`AudioProfile`, `Participant`, `ServerInfo` и client-safe `ServerSnapshot`. Здесь же зафиксированы пределы
-имени, темы, описания и глубины дерева. `ValidateAudioProfile` фиксирует
-поддерживаемый PCM-формат Opus: 48 кГц, mono, frame 20 мс, разрешая каналу
-выбирать bitrate 6–510 кбит/с и application `audio`/`voip`. Профиль по
-умолчанию использует 24 кбит/с и `voip`. `ChannelID == 0` означает, что
-участник ещё не присоединился к каналу.
-
-### `internal/voice/` — серверные сессии, control и media routing
-
-#### `internal/voice/session.go`
-
-Модель одной серверной сессии: `ID`, отображаемое `Name`, текущий
-`ChannelID`, последний UDP `Addr` и время `LastSeen`. Изменяемые экземпляры
-принадлежат `Hub`; наружу выдаются глубокие snapshots.
-
-#### `internal/voice/hub.go`
-
-Потокобезопасный authoritative in-memory реестр сессий и каналов.
-
-- `sync.RWMutex` защищает обе map; session ID генерируются через `crypto/rand`,
-  channel ID монотонны и ненулевые в пределах запуска.
-- `NewHub` и `NewHubWithServerInfo` регистрируют постоянный корневой канал
-  `default`; `NewEmptyHubWithServerInfo` предназначен для bootstrap полного
-  дерева из внешнего источника и начинает без каналов.
-- `CreateChannel`, `GetChannel` и `ListChannels` управляют
-  registry; проверяются metadata, parent, глубина, дубли sibling-имён и
-  `MaxUsers`, а список сортируется по `(ParentID, Position, ID)`.
-- `StateRevision` меняется только для видимого состояния: lifecycle/rename/move
-  участника и создание канала; heartbeat и смена UDP endpoint её не меняют.
-- `Inspect` под одним `RLock` возвращает независимый operational snapshot
-  server info/revision/channels/sessions для локальной консоли и намеренно
-  содержит endpoint и `LastSeen`; `ClientSnapshot` возвращает отдельную
-  безопасную копию только с каналами и участниками.
-- `CreateSession`, `Add`, `Remove`, `Get` управляют lifecycle.
-- `JoinChannel` и routing используют только `ChannelID`; name-based server API
-  и name-based wire payload отсутствуют.
-- `Rename`, `Touch`, `UpdateAddr` изменяют данные только под write lock.
-- `Members`, `SessionsInChannel`, `Recipients`, `RecipientsFor` строят независимые snapshots для чтения/доставки.
-- `RecipientsFor` не позволяет маршрутизировать от неизвестной сессии или до join.
-- `RemoveInactive` атомарно удаляет просроченные сессии.
-- `cloneSession` глубоко копирует и `UDPAddr`, включая IP slice, не позволяя вызывающему создать data race или незаметно изменить внутреннее состояние.
-
-#### `internal/voice/hub_test.go`
-
-Проверяет независимость возвращаемых snapshots, удаление сессий по времени, генерацию ненулевых уникальных ID, повтор генерации при нуле/коллизии, обработку ошибки источника случайности и конкурентную работу join/touch/routing/cleanup. Последний сценарий особенно важен для запуска под race detector.
-
-#### `internal/voice/channel_test.go`
-
-Проверяет стартовый канал, монотонность и порядок `ChannelID`, независимость
-domain snapshots, пределы metadata, parent hierarchy, sibling names, циклы,
-глубину, `MaxUsers`, семантику `StateRevision`, сортировку участников и
-параллельные join/remove/list операции.
-
-#### `internal/voice/cache.go`
-
-Ограниченный потокобезопасный кэш ответов на повторные control-запросы.
-
-- Обычный ключ — `(SessionID, RequestID)`; handshake до появления session использует `(IP:port, RequestID)`.
-- TTL по умолчанию 30 секунд, максимум 4096 записей.
-- При вставке удаляет expired entries, а на пределе — запись с самым ранним expiry.
-- Payload копируется при записи и чтении, исключая внешнюю мутацию.
-- `RemoveSession` чистит данные при disconnect/timeout.
-- Внутренний конструктор принимает clock, TTL и limit для детерминированных тестов.
-
-#### `internal/voice/cache_test.go`
-
-Проверяет expiry, eviction самой старой записи при capacity limit, очистку по session ID, защитное копирование payload и раздельные handshake entries для разных endpoints с одинаковым request ID.
-
-#### `internal/voice/control.go`
-
-Серверные handlers control packet types.
-
-- `HandleHelloPacket` валидирует request ID и имя до 64 байт, обеспечивает handshake deduplication и создаёт session.
-- `HandleHeartbeatPacket` валидирует адрес и обновляет `LastSeen`.
-- `HandleDisconnectPacket` удаляет session и её cache entries.
-- `HandleJoinChannelPacket` валидирует endpoint и request ID, декодирует
-  `ChannelID`, возвращает cached response для duplicate request и кэширует
-  ACK/Error. Неизвестный или заполненный канал отклоняется и не создаётся.
-- `SendError` и `cacheAndSendHandshakeError` формируют protocol error responses.
-
-#### `internal/voice/snapshot.go`
-
-Обрабатывает metadata/page requests из client-safe копии Hub. Сравнивает
-revision, формирует bounded страницы по limit и byte budget, поддерживает
-каноническую пустую финальную страницу и использует общий request cache.
-
-#### `internal/voice/delivery.go`
-
-Общая доставка и защита привязки сессии к UDP endpoint.
-
-- `SendToSession`/`SendToSessions` отправляют packet по snapshot-адресам; первая ошибка останавливает массовую отправку.
-- `ValidateSessionAddr` сравнивает IP и port фактического отправителя с сохранённой сессией, блокируя простое использование чужого `SessionID` с другого endpoint.
-- `UpdateSessionAddr` делегирует смену адреса Hub, но текущий runtime её не вызывает.
-
-Это проверка endpoint binding, а не полноценная аутентификация или криптографическая защита.
-
-#### `internal/voice/media.go`
-
-Серверный media path. `HandleVoicePacket` проверяет endpoint, обновляет активность отправителя и вызывает routing. `FindRecipients` получает участников канала через `Hub.RecipientsFor`, а `RouteVoicePacket` пересылает неизменённый packet всем найденным адресатам.
-
-#### `internal/voice/server.go`
-
-Главный UDP receive loop и dispatcher.
-
-- `HandlePacket` направляет пять допустимых входящих клиентских типов в соответствующие handlers; server-response types от клиента отклоняются.
-- `ServeUDP` читает пакеты последовательно и обрабатывает их в той же goroutine.
-- Вход, классифицированный как `ErrRejectedDatagram` (malformed, oversized, unknown type и будущие authentication/replay failures), тихо отбрасывается без завершения сервера и без возможности устроить log flood.
-- Ошибки конкретного handler также логируются, после чего loop продолжает работу.
-- Context cancellation будит заблокированный `ReadFromUDP` через deadline; закрытый socket без отменённого context считается ошибкой.
-
-#### `internal/voice/router_test.go`
-
-Интеграционные тесты серверного dispatcher/routing слоя. Покрывают защиту endpoint binding, запрет voice до join, выбор только получателей того же `ChannelID`, различие sender и recipient/key-owner, deduplication join и hello, ошибки неизвестного/заполненного канала без автоматического создания, остановку `ServeUDP` по context, ошибку закрытого socket и продолжение работы после malformed packet. Вспомогательный `receiveTestPacket` читает реальные ответы через codec-границу.
-
-### `internal/server/` — фоновые процессы серверного приложения
-
-#### `internal/server/config.go`
-
-Граница загрузки стартового состояния. Нейтральный `BootstrapSource` отделяет
-bootstrap от формата хранения; `BuiltinBootstrapSource` возвращает имя сервера
-и `default`, а `JSONBootstrapSource` строго декодирует файл размером до 64 КиБ
-и требует хотя бы один канал. Вложенная секция `audio` задаёт профиль канала;
-пропущенные поля получают безопасные значения по умолчанию, а неподдерживаемые
-значения отклоняются до запуска сети. Bootstrap создаёт пустой Hub, ограничивает полное
-дерево источника 256 каналами, создаёт его parent-first через
-`Hub.CreateChannel` и возвращает Hub только после полного успеха. JSON не
-назначает runtime ID и не дополняется системными каналами.
-
-#### `internal/server/config_test.go`
-
-Проверяет единственный встроенный `default`, полное JSON-дерево и parent-first
-ID, отклонение пустого списка,
-malformed/unknown/trailing/oversized JSON, аудиопрофили, depth/count/metadata/duplicate
-ошибки, отмену context, атомарность bootstrap и routing в загруженном канале.
-
-#### `internal/server/console.go`
-
-Локальная read-only консоль с внедряемыми input/output и clock. Поддерживает
-`help`, `status`, `channels`, `channel <id|name>`, `users` и
-`user <session-id>`. Вывод строится из одного `Hub.Inspect()` snapshot,
-детерминированно сортируется, экранирует имена через quoted formatting и не
-меняет состояние. Строка команды ограничена 4 КиБ; EOF отключает лишь консоль.
-
-#### `internal/server/console_test.go`
-
-Проверяет точный вывод всех команд, ошибки parser/lookup, неоднозначные имена,
-EOF, oversized input, отмену context и конкурентную инспекцию во время
-join/remove/heartbeat под race detector.
-
-#### `internal/server/pipeline.go`
-
-Содержит `CleanupLoop` и его operational constants. Раз в `CleanupInterval` удаляет из Hub сессии, неактивные дольше `SessionTimeout`, очищает их request-cache entries, логирует timeout и удаляет остальные expired cache entries. Возвращает `ctx.Err()` при остановке; `cmd/server` нормализует ожидаемый `context.Canceled`.
-
-### `build` — рабочие заметки и настройка окружения
-
-#### `build`
-
-Черновые инженерные заметки: фрагменты диагностического логирования и схемы handshake, heartbeat, client loops, demultiplexing, join flow и server-side request deduplication. Часть терминологии и схем отражает процесс разработки, поэтому этот файл не следует считать нормативной документацией; актуальные имена и порядок нужно сверять с кодом и `PROJECT_MAP.md`.
-
-#### `build`
-
-PowerShell-скрипт, записывающий пользовательские переменные окружения `GOROOT=D:\_go\sdk\go1.27.1` и `GOPROXY=https://proxy.golang.org,direct`. Изменяет постоянное окружение текущего пользователя Windows, не запускается автоматически и не нужен в CI.
-
-### `.idea/` — локальное состояние IntelliJ IDEA/GoLand
-
-Каталог целиком исключён корневым `.gitignore`; файлы машинно-зависимы и не участвуют в Go build.
-
-#### `.idea/go.imports.xml`
-
-Настройка auto-import: исключает устаревший `golang.org/x/net/context`, подталкивая IDE использовать стандартный `context`.
-
-#### `.idea/govots.iml`
-
-Внутреннее описание IDEA-модуля с включённой поддержкой Go module. Дублирует по роли корневой `govots.iml`, но имеет другой IDEA module type/content root.
-
-#### `.idea/misc.xml`
-
-Общая project SDK/output настройка IDEA; сейчас содержит Java SDK `openjdk-26` и каталог `out`. На Go SDK из `go.mod` не влияет.
-
-#### `.idea/modules.xml`
-
-Регистрирует корневой `govots.iml` в IDEA Project Module Manager.
-
-#### `.idea/vcs.xml`
-
-Привязывает проект к Git для IDE-интеграции.
-
-#### `.idea/workspace.xml`
-
-Большой персональный файл состояния IDE: локальный changelist, GOROOT, временные run/test/npm configurations, история commit messages, UI и indexing preferences. Он часто меняется автоматически и не должен использоваться как источник архитектурной истины или попадать в Git.
-
-## 6. Владение состоянием и конкурентность
-
-| Состояние/ресурс | Владелец | Защита/правило |
-|---|---|---|
-| Серверные sessions/channels | `voice.Hub` | `sync.RWMutex`, наружу только глубокие snapshots |
-| Серверные cached responses | `voice.RequestCache` | `sync.Mutex`, payload копируется |
-| Клиентский session/channel/pending | `client.State` | `sync.RWMutex` + atomic request counter |
-| Один входящий UDP socket клиента | `ReceiveLoop` | после handshake читает только одна goroutine |
-| Исходящий microphone codec | `runSession`/`EncodeLoop` | один encoder, один последовательный поток |
-| Входящие codec states | `streamDecoders` | отдельный decoder на `SenderID`, доступ из одного loop |
-| Jitter state | `streamJitterBuffers` | отдельный buffer на `SenderID`, доступ из одного loop |
-| Mixer queues | `pcmMixer` | принадлежат одной `MixLoop` goroutine |
-| Audio devices | `runSession` | закрываются один раз; реализации дополнительно идемпотентны |
-| Клиентские goroutine | `loopSupervisor` | общая отмена, wait и сбор ошибок |
-
-Сервер сейчас обрабатывает входящие UDP-пакеты последовательно; mutex в `Hub` и `RequestCache` всё равно нужен из-за параллельного `CleanupLoop` и для безопасного дальнейшего распараллеливания.
-
-## 7. Тестовая карта
-
-| Область | Файлы | Что защищается |
-|---|---|---|
-| Wire protocol | `internal/protocol/proto_test.go` | layout, round trip, type и size limits |
-| UDP transport | `internal/transport/udp/*_test.go` | context, recipient ID, socket modes, hard wire limit, ownership и lifecycle |
-| Client requests | `internal/client/pipeline_test.go` | handshake/join retry, ACK/error/timeout, receive demux и продолжение после rejected datagram |
-| Jitter | `internal/client/jitter_test.go` | reorder, loss, duplicate, old, wraparound, stream isolation |
-| Decode | `internal/client/decode_test.go` | decoder-per-sender и cleanup |
-| Mixer | `internal/client/mixer_test.go` | суммирование, saturation, очереди sender-ов |
-| Server state | `internal/voice/hub_test.go`, `channel_test.go` | snapshots, channel hierarchy/limits/revision, expiry, concurrent access |
-| Server bootstrap | `internal/server/config_test.go` | strict JSON, hierarchy/count limits, atomic construction и configured routing |
-| Server console | `internal/server/console_test.go` | parser, deterministic inspection, EOF/limits и concurrent mutations |
-| Request cache | `internal/voice/cache_test.go` | TTL, capacity, copies, session/endpoint keys |
-| Server routing | `internal/voice/router_test.go` | endpoint validation, channel routing, dedup, server lifecycle |
-| Client lifecycle | `internal/clientapp/supervisor_test.go`, `app_test.go` | cancellation, shutdown order, отсутствие зависания |
-
-Основные команды проверки:
-
-```bash
-go test ./...
-go vet ./...
-go test -race ./...
-```
-
-Полный end-to-end тест с реальными microphone/player устройствами отсутствует: аудиоустройства проверяются при ручном запуске, а автоматические тесты сосредоточены на чистой логике и локальном UDP.
-
-## 8. Быстрая навигация по задачам
-
-| Если нужно изменить… | Начать с | Затем проверить |
-|---|---|---|
-| Wire format или новый packet type | `internal/protocol/packet.go` | transport, `voice.HandlePacket`, `client.ReceiveLoop`, protocol tests |
-| Handshake/retry | `internal/client/request.go` | `internal/voice/control.go`, cache, pipeline/router tests |
-| Каналы и выбор получателей | `internal/domain/channel.go`, `internal/voice/hub.go` | control/media handlers и channel/hub/router tests |
-| Захват микрофона | `internal/audio/malgo.go` | `client.RecordLoop`, runtime shutdown |
-| Opus-параметры | `internal/clientapp/session.go`, `internal/audio/opus.go` | frame size, payload limit, decoder-per-sender |
-| Обработку потерь/порядка | `internal/client/jitter.go` | jitter tests и Opus PLC roadmap |
-| Смешивание говорящих | `internal/client/mixer.go` | mixer tests, громкость/clipping policy |
-| Воспроизведение | `internal/audio/player.go` | `client.PlaybackLoop`, supervisor shutdown |
-| Client lifecycle | `internal/clientapp/session.go`, `supervisor.go` | supervisor tests и blocking device I/O |
-| Server lifecycle | `cmd/server/main.go`, `voice/server.go` | cleanup loop и router lifecycle tests |
-| Стартовые каналы/JSON | `internal/server/config.go` | Hub channel validation и config tests |
-| Локальный server CLI | `internal/server/console.go` | `Hub.Inspect`, console tests и operational field exposure |
-| Session timeout | `internal/server/pipeline.go` | `Hub.RemoveInactive`, cache cleanup |
-| CI/toolchain | `.github/workflows/test.yml`, `go.mod` | ALSA dependency и race detector |
-
-## 9. Существенные текущие ограничения
-
-Patch 6: `internal/domain/event.go` и `internal/protocol/event.go` задают события
-участников и versioned wire payload. `internal/voice/events.go` обслуживает outbox
-на 256 событий и ordered dispatcher. `internal/client/live.go` содержит атомарное
-применение событий, `ClientViewState`, подписки и консольные уведомления;
-`sync.go` сериализует snapshot loads и проверяет revision каждые 5 секунд.
-`audio_controls.go` и `audio_command.go` реализуют speaking/mute/deafen, RNNoise
-и app-lifetime VAD settings; transient открытость gate доступна через
-`ClientViewState`.
-`internal/audio/player.go` использует ограниченный неблокирующий playback buffer
-вместо `io.Pipe`, чтобы deafen мог очистить воспроизведение.
-
-- Нет аутентификации, шифрования, HMAC/AEAD и защиты от replay; проверка `IP:port` — лишь базовая привязка endpoint.
-- `SessionID` является криптографически случайным 64-битным идентификатором, но до появления аутентификации и защиты пакетов его всё равно нельзя считать полноценным session token или единственным средством авторизации.
-- Клиент принимает `-server IP[:port]` (по умолчанию `127.0.0.1:9000`).
-  Сервер принимает `-port` (1–65535, по умолчанию 9000); server config описывает имя сервера и стартовые каналы.
-- Один UDP socket переносит control и media; при нагрузке они конкурируют за одну очередь.
-- Сервер выполняет рассылку последовательно и прекращает `SendToSessions` после первой ошибки отправки.
-- Jitter buffer фиксированный; нет adaptive jitter, PLC и детальной наружной телеметрии loss/duplicate/drop.
-- Mixer использует простое суммирование с saturation; нет master/per-user volume,
-  limiter или PTT. Исходящий WebRTC VAD/voice gate реализован, но определяет
-  любую речь, а не личность говорящего; громкий разговор рядом также может
-  открыть gate.
-- Live events восстанавливаются через snapshot при gap и periodic revision check.
-  Runtime rename/channel mutations без соответствующего event выявляются через revision.
-- Нет persistent storage: все sessions/channels/cache существуют только в памяти процесса.
-- Серверная консоль локальная и read-only; удалённого RCON пока нет.
-- CLI-команда `/join` может выполняться параллельно с shutdown; desktop GUI
-  использует отдельный `internal/clientapp` lifecycle.
-
-## 10. Минимальный запуск
-
-```bash
-# Терминал 1
-go run ./cmd/server
-
-# Терминал 2
-go run ./cmd/client2 -name alice -channel main
-
-# Терминал 3
-go run ./cmd/client2 -name bob -channel main
-```
-
-Во время работы клиента доступны:
-
-```text
-/join main
-/quit
-```
+- `cmd/desktop/frontend/src/features/screen/` содержит захват экрана,
+  публикацию, просмотр, профили и статистику. Окно просмотра открывается
+  отдельно; список доступных потоков приходит в состоянии сервера.
+- `internal/mediasignal/types.go` задаёт JSON-контракт. Серверный
+  `internal/media/http.go` обслуживает `/media/publish`,
+  `/media/subscribe`, `/media/stop` и `/media/unsubscribe`. Запросы
+  авторизуются credential, выданным активной голосовой сессии.
+- `internal/media/manager.go` управляет publisher/subscriber и сверяет
+  доступ с состоянием `voice.Hub`; остальные файлы `internal/media/`
+  реализуют WebRTC, RTP relay/recovery, метрики и TLS identity. Сам экран
+  передаётся через WebRTC, а не через голосовой UDP-протокол.
+- `internal/clientapp/media.go` подключается к HTTPS-сигнализации с
+  проверкой сохранённого отпечатка сертификата. Первое доверие к
+  самоподписанному ключу подтверждает пользователь (TOFU); настройка
+  хранится в `internal/clientsettings/`.
+
+По умолчанию сервер слушает голосовой UDP-порт `9000`, HTTPS signaling на
+`9002` и использует UDP `20000–20100` для WebRTC. Флаги
+`-port`, `-media-port`, `-media-min-port`, `-media-max-port`,
+`-media-advertised-ip` и `-media-identity` меняют эту конфигурацию;
+`-media-port 0` отключает демонстрацию экрана. Для публичного адреса
+WebRTC требуется корректный `-media-advertised-ip`.
+
+## Desktop UI и локальные данные
+
+- `cmd/desktop/frontend/src/App.tsx` собирает экран приложения и
+  синхронизирует UI с backend. `api.ts` — вызовы Wails и клиентские DTO,
+  `model.ts` — преобразования состояния.
+- `features/connection/` — подключение, статус и статистика соединения;
+  `features/participants/` — строка участника;
+  `features/screen/` — демонстрация и просмотр экрана. Стили — в
+  `src/*.css`.
+- Сгенерированные Wails bindings находятся в
+  `cmd/desktop/frontend/bindings/uniclog.io/govts/`. Их следует
+  пересоздавать после изменения публичных методов или DTO Wails-сервиса,
+  а не редактировать вручную.
+- `internal/clientsettings/store.go` сохраняет версионированные настройки
+  в каталоге конфигурации пользователя `Govts/settings.json`: имя,
+  аудиоустройства, параметры шумоподавления/VAD, тему и доверенные
+  media-ключи. Адрес сервера UI хранит в browser localStorage.
+
+## Проверки, версии и релизы
+
+- Go-тесты находятся рядом с пакетами (`*_test.go`); frontend-тесты — в
+  `cmd/desktop/frontend/src/`. Основные локальные проверки:
+  `go test ./...`, `go vet ./...`, `npm test --prefix cmd/desktop/frontend`
+  и `npm run build --prefix cmd/desktop/frontend`.
+- `.github/workflows/test.yml` запускает проверки Go в CI.
+  `.github/workflows/release.yml` срабатывает на тег `vX.Y.Z`, сверяет
+  его с `cmd/desktop/version.txt`, собирает Windows desktop и Linux
+  server, затем публикует GitHub Release с обоими файлами.
+- `internal/appversion/` разбирает и сравнивает версии. На стороне клиента
+  минимальная версия сервера передаётся при подключении; серверная версия
+  встраивается из `cmd/server/version.txt`.
+- `scripts/build-server.ps1`, `deploy-server.ps1` и
+  `redeploy-server.sh` — локальные сценарии сборки/развёртывания сервера;
+  они не являются частью GitHub Release workflow.
+
+При поиске конкретного изменения сначала выбирайте тракт — голос/состояние,
+экран или UI — и меняйте контракт на его границе вместе с соответствующими
+тестами. Ограничения проекта и команды запуска поддерживаются в README,
+чтобы эта карта оставалась навигацией по коду, а не дублировала руководство.

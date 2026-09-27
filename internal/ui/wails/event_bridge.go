@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"example.com/go-voice-mvp/internal/clientapp"
+	"uniclog.io/govts/internal/clientapp"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

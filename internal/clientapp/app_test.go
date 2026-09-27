@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	voiceclient "example.com/go-voice-mvp/internal/client"
+	"uniclog.io/govts/internal/audio"
+	voiceclient "uniclog.io/govts/internal/client"
 )
 
 func TestAppValidatesConnectAndClosesIdempotently(t *testing.T) {

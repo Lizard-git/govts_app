@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"example.com/go-voice-mvp/internal/clientsettings"
+	"uniclog.io/govts/internal/clientsettings"
 )
 
 func (s *Service) enableSettings(path string) error {

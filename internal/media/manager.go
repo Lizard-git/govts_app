@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/mediasignal"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/mediasignal"
+	"uniclog.io/govts/internal/voice"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )

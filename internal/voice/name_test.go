@@ -3,7 +3,7 @@ package voice
 import (
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestHubRejectsControlCharactersInNames(t *testing.T) {

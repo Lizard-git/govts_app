@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type channelSourceFunc func(context.Context) (ServerDefinition, error)

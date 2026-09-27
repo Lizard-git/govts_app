@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/voice"
 )
 
 const (

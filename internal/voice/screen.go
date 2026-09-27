@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sort"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 // StartScreenShare publishes channel-visible metadata after the media path is

@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 type DecoderFactory func() (audio.Decoder, error)

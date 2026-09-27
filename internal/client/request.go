@@ -9,16 +9,27 @@ import (
 	"net"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 const (
+	MinimumServerVersion    = "0.1.0"
 	handshakeRequestTimeout = 3 * time.Second
 	joinRequestTimeout      = 3 * time.Second
 	requestAttempts         = 3
 	maxClientNameBytes      = 64
 )
+
+type ServerVersionTooOldError struct {
+	Server   appversion.Number
+	Required appversion.Number
+}
+
+func (e *ServerVersionTooOldError) Error() string {
+	return fmt.Sprintf("Не удалось подключиться: сервер версии %s. Для этой сборки клиента нужен сервер версии %s или новее.", e.Server, e.Required)
+}
 
 func PerformHandshake(
 	ctx context.Context,
@@ -74,6 +85,7 @@ func PerformHandshakeAttempts(
 	name string,
 	timeout time.Duration,
 	attempts int,
+	minimumVersion ...string,
 ) (uint64, error) {
 	if len(name) == 0 {
 		return 0, errors.New("client name is required")
@@ -85,7 +97,7 @@ func PerformHandshakeAttempts(
 	if err != nil {
 		return 0, fmt.Errorf("create handshake request ID: %w", err)
 	}
-	return performHandshake(ctx, conn, name, requestID, timeout, attempts)
+	return performHandshake(ctx, conn, name, requestID, timeout, attempts, minimumVersion...)
 }
 
 func newHandshakeRequestID() (uint32, error) {
@@ -119,6 +131,7 @@ func performHandshake(
 	requestID uint32,
 	timeout time.Duration,
 	attempts int,
+	minimumVersion ...string,
 ) (uint64, error) {
 	if requestID == 0 {
 		return 0, errors.New("handshake request ID must not be zero")
@@ -129,10 +142,19 @@ func performHandshake(
 	if attempts <= 0 {
 		return 0, errors.New("handshake attempts must be positive")
 	}
+	required := MinimumServerVersion
+	if len(minimumVersion) > 0 && minimumVersion[0] != "" {
+		required = minimumVersion[0]
+	}
+	minimum, err := appversion.Parse(required)
+	if err != nil {
+		return 0, fmt.Errorf("invalid minimum server version: %w", err)
+	}
 
 	hello := protocol.VoicePacket{
 		Type:      protocol.PacketHello,
 		RequestID: requestID,
+		Sequence:  uint32(minimum),
 		Payload:   []byte(name),
 	}
 
@@ -187,11 +209,17 @@ func performHandshake(
 			if ack.Type == protocol.PacketError {
 				return 0, fmt.Errorf("server error: %s", string(ack.Payload))
 			}
+			if ack.Type == protocol.PacketServerVersionTooOld {
+				return 0, &ServerVersionTooOldError{Server: appversion.Number(ack.Sequence), Required: minimum}
+			}
 			if ack.Type != protocol.PacketHelloAck {
 				continue
 			}
 			if ack.SessionID == 0 {
 				return 0, errors.New("server returned invalid session ID")
+			}
+			if appversion.Number(ack.Sequence) < minimum {
+				return 0, &ServerVersionTooOldError{Server: appversion.Number(ack.Sequence), Required: minimum}
 			}
 
 			return ack.SessionID, nil

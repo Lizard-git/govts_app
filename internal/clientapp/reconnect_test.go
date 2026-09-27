@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	voiceclient "example.com/go-voice-mvp/internal/client"
+	voiceclient "uniclog.io/govts/internal/client"
 )
 
 func TestReconnectBackoff(t *testing.T) {

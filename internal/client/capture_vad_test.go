@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/audio/vad"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/audio/vad"
+	"uniclog.io/govts/internal/audio/voicegate"
 )
 
 type countingEncoder struct{ calls int }

@@ -1,4 +1,4 @@
-module example.com/go-voice-mvp
+module uniclog.io/govts
 
 go 1.27.1
 

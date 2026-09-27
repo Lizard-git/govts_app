@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/domain"
+	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestViewDTOKeepsUint64IdentifiersExact(t *testing.T) {

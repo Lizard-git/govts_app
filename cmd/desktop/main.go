@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"example.com/go-voice-mvp/internal/clientapp"
-	wailsui "example.com/go-voice-mvp/internal/ui/wails"
+	"uniclog.io/govts/internal/clientapp"
+	wailsui "uniclog.io/govts/internal/ui/wails"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )

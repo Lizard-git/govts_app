@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 const (

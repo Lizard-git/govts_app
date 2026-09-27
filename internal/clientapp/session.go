@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	audiornnoise "example.com/go-voice-mvp/internal/audio/rnnoise"
-	audiovad "example.com/go-voice-mvp/internal/audio/vad"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
-	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/audio"
+	audiornnoise "uniclog.io/govts/internal/audio/rnnoise"
+	audiovad "uniclog.io/govts/internal/audio/vad"
+	"uniclog.io/govts/internal/audio/voicegate"
+	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
@@ -91,7 +91,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return networkLoop("heartbeat", func() error { return voiceclient.HeartbeatLoop(ctx, conn, state) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh) })
+		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh, state) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond, state.NotificationSounds())
@@ -210,7 +210,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return voiceclient.RecordLoop(ctx, recorder, pcmCh, codecConfig.SamplesPerFrame, state.Audio)
 	})
 	supervisor.Go(func(ctx context.Context) error {
-		return networkLoop("voice send", func() error { return voiceclient.SendLoop(ctx, conn, sessionID, audioCh, state.Audio) })
+		return networkLoop("voice send", func() error { return voiceclient.SendLoopWithStats(ctx, conn, sessionID, audioCh, state.Audio, state) })
 	})
 	supervisor.Go(func(ctx context.Context) error {
 		changed, unsubscribe := state.Subscribe(ctx)

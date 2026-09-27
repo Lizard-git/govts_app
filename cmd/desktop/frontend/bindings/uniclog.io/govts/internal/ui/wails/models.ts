@@ -77,6 +77,23 @@ export interface ConnectRequest {
     "name": string;
     "server": string;
     "initialChannel": string;
+    "minServerVersion"?: string;
+}
+
+export interface ConnectionStatsDTO {
+    "sessionId": string;
+    "generation": string;
+    "status": string;
+    "pingMs": number;
+    "pingVariationMs": number;
+    "pingAvailable": boolean;
+    "pingVariationAvailable": boolean;
+    "pingSampleAtMs": number;
+    "incomingLoss": number;
+    "incomingKnown": boolean;
+    "incomingSampleAtMs": number;
+    "outgoingLoss": number;
+    "outgoingKnown": boolean;
 }
 
 export interface MediaTrustDTO {

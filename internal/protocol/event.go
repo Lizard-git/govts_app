@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 const StateEventVersion = 1

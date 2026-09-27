@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/protocol"
 )
 
 type codecCall struct {

@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type Session struct {
@@ -14,4 +14,11 @@ type Session struct {
 	Addr            *net.UDPAddr
 	LastSeen        time.Time
 	MediaCredential [32]byte
+	voiceSeen       map[uint32]struct{}
+	voiceArrivals   []voiceSample
+}
+
+type voiceSample struct {
+	sequence uint32
+	at       time.Time
 }

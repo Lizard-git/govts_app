@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 var ErrConnectionLost = errors.New("connection lost")
@@ -55,6 +55,7 @@ func ControlLoop(
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,
+					Sequence:  packet.Sequence,
 					Payload:   packet.Payload,
 				}
 				if !state.CompleteRequest(response) {
@@ -103,6 +104,10 @@ func heartbeatLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	// Make the first RTT available as soon as the session starts.
+	if err := heartbeatProbe(ctx, conn, state, deadline); err != nil {
+		return err
+	}
 
 	for {
 		select {
@@ -121,7 +126,11 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 		return fmt.Errorf("%w: heartbeat deadline must be positive", ErrConnectionLost)
 	}
 	attemptTimeout := deadline / heartbeatAttempts
-	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat}, attemptTimeout, heartbeatAttempts)
+	started := time.Now()
+	count, end := state.VoiceSentInWindow()
+	// The 30-second range uses 16 bits for the final sequence and 14 for its size.
+	window := uint32(end)<<14 | uint32(count)
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat, Sequence: window}, attemptTimeout, heartbeatAttempts)
 	if err != nil {
 		return fmt.Errorf("%w: heartbeat: %w", ErrConnectionLost, err)
 	}
@@ -135,6 +144,12 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 		return fmt.Errorf("%w: server rejected session", ErrConnectionLost)
 	}
 	state.MarkHeartbeatAck(time.Now())
+	state.measurements.recordPing(time.Since(started), time.Now())
+	if response.Sequence <= 10000 {
+		state.measurements.recordOutgoingLoss(float64(response.Sequence) / 100)
+	} else {
+		state.measurements.clearOutgoingLoss()
+	}
 	return nil
 }
 

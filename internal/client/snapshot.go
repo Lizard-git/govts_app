@@ -9,9 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 const (

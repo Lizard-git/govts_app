@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/mediasignal"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/mediasignal"
+	"uniclog.io/govts/internal/voice"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/webrtc/v4"

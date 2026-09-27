@@ -8,7 +8,7 @@ import (
 	"log"
 	"strings"
 
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 type Command struct {

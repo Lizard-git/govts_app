@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/voice"
 )
 
 func TestConsoleCommandsShowDeterministicState(t *testing.T) {

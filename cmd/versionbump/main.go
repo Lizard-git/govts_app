@@ -14,11 +14,11 @@ var configVersionPattern = regexp.MustCompile(`(?m)^(\s*version:\s*")[^"]+("\s*)
 
 func main() {
 	versionFile := flag.String("version-file", "", "path to the authoritative semantic version file")
-	wailsConfig := flag.String("wails-config", "", "path to the Wails YAML config")
+	wailsConfig := flag.String("wails-config", "", "optional path to the Wails YAML config")
 	flag.Parse()
 
-	if *versionFile == "" || *wailsConfig == "" {
-		fatal(errors.New("both -version-file and -wails-config are required"))
+	if *versionFile == "" {
+		fatal(errors.New("-version-file is required"))
 	}
 
 	previousBytes, err := os.ReadFile(*versionFile)
@@ -31,21 +31,26 @@ func main() {
 		fatal(err)
 	}
 
-	configBytes, err := os.ReadFile(*wailsConfig)
-	if err != nil {
-		fatal(fmt.Errorf("read Wails config: %w", err))
+	var updatedConfig []byte
+	if *wailsConfig != "" {
+		configBytes, err := os.ReadFile(*wailsConfig)
+		if err != nil {
+			fatal(fmt.Errorf("read Wails config: %w", err))
+		}
+		if !configVersionPattern.Match(configBytes) {
+			fatal(errors.New("Wails config does not contain a quoted version field"))
+		}
+		updatedConfig = configVersionPattern.ReplaceAll(configBytes, []byte("${1}"+next+"${2}"))
 	}
-	if !configVersionPattern.Match(configBytes) {
-		fatal(errors.New("Wails config does not contain a quoted version field"))
-	}
-	updatedConfig := configVersionPattern.ReplaceAll(configBytes, []byte("${1}"+next+"${2}"))
 
 	if err := os.WriteFile(*versionFile, []byte(next+"\n"), 0o644); err != nil {
 		fatal(fmt.Errorf("write version file: %w", err))
 	}
-	if err := os.WriteFile(*wailsConfig, updatedConfig, 0o644); err != nil {
-		_ = os.WriteFile(*versionFile, previousBytes, 0o644)
-		fatal(fmt.Errorf("write Wails config: %w", err))
+	if *wailsConfig != "" {
+		if err := os.WriteFile(*wailsConfig, updatedConfig, 0o644); err != nil {
+			_ = os.WriteFile(*versionFile, previousBytes, 0o644)
+			fatal(fmt.Errorf("write Wails config: %w", err))
+		}
 	}
 
 	fmt.Printf("version: %s -> %s\n", previous, next)

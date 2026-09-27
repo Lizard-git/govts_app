@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 // At the fixed 20 ms audio profile, keep at most 100 ms per sender.

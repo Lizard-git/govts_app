@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 func TestValidateSessionAddr(t *testing.T) {
@@ -89,6 +90,22 @@ func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
 	if response.Type != protocol.PacketHeartbeatAck || response.RequestID != request.RequestID || len(response.Payload) != 0 {
 		t.Fatalf("heartbeat response = %+v", response)
 	}
+	if response.Sequence != 0 {
+		t.Fatalf("empty voice feedback = %x, want 0%%", response.Sequence)
+	}
+	hub.RecordVoicePacket(session.ID, 1)
+	hub.RecordVoicePacket(session.ID, 4)
+	hub.RecordVoicePacket(session.ID, 2)
+	hub.RecordVoicePacket(session.ID, 2) // duplicate must not inflate received count
+	request.RequestID++
+	request.Sequence = 4<<14 | 4
+	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, addr); err != nil {
+		t.Fatal(err)
+	}
+	response = receiveTestPacket(t, clientConn)
+	if response.Sequence != 2500 {
+		t.Fatalf("voice feedback = %x, want 25%% loss", response.Sequence)
+	}
 	request.SessionID++
 	request.RequestID++
 	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, addr); err != nil {
@@ -114,6 +131,22 @@ func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
 	response = receiveTestPacket(t, otherConn)
 	if response.Type != protocol.PacketSessionInvalid || response.RequestID != request.RequestID {
 		t.Fatalf("wrong-endpoint response = %+v", response)
+	}
+}
+
+func TestVoiceReceivedWindowExpiresOldPackets(t *testing.T) {
+	hub := NewHub()
+	session := mustCreateSession(t, hub, "alice", nil)
+	now := time.Now()
+	hub.recordVoicePacketAt(session.ID, 1, now.Add(-31*time.Second))
+	hub.recordVoicePacketAt(session.ID, 2, now.Add(-29*time.Second))
+	hub.recordVoicePacketAt(session.ID, 3, now)
+	hub.recordVoicePacketAt(session.ID, 3, now) // duplicate
+	if got := hub.VoiceReceivedWindow(session.ID, now, 3, 2); got != 2 {
+		t.Fatalf("received in client sequence window = %d, want 2", got)
+	}
+	if got := hub.VoiceReceivedWindow(session.ID, now.Add(36*time.Second), 3, 3); got != 0 {
+		t.Fatalf("expired window = %d", got)
 	}
 }
 
@@ -477,6 +510,31 @@ func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
 			secondResponse.RequestID,
 			hello.RequestID,
 		)
+	}
+}
+
+func TestHelloRejectsMinimumAboveServerVersion(t *testing.T) {
+	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn := mustPacketConn(t, serverRaw)
+	defer serverConn.Close()
+	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConn := mustClientPacketConn(t, clientRaw)
+	defer clientConn.Close()
+	hub := NewHub()
+	minimum, _ := appversion.Parse("0.2.0")
+	request := protocol.VoicePacket{Type: protocol.PacketHello, RequestID: 19, Sequence: uint32(minimum), Payload: []byte("alice")}
+	if err := HandleHelloPacket(serverConn, hub, NewRequestCache(), request, clientConn.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	response := receiveTestPacket(t, clientConn)
+	if response.Type != protocol.PacketServerVersionTooOld || response.Sequence != uint32(hub.ServerVersion()) || hub.Count() != 0 {
+		t.Fatalf("version rejection = %+v, sessions=%d", response, hub.Count())
 	}
 }
 

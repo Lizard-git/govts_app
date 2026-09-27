@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/clientapp"
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/audio"
+	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/clientapp"
+	"uniclog.io/govts/internal/domain"
 )
 
 type ServerDTO struct {
@@ -76,6 +76,22 @@ type AudioMeterDTO struct {
 	Input       float32 `json:"input"`
 	Processed   float32 `json:"processed"`
 	Transmitted float32 `json:"transmitted"`
+}
+
+type ConnectionStatsDTO struct {
+	SessionID              string  `json:"sessionId"`
+	Generation             string  `json:"generation"`
+	Status                 string  `json:"status"`
+	PingMS                 float64 `json:"pingMs"`
+	PingVariationMS        float64 `json:"pingVariationMs"`
+	PingAvailable          bool    `json:"pingAvailable"`
+	PingVariationAvailable bool    `json:"pingVariationAvailable"`
+	PingSampleAtMS         int64   `json:"pingSampleAtMs"`
+	IncomingLoss           float64 `json:"incomingLoss"`
+	IncomingKnown          bool    `json:"incomingKnown"`
+	IncomingSampleAtMS     int64   `json:"incomingSampleAtMs"`
+	OutgoingLoss           float64 `json:"outgoingLoss"`
+	OutgoingKnown          bool    `json:"outgoingKnown"`
 }
 
 type ClientViewDTO struct {

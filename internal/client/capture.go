@@ -7,11 +7,11 @@ import (
 	"io"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/audio/vad"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/audio/vad"
+	"uniclog.io/govts/internal/audio/voicegate"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 const frameDuration = 20 * time.Millisecond
@@ -183,6 +183,18 @@ func SendLoop(
 	audioCh <-chan audio.Frame,
 	controls ...*AudioControlState,
 ) error {
+	var control *AudioControlState
+	if len(controls) > 0 {
+		control = controls[0]
+	}
+	return sendLoop(ctx, conn, sessionID, audioCh, control, nil)
+}
+
+func SendLoopWithStats(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64, audioCh <-chan audio.Frame, control *AudioControlState, state *State) error {
+	return sendLoop(ctx, conn, sessionID, audioCh, control, state)
+}
+
+func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64, audioCh <-chan audio.Frame, control *AudioControlState, state *State) error {
 	sequence := uint32(1)
 
 	for {
@@ -203,8 +215,8 @@ func SendLoop(
 				return nil
 			}
 			var err error
-			if len(controls) > 0 {
-				err = controls[0].Send(frame.ControlEpoch, send)
+			if control != nil {
+				err = control.Send(frame.ControlEpoch, send)
 			} else {
 				err = send()
 			}
@@ -212,6 +224,9 @@ func SendLoop(
 				return err
 			}
 			if packetSent {
+				if state != nil {
+					state.RecordVoiceSent(sequence)
+				}
 				sequence++
 			}
 		}

@@ -5,8 +5,8 @@ import (
 	"log"
 	"net"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
 )
 
 const EventOutboxCapacity = 256

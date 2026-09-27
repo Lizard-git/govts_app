@@ -5,6 +5,16 @@ import {desktopAPI} from "../../api";
 
 type MenuState = {x: number; y: number; volume: number} | null;
 
+function SpeakerIcon({muted = false}: {muted?: boolean}) {
+    return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M11 5 6 9H3v6h3l5 4V5Z"/>
+        {muted
+            ? <><path d="m16 9 5 6"/><path d="m21 9-5 6"/></>
+            : <><path d="M15.5 9.5a4 4 0 0 1 0 5"/><path d="M18.3 6.7a8 8 0 0 1 0 10.6"/></>}
+    </svg>;
+}
+
 export function ParticipantRow({participant, depth, onError}: {
     participant: ParticipantDTO;
     depth: number;
@@ -88,7 +98,9 @@ export function ParticipantRow({participant, depth, onError}: {
                 <output>{Math.round(menu.volume * 100)}%</output>
             </div>
             <div className="participant-volume-control">
-                <span className="participant-volume-icon" aria-hidden="true">◖</span>
+                <span className="participant-volume-icon" aria-hidden="true">
+                    <SpeakerIcon muted={menu.volume === 0}/>
+                </span>
                 <input id={`participant-volume-${participant.sessionId}`} type="range" min="0" max="2" step="0.01"
                        style={{"--participant-volume": `${menu.volume / 2 * 100}%`} as React.CSSProperties}
                        value={menu.volume} onChange={(event) => setVolume(Number(event.target.value))}
@@ -98,7 +110,7 @@ export function ParticipantRow({participant, depth, onError}: {
             <div className="participant-menu-actions">
                 <button type="button" role="menuitem" className={menu.volume === 0 ? "active" : ""}
                         onClick={() => setVolume(menu.volume === 0 ? 1 : 0, true)}>
-                    <span aria-hidden="true">{menu.volume === 0 ? "🔊" : "🔇"}</span>{menu.volume === 0 ? "Включить звук" : "Заглушить"}
+                    <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? "Включить звук" : "Заглушить"}
                 </button>
             </div>
         </div>, document.body)}

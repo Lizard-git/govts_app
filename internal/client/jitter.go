@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 const DefaultJitterDepth = 3

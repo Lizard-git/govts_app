@@ -13,7 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/domain"
 )
 
 var (
@@ -47,6 +48,7 @@ type Hub struct {
 	nextChannelID domain.ChannelID
 	revision      domain.StateRevision
 	serverInfo    domain.ServerInfo
+	serverVersion appversion.Number
 	outbox        []domain.StateEvent
 	eventReady    chan struct{}
 }
@@ -106,6 +108,7 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		newSessionID:  newSessionID,
 		nextChannelID: DefaultChannelID,
 		serverInfo:    info,
+		serverVersion: 1 << 16, // 0.1.0 for in-process test hubs
 		eventReady:    make(chan struct{}, 1),
 	}
 	if includeDefault {
@@ -120,6 +123,18 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		hub.revision = 1
 	}
 	return hub, nil
+}
+
+func (h *Hub) SetServerVersion(version appversion.Number) {
+	h.mu.Lock()
+	h.serverVersion = version
+	h.mu.Unlock()
+}
+
+func (h *Hub) ServerVersion() appversion.Number {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.serverVersion
 }
 
 func (h *Hub) Add(s *Session) {
@@ -154,6 +169,66 @@ func (h *Hub) Get(id uint64) (Session, bool) {
 		return Session{}, false
 	}
 	return *cloneSession(s), true
+}
+
+func (h *Hub) RecordVoicePacket(id uint64, sequence uint32) {
+	h.recordVoicePacketAt(id, sequence, time.Now())
+}
+
+// Keep samples slightly beyond the client window to cover heartbeat transit.
+const voiceStatsWindow = 35 * time.Second
+const maxVoiceStatsPackets = 4096
+
+func (h *Hub) recordVoicePacketAt(id uint64, sequence uint32, at time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[id]
+	if s == nil || sequence == 0 {
+		return
+	}
+	trimVoiceArrivals(s, at)
+	if s.voiceSeen == nil {
+		s.voiceSeen = make(map[uint32]struct{})
+	}
+	if _, duplicate := s.voiceSeen[sequence]; duplicate {
+		return
+	}
+	s.voiceSeen[sequence] = struct{}{}
+	s.voiceArrivals = append(s.voiceArrivals, voiceSample{sequence: sequence, at: at})
+	trimVoiceArrivals(s, at)
+}
+
+func trimVoiceArrivals(s *Session, now time.Time) {
+	cutoff := now.Add(-voiceStatsWindow)
+	i := 0
+	for i < len(s.voiceArrivals) && s.voiceArrivals[i].at.Before(cutoff) {
+		delete(s.voiceSeen, s.voiceArrivals[i].sequence)
+		i++
+	}
+	s.voiceArrivals = s.voiceArrivals[i:]
+	if len(s.voiceArrivals) > maxVoiceStatsPackets {
+		trim := len(s.voiceArrivals) - maxVoiceStatsPackets
+		for _, sample := range s.voiceArrivals[:trim] {
+			delete(s.voiceSeen, sample.sequence)
+		}
+		s.voiceArrivals = s.voiceArrivals[trim:]
+	}
+}
+
+func (h *Hub) VoiceReceivedWindow(id uint64, now time.Time, end, count uint16) uint32 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if s := h.sessions[id]; s != nil {
+		trimVoiceArrivals(s, now)
+		var received uint32
+		for _, sample := range s.voiceArrivals {
+			if uint16(end-uint16(sample.sequence)) < count {
+				received++
+			}
+		}
+		return received
+	}
+	return 0
 }
 
 func (h *Hub) JoinChannel(id uint64, channelID domain.ChannelID) error {
@@ -430,6 +505,8 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 				// control-plane loss does not tear down its media publisher.
 				if oldSession.Name == name {
 					oldSession.LastSeen = time.Now()
+					oldSession.voiceSeen = nil
+					oldSession.voiceArrivals = nil
 					return *cloneSession(oldSession), nil, nil
 				}
 				delete(h.sessions, oldID)
@@ -702,6 +779,9 @@ func cloneSession(session *Session) *Session {
 
 	clone := *session
 	clone.Addr = cloneUDPAddr(session.Addr)
+	// Transport statistics are private to the hub and not part of session snapshots.
+	clone.voiceArrivals = nil
+	clone.voiceSeen = nil
 	return &clone
 }
 

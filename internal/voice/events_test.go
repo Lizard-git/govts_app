@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
 )
 
 func TestHubEventRevisionsAndReplacement(t *testing.T) {

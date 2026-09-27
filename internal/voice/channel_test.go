@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestHubStartsWithDefaultChannel(t *testing.T) {

@@ -1,5 +1,5 @@
 import {Events} from "@wailsio/runtime";
-import {Service} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import {Service} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 export type {
     AudioDeviceDTO,
@@ -8,16 +8,18 @@ export type {
     ChannelDTO,
     ClientEventDTO,
     ClientViewDTO,
+    ConnectionStatsDTO,
     ConnectRequest,
     ParticipantDTO,
     ScreenStreamDTO,
     MediaTrustDTO,
-} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
-import type {AudioMeterDTO, ConnectRequest} from "../bindings/example.com/go-voice-mvp/internal/ui/wails";
+import type {AudioMeterDTO, ConnectRequest} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 export const desktopAPI = {
     snapshot: () => Service.Snapshot(),
+    connectionStats: () => Service.ConnectionStats(),
     eventsAfter: (sequence: string) => Service.EventsAfter(sequence),
     savedDisplayName: () => Service.SavedDisplayName(),
     connect: (request: ConnectRequest) => Service.Connect(request),

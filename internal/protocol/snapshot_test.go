@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestJoinChannelPayloadRoundTrip(t *testing.T) {

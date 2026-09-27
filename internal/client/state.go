@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type State struct {
@@ -21,6 +21,7 @@ type State struct {
 	notificationSounds chan NotificationSound
 	speaking           map[uint64]time.Time
 	Audio              *AudioControlState
+	measurements       connectionMeasurements
 
 	sessionID        uint64
 	name             string
@@ -47,6 +48,7 @@ const (
 type ControlResponse struct {
 	Type      uint8
 	RequestID uint32
+	Sequence  uint32
 	Payload   []byte
 }
 
@@ -76,6 +78,9 @@ func (s *State) ChannelID() domain.ChannelID {
 func (s *State) SetChannelID(channelID domain.ChannelID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.channelID != channelID {
+		s.measurements.resetIncoming()
+	}
 	s.channelID = channelID
 	s.notifyLocked()
 }
@@ -124,6 +129,7 @@ func (s *State) PrepareConnection() error {
 	s.status = ConnectionConnecting
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
+	s.measurements.reset()
 	clear(s.speaking)
 	s.Audio.ClearParticipantVolumes()
 	s.clearNotificationSoundsLocked()
@@ -138,6 +144,7 @@ func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.status = status
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
+	s.measurements.reset()
 	s.channelID = 0
 	s.sessionID = 0
 	s.observedRevision = 0
@@ -180,6 +187,7 @@ func (s *State) StartSession(sessionID uint64) (uint64, error) {
 	s.channelID = 0
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
+	s.measurements.reset()
 	s.status = ConnectionConnecting
 	s.observedRevision = 0
 	clear(s.speaking)
@@ -192,6 +200,9 @@ func (s *State) SetChannelIDForGeneration(generation uint64, channelID domain.Ch
 	defer s.mu.Unlock()
 	if s.generation != generation {
 		return false
+	}
+	if s.channelID != channelID {
+		s.measurements.resetIncoming()
 	}
 	s.channelID = channelID
 	clear(s.speaking)
@@ -207,6 +218,7 @@ func (s *State) Snapshot() domain.ServerSnapshot {
 func (s *State) ReplaceSnapshot(snapshot domain.ServerSnapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.resetIncomingForSnapshotLocked(snapshot)
 	s.snapshot = snapshot.Clone()
 	s.snapshotFresh = true
 	s.syncedGeneration = s.generation
@@ -226,6 +238,7 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 		s.requestResyncLocked()
 		return true
 	}
+	s.resetIncomingForSnapshotLocked(snapshot)
 	s.snapshot = snapshot.Clone()
 	s.syncedGeneration = generation
 	s.snapshotFresh = snapshot.Revision >= s.observedRevision
@@ -240,6 +253,37 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 	}
 	s.notifyLocked()
 	return true
+}
+
+// resetIncomingForSnapshotLocked removes sequence baselines that no longer
+// describe packets forwarded to this client's current channel.
+func (s *State) resetIncomingForSnapshotLocked(next domain.ServerSnapshot) {
+	localChannel := s.channelID
+	for _, p := range next.Participants {
+		if p.SessionID == s.sessionID {
+			localChannel = p.ChannelID
+			break
+		}
+	}
+	if localChannel != s.channelID {
+		s.measurements.resetIncoming()
+		return
+	}
+	oldChannels := make(map[uint64]domain.ChannelID, len(s.snapshot.Participants))
+	for _, p := range s.snapshot.Participants {
+		oldChannels[p.SessionID] = p.ChannelID
+	}
+	for _, p := range next.Participants {
+		if old, ok := oldChannels[p.SessionID]; ok {
+			if old != p.ChannelID {
+				s.measurements.resetSender(p.SessionID)
+			}
+			delete(oldChannels, p.SessionID)
+		}
+	}
+	for id := range oldChannels {
+		s.measurements.resetSender(id)
+	}
 }
 
 func (s *State) SessionID() uint64 {

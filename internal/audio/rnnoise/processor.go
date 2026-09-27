@@ -7,7 +7,7 @@ import (
 
 	lib "github.com/MarcosTypeAP/go-rnnoise"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 const (

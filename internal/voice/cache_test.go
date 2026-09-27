@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/protocol"
 )
 
 func TestRequestCacheExpiresEntries(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type ChannelLocator []string

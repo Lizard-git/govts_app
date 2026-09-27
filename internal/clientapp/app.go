@@ -11,12 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
-	voiceclient "example.com/go-voice-mvp/internal/client"
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/audio/voicegate"
+	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 const (
@@ -48,9 +49,10 @@ type Options struct {
 }
 
 type ConnectOptions struct {
-	Name           string
-	Server         string
-	InitialChannel string
+	Name             string
+	Server           string
+	InitialChannel   string
+	MinServerVersion string
 }
 
 type App struct {
@@ -105,6 +107,12 @@ func (a *App) Connect(options ConnectOptions) error {
 	if options.Name == "" {
 		return errors.New("display name is required")
 	}
+	if options.MinServerVersion == "" {
+		options.MinServerVersion = voiceclient.MinimumServerVersion
+	}
+	if _, err := appversion.Parse(options.MinServerVersion); err != nil {
+		return fmt.Errorf("invalid minimum server version: %w", err)
+	}
 	endpoint, err := ParseServerEndpoint(options.Server)
 	if err != nil {
 		return err
@@ -136,7 +144,7 @@ func (a *App) Connect(options ConnectOptions) error {
 }
 
 func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPort, options ConnectOptions) {
-	err := a.runConnection(ctx, endpoint, options.Name)
+	err := a.runConnection(ctx, endpoint, options.Name, options.MinServerVersion)
 
 	a.mu.Lock()
 	a.currentConn = nil
@@ -155,7 +163,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 	close(done)
 }
 
-func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name string) (runErr error) {
+func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string) (runErr error) {
 	conn, err := openClientPacketConn(endpoint)
 	if err != nil {
 		return err
@@ -177,10 +185,14 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name s
 		} else {
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
 		}
-		sessionID, err := voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts)
+		sessionID, err := voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			var versionError *voiceclient.ServerVersionTooOldError
+			if errors.As(err, &versionError) {
+				return err
 			}
 			if shouldReplaceClientSocket(err) {
 				replacement, replaceErr := openClientPacketConn(endpoint)
@@ -422,6 +434,8 @@ func (a *App) JoinChannel(ctx context.Context, channelID domain.ChannelID) error
 }
 
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }
+
+func (a *App) ConnectionStats() voiceclient.ConnectionStats { return a.state.ConnectionStats() }
 
 func (a *App) AudioMeterSnapshot() voiceclient.AudioMeterSample {
 	return a.state.Audio.AudioMeterSnapshot()

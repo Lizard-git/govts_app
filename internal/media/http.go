@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/mediasignal"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/mediasignal"
+	"uniclog.io/govts/internal/voice"
 )
 
 const maxSignalingBody = 256 * 1024

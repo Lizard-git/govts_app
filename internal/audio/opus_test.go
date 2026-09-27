@@ -3,7 +3,7 @@ package audio
 import (
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 	pionopus "github.com/pion/opus"
 )
 

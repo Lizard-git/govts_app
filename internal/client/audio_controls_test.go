@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/audio/voicegate"
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/audio/voicegate"
+	"uniclog.io/govts/internal/protocol"
 )
 
 func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {

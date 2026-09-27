@@ -3,8 +3,8 @@ package voice
 import (
 	"net"
 
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 func RouteVoicePacket(
@@ -31,6 +31,7 @@ func HandleVoicePacket(
 	if err := hub.Touch(packet.SessionID); err != nil {
 		return err
 	}
+	hub.RecordVoicePacket(packet.SessionID, packet.Sequence)
 	return RouteVoicePacket(conn, hub, packet)
 }
 

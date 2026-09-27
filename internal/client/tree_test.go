@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestChannelLocatorSurvivesRuntimeIDChanges(t *testing.T) {

@@ -12,14 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"example.com/go-voice-mvp/internal/media"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/server"
-	"example.com/go-voice-mvp/internal/transport/udp"
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/media"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/server"
+	"uniclog.io/govts/internal/transport/udp"
+	"uniclog.io/govts/internal/voice"
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "print server version and exit")
 	configPath := flag.String("config", "", "path to server JSON config")
 	port := flag.Int("port", 9000, "UDP listen port (1..65535)")
 	mediaPort := flag.Int("media-port", -1, "HTTPS media signaling port; -1 uses voice port + 2, 0 disables screen sharing")
@@ -28,6 +30,10 @@ func main() {
 	mediaAdvertisedIP := flag.String("media-advertised-ip", "", "public IP advertised by WebRTC; empty uses local interfaces")
 	mediaIdentity := flag.String("media-identity", "govts-media", "path prefix for generated media TLS certificate and key")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(serverVersion())
+		return
+	}
 
 	if err := run(*configPath, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity); err != nil {
 		log.Fatal(err)
@@ -35,6 +41,10 @@ func main() {
 }
 
 func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string) error {
+	currentVersion, err := appversion.Parse(serverVersion())
+	if err != nil {
+		return fmt.Errorf("invalid embedded server version: %w", err)
+	}
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid UDP port %d: must be 1..65535", port)
 	}
@@ -59,6 +69,7 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 	if err != nil {
 		return fmt.Errorf("bootstrap server channels: %w", err)
 	}
+	hub.SetServerVersion(currentVersion)
 	if mediaPort != 0 && (mediaPort < 1 || mediaPort > 65535) {
 		return errors.New("invalid media signaling port")
 	}
@@ -134,7 +145,8 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 	}()
 
 	log.Printf(
-		"voice server listening on %s config=%q channels=%d",
+		"voice server version=%s listening on %s config=%q channels=%d",
+		currentVersion,
 		rawConn.LocalAddr(),
 		configSource,
 		len(hub.ListChannels()),

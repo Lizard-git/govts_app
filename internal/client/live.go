@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 )
 
 type ClientViewState struct {
@@ -69,6 +69,9 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 	// revision, keep the snapshot eligible for that event instead of forcing a
 	// resync. A lost event is still recovered by the periodic revision check.
 	if s.syncedGeneration == generation && s.snapshotFresh && revision == s.snapshot.Revision+1 {
+		if s.channelID != channel {
+			s.measurements.resetIncoming()
+		}
 		s.channelID = channel
 		if revision > s.observedRevision {
 			s.observedRevision = revision
@@ -76,6 +79,9 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 		clear(s.speaking)
 		s.notifyLocked()
 		return true
+	}
+	if s.channelID != channel {
+		s.measurements.resetIncoming()
 	}
 	s.channelID = channel
 	if revision > s.observedRevision {
@@ -298,13 +304,20 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 	}
 	if id == s.sessionID {
 		if e.Kind == domain.ParticipantMoved {
+			if s.channelID != e.ChannelID {
+				s.measurements.resetIncoming()
+			}
 			s.channelID = e.ChannelID
 		}
 		if e.Kind == domain.ParticipantLeft {
+			s.measurements.resetIncoming()
 			s.channelID = 0
 		}
 		clear(s.speaking)
 	} else {
+		if e.Kind == domain.ParticipantMoved || e.Kind == domain.ParticipantLeft {
+			s.measurements.resetSender(id)
+		}
 		delete(s.speaking, id)
 	}
 	s.noticeLocked(line)

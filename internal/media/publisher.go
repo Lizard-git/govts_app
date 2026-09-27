@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"example.com/go-voice-mvp/internal/domain"
+	"uniclog.io/govts/internal/domain"
 	"github.com/pion/webrtc/v4"
 )
 

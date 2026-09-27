@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	voiceclient "example.com/go-voice-mvp/internal/client"
+	voiceclient "uniclog.io/govts/internal/client"
 )
 
 func shouldReplaceClientSocket(err error) bool {

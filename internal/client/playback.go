@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"example.com/go-voice-mvp/internal/audio"
+	"uniclog.io/govts/internal/audio"
 )
 
 func PlaybackLoop(

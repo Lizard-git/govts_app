@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
-	"example.com/go-voice-mvp/internal/audio"
-	"example.com/go-voice-mvp/internal/protocol"
-	"example.com/go-voice-mvp/internal/transport/udp"
+	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
 )
 
 const receivePollInterval = 500 * time.Millisecond
@@ -18,6 +18,7 @@ func ReceiveLoop(
 	conn *udp.ClientPacketConn,
 	encodedCh chan<- audio.MediaFrame,
 	controlCh chan<- protocol.VoicePacket,
+	states ...*State,
 ) error {
 	defer close(encodedCh)
 	defer close(controlCh)
@@ -46,6 +47,9 @@ func ReceiveLoop(
 
 		switch packet.Type {
 		case protocol.PacketVoice:
+			if len(states) > 0 && states[0] != nil {
+				states[0].RecordVoiceArrival(packet.SessionID, packet.Sequence)
+			}
 			frame := audio.MediaFrame{
 				SenderID: packet.SessionID,
 				Sequence: packet.Sequence,

@@ -1,0 +1,32 @@
+package appversion
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// Number fits in the existing 32-bit Sequence field of Hello packets.
+// Components are encoded as major:8, minor:8, patch:16.
+type Number uint32
+
+func Parse(text string) (Number, error) {
+	parts := strings.Split(text, ".")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("invalid version %q: expected major.minor.patch", text)
+	}
+	var values [3]uint64
+	limits := [3]uint64{255, 255, 65535}
+	for i, part := range parts {
+		value, err := strconv.ParseUint(part, 10, 64)
+		if err != nil || strconv.FormatUint(value, 10) != part || value > limits[i] {
+			return 0, fmt.Errorf("invalid version %q: components must be canonical non-negative integers within 255.255.65535", text)
+		}
+		values[i] = value
+	}
+	return Number(values[0]<<24 | values[1]<<16 | values[2]), nil
+}
+
+func (n Number) String() string {
+	return fmt.Sprintf("%d.%d.%d", uint32(n)>>24, (uint32(n)>>16)&255, uint32(n)&65535)
+}

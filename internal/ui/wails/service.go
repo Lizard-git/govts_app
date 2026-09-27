@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"example.com/go-voice-mvp/internal/clientapp"
-	"example.com/go-voice-mvp/internal/clientsettings"
-	"example.com/go-voice-mvp/internal/domain"
-	"example.com/go-voice-mvp/internal/mediasignal"
+	"uniclog.io/govts/internal/clientapp"
+	"uniclog.io/govts/internal/clientsettings"
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/mediasignal"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -27,9 +27,10 @@ type validationError struct {
 func (e *validationError) Error() string { return e.Field + ": " + e.Message }
 
 type ConnectRequest struct {
-	Name           string `json:"name"`
-	Server         string `json:"server"`
-	InitialChannel string `json:"initialChannel"`
+	Name             string `json:"name"`
+	Server           string `json:"server"`
+	InitialChannel   string `json:"initialChannel"`
+	MinServerVersion string `json:"minServerVersion,omitempty"`
 }
 
 type Service struct {
@@ -60,9 +61,10 @@ func (s *Service) Connect(request ConnectRequest) error {
 	s.serverAddress = request.Server
 	s.settingsMu.Unlock()
 	return s.client.Connect(clientapp.ConnectOptions{
-		Name:           request.Name,
-		Server:         request.Server,
-		InitialChannel: strings.TrimSpace(request.InitialChannel),
+		Name:             request.Name,
+		Server:           request.Server,
+		InitialChannel:   strings.TrimSpace(request.InitialChannel),
+		MinServerVersion: strings.TrimSpace(request.MinServerVersion),
 	})
 }
 
@@ -240,6 +242,25 @@ func (s *Service) JoinChannel(channelID string) error {
 
 func (s *Service) Snapshot() ClientViewDTO {
 	return viewDTO(s.client.Snapshot(), s.client.LastError())
+}
+
+func (s *Service) ConnectionStats() ConnectionStatsDTO {
+	stats := s.client.ConnectionStats()
+	return ConnectionStatsDTO{
+		SessionID:              formatUint64(stats.SessionID),
+		Generation:             formatUint64(stats.Generation),
+		Status:                 connectionStatus(stats.Status),
+		PingMS:                 stats.PingMS,
+		PingVariationMS:        stats.PingVariationMS,
+		PingAvailable:          stats.PingAvailable,
+		PingVariationAvailable: stats.PingVariationAvailable,
+		PingSampleAtMS:         stats.PingSampleAtMS,
+		IncomingLoss:           stats.IncomingLoss,
+		IncomingKnown:          stats.IncomingKnown,
+		IncomingSampleAtMS:     stats.IncomingSampleAtMS,
+		OutgoingLoss:           stats.OutgoingLoss,
+		OutgoingKnown:          stats.OutgoingKnown,
+	}
 }
 
 func (s *Service) EventsAfter(sequence string) ([]ClientEventDTO, error) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/go-voice-mvp/internal/voice"
+	"uniclog.io/govts/internal/voice"
 )
 
 func TestHTTPHandlerRequiresBoundSessionCredential(t *testing.T) {

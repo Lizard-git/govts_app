@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"example.com/go-voice-mvp/internal/audio/voicegate"
+	"uniclog.io/govts/internal/audio/voicegate"
 )
 
 func HandleAudioCommand(command Command, state *State, output io.Writer) bool {

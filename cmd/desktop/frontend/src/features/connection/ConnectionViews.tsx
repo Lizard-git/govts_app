@@ -1,6 +1,7 @@
 import {useEffect, useState} from "react";
 import type {ClientViewDTO} from "../../api";
 import {desktopAPI} from "../../api";
+import {ConnectionStatsPopup} from "./ConnectionStatsPopup";
 
 export type Page = "channels" | "settings";
 const serverAddressStorageKey = "govts.serverAddress";
@@ -79,7 +80,6 @@ export function StatusBar({view, page, onPageChange, invoke}: {
     onPageChange: (page: Page) => void;
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
 }) {
-    const labels: Record<string, string> = {connecting: "Подключение", connected: "Подключено", reconnecting: "Переподключение", disconnected: "Отключено"};
     return <header className="status-bar">
         <button className="header-nav-button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
             <span aria-hidden="true">{page === "settings" ? "←" : "⚙"}</span><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
@@ -91,7 +91,7 @@ export function StatusBar({view, page, onPageChange, invoke}: {
             <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
                 onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}>{view.audio.deafened ? "Звук выкл." : "Звук"}</button>
         </div>
-        <div className={`status-pill ${view.connectionStatus}`}><span className="status-dot"/>{labels[view.connectionStatus] ?? view.connectionStatus}</div>
+        <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus}/>
         {!view.snapshotFresh && <div className="sync-pill">Синхронизация…</div>}
         <button className="header-nav-button disconnect-button" onClick={() => void invoke(() => desktopAPI.disconnect())}>
             <span aria-hidden="true">↪</span><span>Отключиться</span>

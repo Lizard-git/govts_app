@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"example.com/go-voice-mvp/internal/protocol"
+	"uniclog.io/govts/internal/protocol"
 )
 
 type packetConn struct {
