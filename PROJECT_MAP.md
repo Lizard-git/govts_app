@@ -9,6 +9,7 @@
 | Часть | Где искать | Ответственность |
 | --- | --- | --- |
 | Сервер | `cmd/server/`, `internal/server/`, `internal/voice/` | Запуск, конфигурация, сессии, каналы, доставка голосовых пакетов и событий |
+| Идентичность и права | `internal/identity/`, `internal/auth/`, `internal/persist/` | Ключи Ed25519, защищённое рукопожатие, SQLite-учётные записи и права |
 | Клиентское ядро | `internal/clientapp/`, `internal/client/` | Жизненный цикл соединения, reconnect, состояние, UDP-запросы и обработка звука |
 | Звук | `internal/audio/` | Устройства malgo, PCM, Opus, RNNoise, VAD, voice gate и воспроизведение |
 | Экран | `internal/media/`, `internal/mediasignal/`, `internal/clientapp/media.go` | HTTPS signaling, WebRTC/SFU, учет потоков и подписок |
@@ -20,8 +21,8 @@
 
 ## Точки входа и сборка
 
-- `cmd/server/main.go` запускает голосовой UDP-сервер, локальную read-only
-  консоль и, если не отключён, HTTPS-сервер сигнализации и WebRTC SFU.
+- `cmd/server/main.go` запускает голосовой UDP-сервер, локальную консоль
+  управления правами и, если не отключён, HTTPS-сервер сигнализации и WebRTC SFU.
   `cmd/server/version.go` встраивает версию из `version.txt`.
 - `cmd/desktop/main.go` запускает Wails-приложение. Файлы
   `assets_development.go` и `assets_production.go` выбирают способ
@@ -34,9 +35,10 @@
   режим разработки и сборку desktop. Корневой `package.json` содержит
   npm-обёртки; зависимости и скрипты самого UI находятся в
   `cmd/desktop/frontend/package.json`.
-- `configs/server.example.json` — пример конфигурации сервера. Без
+- `configs/server.example.json` — пример первичной конфигурации сервера. Без
   `-config` сервер создаёт встроенный канал `default`; JSON-конфигурация
-  задаёт полное дерево каналов.
+  задаёт полное дерево каналов при первом импорте в SQLite. Затем сервер
+  загружает имя, каналы и пороги из БД.
 
 Отдельного исполняемого консольного голосового клиента в текущем дереве нет.
 Низкоуровневые клиентские команды в `internal/client/command.go` остаются
@@ -56,7 +58,7 @@ React UI
 2. `internal/clientapp/app.go`, `session.go`, `supervisor.go` и
    `reconnect.go` управляют соединением, параллельными циклами, остановкой
    и повторным подключением без зависимости от Wails.
-3. `internal/client/` выполняет handshake, контрольные запросы, heartbeat,
+3. `internal/client/` выполняет защищённый handshake, контрольные запросы, heartbeat,
    прием пакетов, обновление состояния и сбор статистики. `internal/protocol/`
    описывает формат пакетов и полезных нагрузок;
    `internal/transport/udp/` читает/пишет датаграммы.
@@ -64,7 +66,9 @@ React UI
    участниках, потоках экрана и ревизии состояния. `control.go`,
    `delivery.go`, `events.go`, `snapshot.go` и `screen.go` обслуживают
    соответствующие операции. `internal/server/config.go` загружает
-   стартовое дерево, `pipeline.go` — фоновые процессы сервера.
+   стартовое дерево, `persistent.go` сохраняет/восстанавливает его из БД,
+   `pipeline.go` — фоновые процессы сервера. `internal/persist/` хранит
+   учётные записи, баны, права, аудит и каналы.
 5. Клиент получает snapshot и затем live-события; при расхождении ревизий
    запрашивает снимок заново. Для control-пакетов используется `RequestID`,
    на сервере повторы обрабатывает `voice.RequestCache`.
@@ -79,10 +83,10 @@ VAD/voice gate → Opus-кодер формирует голосовой UDP-п�
 
 UDP-заголовок определён в `internal/protocol/packet.go`: 1 байт типа,
 8 байт `SessionID`, по 4 байта `Sequence` и `RequestID`. Итого 17 байт
-заголовка, до 1200 байт payload и до 1217 байт на проводе. Типы охватывают
-handshake, голос, heartbeat, смену канала, snapshot, события, media
-credentials и проверку минимальной версии сервера. Голосовой/control UDP
-трафик сейчас не шифруется.
+заголовка и до 1200 байт payload; защищённый datagram — до 1250 байт на
+проводе. Типы охватывают аутентификацию, голос, heartbeat, смену канала,
+snapshot, события, media credentials и модерацию. После рукопожатия
+голосовой/control UDP шифруется AES-GCM; старый анонимный `Hello` отклоняется.
 
 ## Демонстрация экрана
 
@@ -132,7 +136,9 @@ WebRTC требуется корректный `-media-advertised-ip`.
 - `internal/clientsettings/store.go` сохраняет версионированные настройки
   в каталоге конфигурации пользователя `Govts/settings.json`: имя,
   аудиоустройства, параметры шумоподавления/VAD, тему и доверенные
-  media-ключи. Адрес сервера UI хранит в browser localStorage.
+  media-ключи. Адрес сервера UI хранит в browser localStorage. Отдельный
+  `Govts/client.seed` хранит приватный seed пользователя, а
+  `Govts/voice-pins.json` — доверенные голосовые серверы (TOFU).
 
 ## Проверки, версии и релизы
 
