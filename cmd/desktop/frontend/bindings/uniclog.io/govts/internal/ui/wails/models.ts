@@ -32,6 +32,7 @@ export interface AudioProfileDTO {
 export interface AudioStateDTO {
     "muted": boolean;
     "deafened": boolean;
+    "captureAvailable": boolean;
     "rnnoiseEnabled": boolean;
     "rnnoiseSensitivity": number;
     "vadEnabled": boolean;
@@ -110,6 +111,8 @@ export interface ParticipantDTO {
     "displayName": string;
     "channelId": string;
     "speaking": boolean;
+    "muted": boolean;
+    "deafened": boolean;
     "local": boolean;
 }
 

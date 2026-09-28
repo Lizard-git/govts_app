@@ -23,6 +23,7 @@ type ClientViewState struct {
 	ChannelID          domain.ChannelID
 	SnapshotFresh      bool
 	Muted, Deafened    bool
+	CaptureAvailable   bool
 	RNNoiseEnabled     bool
 	RNNoiseSensitivity float32
 	VADEnabled         bool
@@ -99,13 +100,14 @@ func (s *State) SnapshotView() ClientViewState {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot.Clone()
 	muted, deafened, _ := s.Audio.Snapshot()
+	captureAvailable := s.Audio.CaptureAvailable()
 	rnnoiseEnabled := s.Audio.RNNoiseEnabled()
 	rnnoiseSensitivity := s.Audio.RNNoiseSensitivity()
 	vadSettings := s.Audio.VADSnapshot()
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
 		Channels: snapshot.Channels, Participants: snapshot.Participants, ScreenStreams: snapshot.ScreenStreams, SessionID: s.sessionID, ChannelID: s.channelID,
 		JoinLevel: s.joinLevel, Permissions: s.permissions,
-		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity,
+		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, CaptureAvailable: captureAvailable, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
 		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool)}
 	// The view's local channel belongs to the same snapshot as its participants.
@@ -292,6 +294,24 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		ownerID := next.ScreenStreams[streamIndex].OwnerSessionID
 		next.ScreenStreams = append(next.ScreenStreams[:streamIndex], next.ScreenStreams[streamIndex+1:]...)
 		line = fmt.Sprintf("%d stopped screen sharing", ownerID)
+	case domain.ParticipantAudio:
+		if index < 0 {
+			s.requestResyncLocked()
+			return false
+		}
+		next.Participants[index].Muted = e.Muted
+		next.Participants[index].Deafened = e.Deafened
+		name := terminalText(next.Participants[index].DisplayName)
+		switch {
+		case e.Muted && e.Deafened:
+			line = fmt.Sprintf("%s turned microphone and sound off", name)
+		case e.Muted:
+			line = fmt.Sprintf("%s turned microphone off", name)
+		case e.Deafened:
+			line = fmt.Sprintf("%s turned sound off", name)
+		default:
+			line = fmt.Sprintf("%s turned microphone and sound on", name)
+		}
 	}
 	next.Revision = e.Revision
 	if err := validateServerSnapshot(next); err != nil {
@@ -305,7 +325,11 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 	if notification != 0 {
 		s.queueNotificationSoundLocked(notification)
 	}
-	if id == s.sessionID {
+	if e.Kind == domain.ParticipantAudio {
+		if e.Muted {
+			delete(s.speaking, id)
+		}
+	} else if id == s.sessionID {
 		if e.Kind == domain.ParticipantMoved {
 			if s.channelID != e.ChannelID {
 				s.measurements.resetIncoming()
