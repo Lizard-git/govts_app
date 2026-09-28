@@ -3,9 +3,9 @@
 
     "dev:server": "go run ./cmd/server",
 
-    "dev:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 task dev",
+    "dev:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 task dev",
 
-    "build:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 build",
+    "build:desktop": "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 build",
 
 
     "dev:client-42": "go run ./cmd/client2 -name G712",

@@ -25,11 +25,11 @@ dev_mode:
       - "*.go"
     git_ignore: true
   executes:
-    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 task frontend:dev
+    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 task frontend:dev
       type: background
-    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 task build:dev
+    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 task build:dev
       type: blocking
-    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20 task run:dev
+    - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 task run:dev
       type: primary
 
 fileAssociations: []
