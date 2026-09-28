@@ -251,12 +251,12 @@ media-серверов. Адрес сервера хранится отдель�
 Linux-сервер `amd64` можно собрать на Windows командой
 `.\scripts\build-server.ps1`: она повышает `cmd/server/version.txt` и создаёт
 `bin/govts-server`. Версию сервера можно проверить флагом `-version`.
-`scripts/deploy-server.ps1` загружает бинарник и перезапускает сервер на
-`admin@193.187.92.89` в `tmux`-сессии `govts-server`. Чтобы открыть серверную
-консоль после деплоя, выполните:
+`scripts/deploy-server.ps1` загружает бинарник и перезапускает сервер в
+`tmux`-сессии `govts-server`. Чтобы открыть серверную консоль после деплоя,
+подставьте адрес своего сервера:
 
 ```bash
-ssh -t admin@193.187.92.89 'tmux attach-session -t govts-server'
+ssh -t user@server 'tmux attach-session -t govts-server'
 ```
 
 Для выхода без остановки сервера нажмите `Ctrl-b`, затем `d`. Вывод сессии
