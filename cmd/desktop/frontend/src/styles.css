@@ -121,11 +121,14 @@ h2 { margin: 0; font-size: 20px; }
 .channel-row:hover { color: white; background: #22304a; }
 .channel-row.selected { color: white; background: #263750; }
 .channel-row.current .channel-icon { color: var(--accent); }
+.channel-row.drop-target, .channel-row.drop-target:hover { color: #eafff9; background: #176052; box-shadow: inset 0 0 0 1px var(--accent); }
 .channel-icon { color: #7183a7; font-size: 20px; }
 .channel-name { min-width: 0; flex: 1; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .channel-count { color: #7383a1; font-size: 11px; }
 .participant-row { display: flex; align-items: center; min-height: 33px; gap: 8px; color: var(--muted); font-size: 12px; border-radius: 7px; outline: none; }
 .participant-row[tabindex="0"] { cursor: context-menu; }
+.participant-row.draggable { cursor: grab; user-select: none; }
+.participant-row.draggable:active { cursor: grabbing; }
 .participant-row[tabindex="0"]:hover, .participant-row[tabindex="0"]:focus-visible { background: var(--card-strong); }
 .avatar { display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #aab7cd; background: #34425a; font-weight: 800; }
 .avatar { width: 22px; height: 22px; font-size: 10px; }

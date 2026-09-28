@@ -17,7 +17,17 @@ func (h *Hub) checkModerationLocked(actorID, targetID uint64, permission uint8) 
 	if actor == nil || target == nil {
 		return nil, ErrSessionNotFound
 	}
-	if actor.UserID <= 0 || actor.Permissions&permission == 0 || actorID == targetID || actor.UserID == target.UserID || target.Owner {
+	if actor.UserID <= 0 || actor.Permissions&permission == 0 {
+		return nil, ErrPermissionDenied
+	}
+	if actorID == targetID && permission != persist.PermissionDrag {
+		return nil, ErrPermissionDenied
+	}
+	sameAccount := actor.UserID == target.UserID
+	if sameAccount && permission != persist.PermissionDrag {
+		return nil, ErrPermissionDenied
+	}
+	if target.Owner && !sameAccount {
 		return nil, ErrPermissionDenied
 	}
 	return target, nil

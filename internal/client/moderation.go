@@ -12,11 +12,11 @@ import (
 )
 
 func Moderate(ctx context.Context, conn *udp.ClientPacketConn, state *State, action uint8, targetID uint64, channelID domain.ChannelID) error {
-	if targetID == 0 || targetID == state.SessionID() {
-		return errors.New("moderation requires another participant")
-	}
 	if action != protocol.PacketKick && action != protocol.PacketBan && action != protocol.PacketDrag {
 		return errors.New("unsupported moderation action")
+	}
+	if targetID == 0 || (targetID == state.SessionID() && action != protocol.PacketDrag) {
+		return errors.New("moderation requires another participant")
 	}
 	payload := binary.BigEndian.AppendUint64(nil, targetID)
 	if action == protocol.PacketDrag {

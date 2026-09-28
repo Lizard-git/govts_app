@@ -15,7 +15,7 @@ function SpeakerIcon({muted = false}: {muted?: boolean}) {
     </svg>;
 }
 
-export function ParticipantRow({participant, channels, canKick, canBan, canDrag, depth, onError}: {
+export function ParticipantRow({participant, channels, canKick, canBan, canDrag, depth, onError, onDragStart, onDragEnd}: {
     participant: ParticipantDTO;
     channels: ChannelDTO[];
     canKick: boolean;
@@ -23,6 +23,8 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
     canDrag: boolean;
     depth: number;
     onError: (message: string) => void;
+    onDragStart: (event: React.DragEvent<HTMLDivElement>, participant: ParticipantDTO) => void;
+    onDragEnd: () => void;
 }) {
     const [menu, setMenu] = useState<MenuState>(null);
     const rowRef = useRef<HTMLDivElement>(null);
@@ -86,8 +88,10 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
         top: Math.max(8, Math.min(menu.y, window.innerHeight - 320)),
     } : undefined;
     return <>
-        <div ref={rowRef} className={`participant-row ${participant.speaking ? "speaking" : ""}`}
+        <div ref={rowRef} className={`participant-row ${participant.speaking ? "speaking" : ""} ${canDrag ? "draggable" : ""}`}
              style={{paddingLeft: 46 + depth * 18}} tabIndex={participant.local ? -1 : 0}
+             draggable={canDrag}
+             onDragStart={(event) => onDragStart(event, participant)} onDragEnd={onDragEnd}
              onContextMenu={(event) => {
                  if (participant.local) return;
                  event.preventDefault();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type {ChannelDTO, ClientEventDTO} from "./api";
-import { buildChannelGroups, mergeEventTail } from "./model";
+import type {ChannelDTO, ClientEventDTO, ParticipantDTO} from "./api";
+import { buildChannelGroups, canMoveParticipant, mergeEventTail } from "./model";
 
 const audio = { codec: "opus", sampleRate: 48000, channels: 1, frameDurationMs: 20, bitrate: 24000, application: "voip" };
 const channel = (id: string, parentId: string, position: number): ChannelDTO => ({
@@ -35,5 +35,23 @@ describe("mergeEventTail", () => {
     const result = mergeEventTail([], events);
     expect(result).toHaveLength(200);
     expect(result[0].sequence).toBe("6");
+  });
+});
+
+describe("canMoveParticipant", () => {
+  const participant: ParticipantDTO = {sessionId: "17", displayName: "Alice", channelId: "1", speaking: false, local: false};
+
+  it("allows a moderator to move another participant to a different channel", () => {
+    expect(canMoveParticipant(participant, "2", true)).toBe(true);
+  });
+
+  it("allows moving the local session to another channel", () => {
+    expect(canMoveParticipant({...participant, local: true}, "2", true)).toBe(true);
+  });
+
+  it("rejects same-channel and unauthorized drops", () => {
+    expect(canMoveParticipant(participant, "1", true)).toBe(false);
+    expect(canMoveParticipant(participant, "2", false)).toBe(false);
+    expect(canMoveParticipant(undefined, "2", true)).toBe(false);
   });
 });

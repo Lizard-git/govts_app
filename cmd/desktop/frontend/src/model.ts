@@ -1,4 +1,8 @@
-import type {ChannelDTO, ClientEventDTO} from "./api";
+import type {ChannelDTO, ClientEventDTO, ParticipantDTO} from "./api";
+
+export function canMoveParticipant(participant: ParticipantDTO | undefined, channelID: string, canDrag: boolean): boolean {
+  return canDrag && !!participant && participant.channelId !== channelID;
+}
 
 function compareID(left: string, right: string): number {
   const a = BigInt(left);

@@ -1,12 +1,13 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
-import {buildChannelGroups, mergeEventTail} from "./model";
+import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
 import {ScreenSharing, ScreenViewerWindow} from "./features/screen/ScreenViews";
 import {ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
 
+const participantDragType = "application/x-govts-participant";
 
 const emptyView: ClientViewDTO = {
     connectionStatus: "disconnected",
@@ -177,10 +178,13 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                     <div><p className="eyebrow">ПРОСТРАНСТВА</p><h2>Каналы</h2></div>
                     <span className="count-badge">{participants.length}</span></div>
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants}
-                                                             canKick={view.canKick} canBan={view.canBan} canDrag={view.canDrag}
+                                                             canKick={view.canKick} canBan={view.canBan}
+                                                             canDrag={view.canDrag && view.connectionStatus === "connected"}
                                                              selectedID={selectedID} currentID={view.channelId}
                                                              onError={onError} onSelect={setSelectedID} onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
+                }} onMoveParticipant={(sessionID, channelID) => {
+                    void invoke(() => desktopAPI.drag(sessionID, channelID));
                 }}/></div>
             </section>
             <section className="panel channel-detail">{selected ? <><p className="eyebrow">ВЫБРАННЫЙ КАНАЛ</p>
@@ -202,7 +206,7 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
     </section>;
 }
 
-function ChannelTree({channels, participants, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onError}: {
+function ChannelTree({channels, participants, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onMoveParticipant, onError}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
     canKick: boolean;
@@ -212,24 +216,57 @@ function ChannelTree({channels, participants, canKick, canBan, canDrag, selected
     currentID: string;
     onSelect: (id: string) => void;
     onJoin: (id: string) => void
+    onMoveParticipant: (sessionID: string, channelID: string) => void;
     onError: (message: string) => void;
 }) {
+    const [draggingSessionID, setDraggingSessionID] = useState<string | null>(null);
+    const [dropTargetID, setDropTargetID] = useState<string | null>(null);
     const children = useMemo(() => {
         return buildChannelGroups(channels);
     }, [channels]);
+    const draggingParticipant = participants.find((participant) => participant.sessionId === draggingSessionID);
     const renderLevel = (parentID: string, depth: number): React.ReactNode => (children.get(parentID) ?? []).map((channel) => {
         const members = participants.filter((participant) => participant.channelId === channel.id);
+        const canDrop = canMoveParticipant(draggingParticipant, channel.id, canDrag);
         return <div key={channel.id}>
             <button
-                className={`channel-row ${selectedID === channel.id ? "selected" : ""} ${currentID === channel.id ? "current" : ""}`}
+                className={`channel-row ${selectedID === channel.id ? "selected" : ""} ${currentID === channel.id ? "current" : ""} ${canDrop && dropTargetID === channel.id ? "drop-target" : ""}`}
                 style={{paddingLeft: 14 + depth * 18}} onClick={() => onSelect(channel.id)}
-                title={!channel.canJoin ? "Нет доступа к каналу" : undefined}
+                title={canDrop ? "Переместить участника в этот канал" : !channel.canJoin ? "Нет доступа к каналу" : undefined}
+                onDragOver={(event) => {
+                    if (!canDrop) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    if (dropTargetID !== channel.id) setDropTargetID(channel.id);
+                }}
+                onDragLeave={(event) => {
+                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                        setDropTargetID((current) => current === channel.id ? null : current);
+                    }
+                }}
+                onDrop={(event) => {
+                    if (!canDrop || !draggingSessionID || event.dataTransfer.getData(participantDragType) !== draggingSessionID) return;
+                    event.preventDefault();
+                    setDropTargetID(null);
+                    setDraggingSessionID(null);
+                    onMoveParticipant(draggingSessionID, channel.id);
+                }}
                 onDoubleClick={() => onJoin(channel.id)}><span className="channel-icon" aria-hidden="true">⌁</span><span
                 className="channel-name">{channel.name}</span><span className="channel-count">{members.length}</span>
             </button>
             {members.map((participant) => <ParticipantRow key={participant.sessionId} participant={participant}
                                                           channels={channels} canKick={canKick} canBan={canBan} canDrag={canDrag}
-                                                          depth={depth} onError={onError}/>)}{renderLevel(channel.id, depth + 1)}</div>;
+                                                          depth={depth} onError={onError}
+                                                          onDragStart={(event, source) => {
+                                                              if (!canDrag) {
+                                                                  event.preventDefault();
+                                                                  return;
+                                                              }
+                                                              event.dataTransfer.setData(participantDragType, source.sessionId);
+                                                              event.dataTransfer.effectAllowed = "move";
+                                                              setDraggingSessionID(source.sessionId);
+                                                          }}
+                                                          onDragEnd={() => { setDraggingSessionID(null); setDropTargetID(null); }}/>)}{renderLevel(channel.id, depth + 1)}</div>;
     });
     return <div className="channel-tree">{channels.length ? renderLevel("0", 0) :
         <div className="empty-state">Каналы ещё не загружены</div>}</div>;
