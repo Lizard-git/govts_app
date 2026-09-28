@@ -20,6 +20,10 @@ export function AudioDevices(): $CancellablePromise<$models.AudioDevicesDTO> {
     return $Call.ByID(4163031362);
 }
 
+export function Ban(sessionID: string): $CancellablePromise<void> {
+    return $Call.ByID(2103541416, sessionID);
+}
+
 export function Connect(request: $models.ConnectRequest): $CancellablePromise<void> {
     return $Call.ByID(1135091607, request);
 }
@@ -32,12 +36,20 @@ export function Disconnect(): $CancellablePromise<void> {
     return $Call.ByID(2989955305);
 }
 
+export function Drag(sessionID: string, channelID: string): $CancellablePromise<void> {
+    return $Call.ByID(3258615617, sessionID, channelID);
+}
+
 export function EventsAfter(sequence: string): $CancellablePromise<$models.ClientEventDTO[] | null> {
     return $Call.ByID(1061099244, sequence);
 }
 
 export function JoinChannel(channelID: string): $CancellablePromise<void> {
     return $Call.ByID(734772938, channelID);
+}
+
+export function Kick(sessionID: string): $CancellablePromise<void> {
+    return $Call.ByID(2906324561, sessionID);
 }
 
 export function MediaServerIdentity(): $CancellablePromise<$models.MediaTrustDTO> {

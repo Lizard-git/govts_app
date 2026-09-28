@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,16 @@ func TestAppValidatesConnectAndClosesIdempotently(t *testing.T) {
 	}
 	if err := app.Connect(ConnectOptions{Name: "alice", Server: "127.0.0.1:9000"}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Connect after Close error = %v, want ErrClosed", err)
+	}
+}
+
+func TestChannelJoinErrorDoesNotRevealLevel(t *testing.T) {
+	err := channelJoinError("Закрытый", errors.New("cannot join channel: channel join level is too low"))
+	if err.Error() != "нет доступа к каналу \"Закрытый\"" {
+		t.Fatalf("join error = %q", err)
+	}
+	if strings.Contains(err.Error(), "level") {
+		t.Fatal("join error revealed a level")
 	}
 }
 

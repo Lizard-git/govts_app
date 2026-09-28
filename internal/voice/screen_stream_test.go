@@ -84,3 +84,33 @@ func TestScreenSubscriptionRequiresSameChannel(t *testing.T) {
 		t.Fatal("other channel can subscribe")
 	}
 }
+
+func TestJoinLevelRevocationClosesSessionAndMediaAccess(t *testing.T) {
+	hub := NewHub()
+	private := mustCreateChannel(t, hub, domain.Channel{Name: "private", MinJoinLevel: 25})
+	user := &Session{ID: 30, UserID: 7, JoinLevel: 25, Name: "alice", Addr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10030}}
+	hub.Add(user)
+	if err := hub.JoinChannel(user.ID, private.ID); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := hub.MediaCredential(user.ID)
+	if err != nil || !hub.AuthenticateMedia(user.ID, credential) {
+		t.Fatalf("media credential before revoke: %v", err)
+	}
+	if _, err := hub.StartScreenShare(user.ID, 301); err != nil {
+		t.Fatal(err)
+	}
+	removed := hub.ApplyJoinLevel(user.UserID, 24)
+	if len(removed) != 1 || removed[0] != user.ID {
+		t.Fatalf("removed sessions = %v", removed)
+	}
+	if hub.AuthenticateMedia(user.ID, credential) {
+		t.Fatal("media credential survived level revocation")
+	}
+	if _, ok := hub.ScreenStream(301); ok {
+		t.Fatal("screen stream survived level revocation")
+	}
+	if _, ok := hub.Get(user.ID); ok {
+		t.Fatal("session survived level revocation")
+	}
+}

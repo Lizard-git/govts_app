@@ -10,11 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"uniclog.io/govts/internal/clientapp"
 	"uniclog.io/govts/internal/clientsettings"
 	"uniclog.io/govts/internal/domain"
 	"uniclog.io/govts/internal/mediasignal"
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"uniclog.io/govts/internal/protocol"
 )
 
 const operationTimeout = 10 * time.Second
@@ -29,7 +30,6 @@ func (e *validationError) Error() string { return e.Field + ": " + e.Message }
 type ConnectRequest struct {
 	Name             string `json:"name"`
 	Server           string `json:"server"`
-	InitialChannel   string `json:"initialChannel"`
 	MinServerVersion string `json:"minServerVersion,omitempty"`
 }
 
@@ -63,7 +63,6 @@ func (s *Service) Connect(request ConnectRequest) error {
 	return s.client.Connect(clientapp.ConnectOptions{
 		Name:             request.Name,
 		Server:           request.Server,
-		InitialChannel:   strings.TrimSpace(request.InitialChannel),
 		MinServerVersion: strings.TrimSpace(request.MinServerVersion),
 	})
 }
@@ -238,6 +237,40 @@ func (s *Service) JoinChannel(channelID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
 	return s.client.JoinChannel(ctx, domain.ChannelID(id))
+}
+
+func (s *Service) Kick(sessionID string) error {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+	return s.client.Moderate(ctx, protocol.PacketKick, id, 0)
+}
+
+func (s *Service) Ban(sessionID string) error {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+	return s.client.Moderate(ctx, protocol.PacketBan, id, 0)
+}
+
+func (s *Service) Drag(sessionID, channelID string) error {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return err
+	}
+	channel, err := parseUint64(channelID, "channelId", false)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+	return s.client.Moderate(ctx, protocol.PacketDrag, id, domain.ChannelID(channel))
 }
 
 func (s *Service) Snapshot() ClientViewDTO {

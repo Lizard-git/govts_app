@@ -84,15 +84,16 @@ func ValidateAudioProfile(profile AudioProfile) error {
 }
 
 type Channel struct {
-	ID          ChannelID
-	ParentID    ChannelID
-	Name        string
-	Topic       string
-	Description string
-	Position    uint32
-	MaxUsers    uint32
-	Type        ChannelType
-	Audio       AudioProfile
+	ID           ChannelID
+	ParentID     ChannelID
+	Name         string
+	Topic        string
+	Description  string
+	Position     uint32
+	MaxUsers     uint32
+	MinJoinLevel uint16
+	Type         ChannelType
+	Audio        AudioProfile
 }
 
 type Participant struct {
@@ -102,8 +103,9 @@ type Participant struct {
 }
 
 type ServerInfo struct {
-	Name      string
-	MediaPort uint16
+	Name             string
+	MediaPort        uint16
+	DefaultChannelID ChannelID
 }
 
 // ServerSnapshot is the immutable, client-safe view of authoritative server state.

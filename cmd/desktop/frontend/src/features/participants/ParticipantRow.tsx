@@ -1,9 +1,9 @@
 import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
-import type {ParticipantDTO} from "../../api";
+import type {ChannelDTO, ParticipantDTO} from "../../api";
 import {desktopAPI} from "../../api";
 
-type MenuState = {x: number; y: number; volume: number} | null;
+type MenuState = {x: number; y: number; volume: number; channelID: string} | null;
 
 function SpeakerIcon({muted = false}: {muted?: boolean}) {
     return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" fill="none"
@@ -15,8 +15,12 @@ function SpeakerIcon({muted = false}: {muted?: boolean}) {
     </svg>;
 }
 
-export function ParticipantRow({participant, depth, onError}: {
+export function ParticipantRow({participant, channels, canKick, canBan, canDrag, depth, onError}: {
     participant: ParticipantDTO;
+    channels: ChannelDTO[];
+    canKick: boolean;
+    canBan: boolean;
+    canDrag: boolean;
     depth: number;
     onError: (message: string) => void;
 }) {
@@ -30,7 +34,7 @@ export function ParticipantRow({participant, depth, onError}: {
         if (participant.local) return;
         try {
             const volume = await desktopAPI.participantVolume(participant.sessionId);
-            setMenu({x, y, volume});
+            setMenu({x, y, volume, channelID: channels.find((channel) => channel.id !== participant.channelId)?.id ?? ""});
         } catch (error) {
             onError(errorText(error));
         }
@@ -45,6 +49,18 @@ export function ParticipantRow({participant, depth, onError}: {
         const commit = () => void desktopAPI.setParticipantVolume(participant.sessionId, volume).catch((error) => onError(errorText(error)));
         if (immediate) commit();
         else timerRef.current = window.setTimeout(commit, 40);
+    };
+    const moderate = async (action: "kick" | "ban" | "drag") => {
+        if (!menu) return;
+        if (action === "ban" && !window.confirm(`Заблокировать ${participant.displayName}?`)) return;
+        try {
+            if (action === "kick") await desktopAPI.kick(participant.sessionId);
+            if (action === "ban") await desktopAPI.ban(participant.sessionId);
+            if (action === "drag") await desktopAPI.drag(participant.sessionId, menu.channelID);
+            close();
+        } catch (error) {
+            onError(errorText(error));
+        }
     };
 
     useEffect(() => () => window.clearTimeout(timerRef.current), []);
@@ -67,7 +83,7 @@ export function ParticipantRow({participant, depth, onError}: {
 
     const position = menu ? {
         left: Math.max(8, Math.min(menu.x, window.innerWidth - 284)),
-        top: Math.max(8, Math.min(menu.y, window.innerHeight - 158)),
+        top: Math.max(8, Math.min(menu.y, window.innerHeight - 320)),
     } : undefined;
     return <>
         <div ref={rowRef} className={`participant-row ${participant.speaking ? "speaking" : ""}`}
@@ -112,6 +128,16 @@ export function ParticipantRow({participant, depth, onError}: {
                         onClick={() => setVolume(menu.volume === 0 ? 1 : 0, true)}>
                     <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? "Включить звук" : "Заглушить"}
                 </button>
+                {canKick && <button type="button" role="menuitem" onClick={() => void moderate("kick")}>Отключить</button>}
+                {canBan && <button type="button" role="menuitem" onClick={() => void moderate("ban")}>Заблокировать</button>}
+                {canDrag && menu.channelID && <div className="participant-drag-control">
+                    <select aria-label="Канал для перемещения" value={menu.channelID}
+                            onChange={(event) => setMenu((current) => current ? {...current, channelID: event.target.value} : null)}>
+                        {channels.filter((channel) => channel.id !== participant.channelId).map((channel) =>
+                            <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                    </select>
+                    <button type="button" role="menuitem" onClick={() => void moderate("drag")}>Переместить</button>
+                </div>}
             </div>
         </div>, document.body)}
     </>;

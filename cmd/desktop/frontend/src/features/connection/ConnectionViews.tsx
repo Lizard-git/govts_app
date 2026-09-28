@@ -48,7 +48,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
         setPending(true);
         try {
             onClearEvents();
-            await desktopAPI.connect({name, server: address, initialChannel: "default"});
+            await desktopAPI.connect({name, server: address});
             await onRefresh();
             onConnected();
         } catch (connectError) {

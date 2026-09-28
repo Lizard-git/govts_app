@@ -10,10 +10,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/persist"
 	"uniclog.io/govts/internal/voice"
 )
 
@@ -26,26 +28,41 @@ type ConsoleInfo struct {
 }
 
 type Console struct {
-	hub    *voice.Hub
-	input  io.Reader
-	output io.Writer
-	info   ConsoleInfo
-	now    func() time.Time
+	hub              *voice.Hub
+	store            *persist.Store
+	notifyPrivileges func(int64, uint16, uint8)
+	policyGate       *sync.Mutex
+	input            io.Reader
+	output           io.Writer
+	info             ConsoleInfo
+	now              func() time.Time
 }
+
+func (console *Console) SetPrivilegeNotifier(notify func(int64, uint16, uint8)) {
+	console.notifyPrivileges = notify
+}
+
+// SetPolicyGate serializes console mutations with incoming UDP commands.
+func (console *Console) SetPolicyGate(gate *sync.Mutex) { console.policyGate = gate }
 
 func NewConsole(
 	hub *voice.Hub,
 	input io.Reader,
 	output io.Writer,
 	info ConsoleInfo,
+	stores ...*persist.Store,
 ) *Console {
-	return &Console{
+	console := &Console{
 		hub:    hub,
 		input:  input,
 		output: output,
 		info:   info,
 		now:    time.Now,
 	}
+	if len(stores) > 0 {
+		console.store = stores[0]
+	}
+	return console
 }
 
 func (console *Console) Run(ctx context.Context) error {
@@ -137,6 +154,9 @@ func (console *Console) Execute(line string) error {
 		if argument == "" {
 			return console.writeUsage("channel <id|name>")
 		}
+		if strings.HasPrefix(argument, "set-min-join-level ") {
+			return console.setChannelJoinLevel(strings.TrimPrefix(argument, "set-min-join-level "))
+		}
 		return console.writeChannel(snapshot, argument, now)
 	case "users":
 		if argument != "" {
@@ -148,6 +168,13 @@ func (console *Console) Execute(line string) error {
 			return console.writeUsage("user <session-id>")
 		}
 		return console.writeUser(snapshot, argument, now)
+	case "accounts":
+		if argument != "" {
+			return console.writeUsage("accounts")
+		}
+		return console.writeAccounts()
+	case "account":
+		return console.executeAccount(argument)
 	default:
 		_, err := fmt.Fprintf(console.output, "error: unknown command %q; use help\n", command)
 		return err
@@ -162,6 +189,17 @@ func (console *Console) writeHelp() error {
 		"  channel <id|name>      show one channel\n"+
 		"  users                 show connected users\n"+
 		"  user <session-id>      show one user\n")
+	if err != nil || console.store == nil {
+		return err
+	}
+	_, err = io.WriteString(console.output,
+		"  accounts              list registered accounts\n"+
+			"  account <id>          show one account\n"+
+			"  account set-join-level <id> <level>\n"+
+			"  account set-permission <id> <kick|ban|drag> <on|off>\n"+
+			"  account set-owner <id>\n"+
+			"  account <ban|unban> <id>\n"+
+			"  channel set-min-join-level <id> <level>\n")
 	return err
 }
 
@@ -214,7 +252,7 @@ func (console *Console) writeChannels(snapshot voice.OperationalSnapshot) error 
 			visited[channel.ID] = true
 			if _, err := fmt.Fprintf(
 				console.output,
-				"%s- id=%d name=%q parent=%d position=%d users=%d/%s type=%s audio=%s\n",
+				"%s- id=%d name=%q parent=%d position=%d users=%d/%s default=%t min_join_level=%d type=%s audio=%s\n",
 				strings.Repeat("  ", depth),
 				channel.ID,
 				channel.Name,
@@ -222,6 +260,8 @@ func (console *Console) writeChannels(snapshot voice.OperationalSnapshot) error 
 				channel.Position,
 				memberCounts[channel.ID],
 				maxUsersText(channel.MaxUsers),
+				channel.ID == snapshot.ServerInfo.DefaultChannelID,
+				channel.MinJoinLevel,
 				channelTypeText(channel.Type),
 				audioProfileText(channel.Audio),
 			); err != nil {
@@ -249,13 +289,15 @@ func (console *Console) writeChannel(
 	members := sessionsForChannel(snapshot.Sessions, channel.ID)
 	if _, err := fmt.Fprintf(
 		console.output,
-		"channel id=%d name=%q parent=%d position=%d users=%d/%s type=%s audio=%s\n",
+		"channel id=%d name=%q parent=%d position=%d users=%d/%s default=%t min_join_level=%d type=%s audio=%s\n",
 		channel.ID,
 		channel.Name,
 		channel.ParentID,
 		channel.Position,
 		len(members),
 		maxUsersText(channel.MaxUsers),
+		channel.ID == snapshot.ServerInfo.DefaultChannelID,
+		channel.MinJoinLevel,
 		channelTypeText(channel.Type),
 		audioProfileText(channel.Audio),
 	); err != nil {

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion      uint8  = 2
+	SnapshotSchemaVersion      uint8  = 4
 	SnapshotRequestSize               = 16
 	SnapshotResponseHeaderSize        = 18
 	MaxSnapshotPageItems       uint16 = 32
@@ -99,7 +99,7 @@ func validateSnapshotRequest(r SnapshotRequest) error {
 }
 
 func EncodedChannelSize(c domain.Channel) int {
-	return 44 + len(c.Name) + len(c.Topic) + len(c.Description)
+	return 46 + len(c.Name) + len(c.Topic) + len(c.Description)
 }
 func EncodedParticipantSize(p domain.Participant) int { return 18 + len(p.DisplayName) }
 func EncodedScreenStreamSize(domain.ScreenStream) int { return 24 }
@@ -138,6 +138,7 @@ func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
 				return nil, errors.New("invalid server name")
 			}
 			body = binary.BigEndian.AppendUint16(body, r.ServerInfo.MediaPort)
+			body = binary.BigEndian.AppendUint64(body, uint64(r.ServerInfo.DefaultChannelID))
 			body = binary.BigEndian.AppendUint32(body, r.ChannelCount)
 			body = binary.BigEndian.AppendUint32(body, r.ParticipantCount)
 			body = binary.BigEndian.AppendUint32(body, r.ScreenStreamCount)
@@ -236,12 +237,13 @@ func DecodeSnapshotResponse(p []byte) (SnapshotResponse, error) {
 		if err == nil && (r.ServerInfo.Name == "" || strings.TrimSpace(r.ServerInfo.Name) != r.ServerInfo.Name) {
 			err = errors.New("invalid server name")
 		}
-		if err == nil && len(body) >= 14 {
+		if err == nil && len(body) >= 22 {
 			r.ServerInfo.MediaPort = binary.BigEndian.Uint16(body[:2])
-			r.ChannelCount = binary.BigEndian.Uint32(body[2:6])
-			r.ParticipantCount = binary.BigEndian.Uint32(body[6:10])
-			r.ScreenStreamCount = binary.BigEndian.Uint32(body[10:14])
-			body = body[14:]
+			r.ServerInfo.DefaultChannelID = domain.ChannelID(binary.BigEndian.Uint64(body[2:10]))
+			r.ChannelCount = binary.BigEndian.Uint32(body[10:14])
+			r.ParticipantCount = binary.BigEndian.Uint32(body[14:18])
+			r.ScreenStreamCount = binary.BigEndian.Uint32(body[18:22])
+			body = body[22:]
 		} else if err == nil {
 			err = errors.New("metadata body too short")
 		}
@@ -321,6 +323,7 @@ func appendChannel(dst []byte, c domain.Channel) ([]byte, error) {
 	dst = binary.BigEndian.AppendUint64(dst, uint64(c.ParentID))
 	dst = binary.BigEndian.AppendUint32(dst, c.Position)
 	dst = binary.BigEndian.AppendUint32(dst, c.MaxUsers)
+	dst = binary.BigEndian.AppendUint16(dst, c.MinJoinLevel)
 	dst = append(dst, byte(c.Type), byte(c.Audio.Codec))
 	dst = binary.BigEndian.AppendUint32(dst, c.Audio.SampleRate)
 	dst = append(dst, c.Audio.Channels)
@@ -340,14 +343,14 @@ func appendChannel(dst []byte, c domain.Channel) ([]byte, error) {
 	return dst, nil
 }
 func takeChannel(p []byte) (domain.Channel, []byte, error) {
-	if len(p) < 38 {
+	if len(p) < 40 {
 		return domain.Channel{}, nil, errors.New("channel item too short")
 	}
-	c := domain.Channel{ID: domain.ChannelID(binary.BigEndian.Uint64(p[:8])), ParentID: domain.ChannelID(binary.BigEndian.Uint64(p[8:16])), Position: binary.BigEndian.Uint32(p[16:20]), MaxUsers: binary.BigEndian.Uint32(p[20:24]), Type: domain.ChannelType(p[24]), Audio: domain.AudioProfile{Codec: domain.AudioCodec(p[25]), SampleRate: binary.BigEndian.Uint32(p[26:30]), Channels: p[30], FrameDurationMS: binary.BigEndian.Uint16(p[31:33]), Bitrate: binary.BigEndian.Uint32(p[33:37]), Application: domain.OpusApplication(p[37])}}
+	c := domain.Channel{ID: domain.ChannelID(binary.BigEndian.Uint64(p[:8])), ParentID: domain.ChannelID(binary.BigEndian.Uint64(p[8:16])), Position: binary.BigEndian.Uint32(p[16:20]), MaxUsers: binary.BigEndian.Uint32(p[20:24]), MinJoinLevel: binary.BigEndian.Uint16(p[24:26]), Type: domain.ChannelType(p[26]), Audio: domain.AudioProfile{Codec: domain.AudioCodec(p[27]), SampleRate: binary.BigEndian.Uint32(p[28:32]), Channels: p[32], FrameDurationMS: binary.BigEndian.Uint16(p[33:35]), Bitrate: binary.BigEndian.Uint32(p[35:39]), Application: domain.OpusApplication(p[39])}}
 	if c.ID == 0 {
 		return c, nil, errors.New("zero channel ID")
 	}
-	p = p[38:]
+	p = p[40:]
 	var err error
 	c.Name, p, err = takeString(p, domain.MaxChannelNameBytes)
 	if err == nil {

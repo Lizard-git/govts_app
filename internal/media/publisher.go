@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"uniclog.io/govts/internal/domain"
 	"github.com/pion/webrtc/v4"
+	"uniclog.io/govts/internal/domain"
 )
 
 func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
@@ -21,6 +21,9 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		var needsRecovery []*subscriber
 		p.mu.RLock()
 		for _, s := range p.subscribers {
+			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
+				continue
+			}
 			clone := packet.Clone()
 			select {
 			case s.packets <- clone:

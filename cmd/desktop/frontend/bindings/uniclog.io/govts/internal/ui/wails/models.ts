@@ -48,6 +48,7 @@ export interface ChannelDTO {
     "description": string;
     "position": number;
     "maxUsers": number;
+    "canJoin": boolean;
     "audio": AudioProfileDTO;
 }
 
@@ -66,6 +67,9 @@ export interface ClientViewDTO {
     "revision": string;
     "sessionId": string;
     "channelId": string;
+    "canKick": boolean;
+    "canBan": boolean;
+    "canDrag": boolean;
     "snapshotFresh": boolean;
     "channels": ChannelDTO[] | null;
     "participants": ParticipantDTO[] | null;
@@ -76,7 +80,6 @@ export interface ClientViewDTO {
 export interface ConnectRequest {
     "name": string;
     "server": string;
-    "initialChannel": string;
     "minServerVersion"?: string;
 }
 

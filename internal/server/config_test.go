@@ -54,6 +54,27 @@ func TestBootstrapHubUsesOnlyBuiltinDefaultChannel(t *testing.T) {
 	}
 }
 
+func TestBootstrapSelectsMarkedDefaultRatherThanFirstChannel(t *testing.T) {
+	path := writeTestConfig(t, `{"server":{"name":"Test Server"},"channels":[{"name":"private","min_join_level":25},{"name":"welcome","default":true},{"name":"other"}]}`)
+	hub, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hub.Inspect().ServerInfo.DefaultChannelID; got != 2 {
+		t.Fatalf("default channel ID = %d, want 2", got)
+	}
+	if _, err := hub.SetChannelJoinLevel(2, 25); err == nil {
+		t.Fatal("default channel accepted a restricted join level")
+	}
+}
+
+func TestBootstrapRejectsRestrictedDefault(t *testing.T) {
+	path := writeTestConfig(t, `{"server":{"name":"Test Server"},"channels":[{"name":"welcome","default":true,"max_users":10}]}`)
+	if _, err := BootstrapHub(context.Background(), JSONBootstrapSource{Path: path}); err == nil {
+		t.Fatal("limited default channel was accepted")
+	}
+}
+
 func TestJSONBootstrapSourceBuildsParentFirstTree(t *testing.T) {
 	path := writeTestConfig(t, `{
   "server": {"name": "Test Server"},

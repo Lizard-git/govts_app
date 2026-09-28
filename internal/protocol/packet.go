@@ -31,6 +31,15 @@ const (
 	PacketMediaCredentialRequest
 	PacketMediaCredentialAck
 	PacketServerVersionTooOld
+	PacketAuthInit
+	PacketAuthChallenge
+	PacketAuthFinish
+	PacketAuthAck
+	PacketKick
+	PacketBan
+	PacketDrag
+	PacketModerationAck
+	PacketAccountPrivileges
 
 	PacketEnd
 )
@@ -83,7 +92,7 @@ func encodeSessionID(id uint64) []byte {
 const (
 	HeaderSize          = 17
 	MaxPayloadSize      = 1200
-	MaxWireDatagramSize = HeaderSize + MaxPayloadSize
+	MaxWireDatagramSize = HeaderSize + MaxPayloadSize + 33 // encrypted record header and GCM tag
 
 	// MaxDatagramSize is kept as a compatibility alias. New transport code
 	// must use MaxWireDatagramSize as the protocol-wide hard wire limit.

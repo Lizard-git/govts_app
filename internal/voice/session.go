@@ -9,6 +9,10 @@ import (
 
 type Session struct {
 	ID              uint64
+	UserID          int64
+	JoinLevel       uint16
+	Permissions     uint8
+	Owner           bool
 	Name            string
 	ChannelID       domain.ChannelID
 	Addr            *net.UDPAddr

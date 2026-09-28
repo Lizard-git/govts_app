@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"uniclog.io/govts/internal/domain"
@@ -20,15 +21,20 @@ import (
 const maxSignalingBody = 256 * 1024
 
 type HTTPHandler struct {
-	hub     *voice.Hub
-	manager *Manager
+	hub        *voice.Hub
+	manager    *Manager
+	policyGate *sync.Mutex
 }
 
-func NewHTTPHandler(hub *voice.Hub, manager *Manager) (*HTTPHandler, error) {
+func NewHTTPHandler(hub *voice.Hub, manager *Manager, gates ...*sync.Mutex) (*HTTPHandler, error) {
 	if hub == nil || manager == nil {
 		return nil, errors.New("hub and media manager are required")
 	}
-	return &HTTPHandler{hub: hub, manager: manager}, nil
+	handler := &HTTPHandler{hub: hub, manager: manager}
+	if len(gates) > 0 {
+		handler.policyGate = gates[0]
+	}
+	return handler, nil
 }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +137,10 @@ func (h *HTTPHandler) authenticate(r *http.Request) (uint64, bool) {
 	}
 	var credential [32]byte
 	copy(credential[:], decoded)
+	if h.policyGate != nil {
+		h.policyGate.Lock()
+		defer h.policyGate.Unlock()
+	}
 	return sessionID, h.hub.AuthenticateMedia(sessionID, credential)
 }
 

@@ -19,7 +19,7 @@ import (
 	"uniclog.io/govts/internal/transport/udp"
 )
 
-func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, preference *channelPreference, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
 	output = &lockedOutput{writer: output}
 	noticeOutput = &lockedOutput{writer: noticeOutput}
 	sessionID := state.SessionID()
@@ -100,16 +100,9 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
 	supervisor.Go(func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
-	joinedSignal := make(chan struct{}, 1)
 	if commands != nil {
 		supervisor.Go(func(ctx context.Context) error {
-			return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, func(locator voiceclient.ChannelLocator) {
-				preference.Set(locator)
-				select {
-				case joinedSignal <- struct{}{}:
-				default:
-				}
-			})
+			return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, nil)
 		})
 	}
 
@@ -128,58 +121,16 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return finish(fmt.Errorf("%w: load server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
 	supervisor.Go(syncer.Run)
-	selector, locator := preference.Get()
-	var channelID domain.ChannelID
-	treePrinted := false
-	if len(locator) > 0 {
-		id, resolveErr := voiceclient.ResolveChannelLocator(snapshot, locator)
-		if resolveErr == nil {
-			channelID = id
-		} else {
-			logger.Printf("cannot restore channel: %v", resolveErr)
-		}
-	} else {
-		id, resolveErr := voiceclient.ResolveChannel(snapshot, selector)
-		if resolveErr == nil {
-			channelID = id
-		} else {
-			logger.Printf("cannot resolve initial channel: %v", resolveErr)
-		}
+	channelID, err := defaultChannelForConnection(snapshot)
+	if err != nil {
+		return finish(err)
 	}
-	if channelID == 0 && len(snapshot.Channels) > 0 {
-		channelID = snapshot.Channels[0].ID
-		logger.Printf("joining first available channel: id=%d name=%q", channelID, snapshot.Channels[0].Name)
+	if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
+		return finish(fmt.Errorf("cannot join default channel %d: %w", channelID, err))
 	}
-	if channelID != 0 {
-		if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
-			logger.Printf("cannot join channel: %v", err)
-			channelID = 0
-		} else {
-			snapshot, err = syncer.Load(ctx)
-			if err != nil {
-				return finish(fmt.Errorf("%w: refresh server snapshot: %v", voiceclient.ErrConnectionLost, err))
-			}
-			saved, err := voiceclient.BuildChannelLocator(snapshot, channelID)
-			if err != nil {
-				return finish(err)
-			}
-			preference.Set(saved)
-		}
-	}
-	if channelID == 0 {
-		state.SetConnectionStatus(voiceclient.ConnectionConnected)
-		_ = voiceclient.RenderServerTree(output, snapshot, sessionID, 0, false)
-		treePrinted = true
-		if commands != nil {
-			select {
-			case <-ctx.Done():
-				return finish(nil)
-			case <-joinedSignal:
-				channelID = state.ChannelID()
-			}
-		} else {
-			return finish(errors.New("server has no channel available to join"))
-		}
+	snapshot, err = syncer.Load(ctx)
+	if err != nil {
+		return finish(fmt.Errorf("%w: refresh server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
 	currentSnapshot := state.Snapshot()
 	activeProfile, err := channelAudioProfile(currentSnapshot, state.ChannelID())
@@ -190,7 +141,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
-	if shouldRenderConnectionTree(firstConnection, treePrinted, topologyUnchanged) {
+	if shouldRenderConnectionTree(firstConnection, false, topologyUnchanged) {
 		if !firstConnection {
 			logger.Printf("reconnected; channel structure changed")
 		}
@@ -268,6 +219,15 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		runtimeErr = errors.Join(runtimeErr, wrapError("send disconnect", voiceclient.Disconnect(conn, sessionID)))
 	}
 	return runtimeErr
+}
+
+func defaultChannelForConnection(snapshot domain.ServerSnapshot) (domain.ChannelID, error) {
+	for _, channel := range snapshot.Channels {
+		if channel.ID == snapshot.Info.DefaultChannelID && channel.MinJoinLevel == 0 && channel.MaxUsers == 0 {
+			return channel.ID, nil
+		}
+	}
+	return 0, errors.New("server has no unrestricted default channel")
 }
 
 func newMicrophoneFilter(config audio.CodecConfig, settings audiornnoise.Settings) (audio.PCMFilter, error) {

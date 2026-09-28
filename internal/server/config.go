@@ -21,13 +21,15 @@ const (
 )
 
 type ChannelDefinition struct {
-	Name        string
-	Topic       string
-	Description string
-	Position    uint32
-	MaxUsers    uint32
-	Audio       domain.AudioProfile
-	Children    []ChannelDefinition
+	Name         string
+	Default      bool
+	Topic        string
+	Description  string
+	Position     uint32
+	MaxUsers     uint32
+	MinJoinLevel uint16
+	Audio        domain.AudioProfile
+	Children     []ChannelDefinition
 }
 
 type ServerDefinition struct {
@@ -46,7 +48,7 @@ func (BuiltinBootstrapSource) Load(ctx context.Context) (ServerDefinition, error
 		return ServerDefinition{}, err
 	}
 	return ServerDefinition{Info: domain.ServerInfo{Name: voice.DefaultServerName}, Channels: []ChannelDefinition{{
-		Name: voice.DefaultChannelName,
+		Name: voice.DefaultChannelName, Default: true,
 	}}}, nil
 }
 
@@ -64,13 +66,15 @@ type ServerSpec struct {
 }
 
 type ChannelSpec struct {
-	Name        string        `json:"name"`
-	Topic       string        `json:"topic,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Position    uint32        `json:"position,omitempty"`
-	MaxUsers    uint32        `json:"max_users,omitempty"`
-	Audio       *AudioSpec    `json:"audio,omitempty"`
-	Children    []ChannelSpec `json:"children,omitempty"`
+	Name         string        `json:"name"`
+	Default      bool          `json:"default,omitempty"`
+	Topic        string        `json:"topic,omitempty"`
+	Description  string        `json:"description,omitempty"`
+	Position     uint32        `json:"position,omitempty"`
+	MaxUsers     uint32        `json:"max_users,omitempty"`
+	MinJoinLevel uint16        `json:"min_join_level,omitempty"`
+	Audio        *AudioSpec    `json:"audio,omitempty"`
+	Children     []ChannelSpec `json:"children,omitempty"`
 }
 
 type AudioSpec struct {
@@ -156,11 +160,29 @@ func BootstrapHub(ctx context.Context, source BootstrapSource) (*voice.Hub, erro
 	if err != nil {
 		return nil, fmt.Errorf("validate server definition: %w", err)
 	}
+	var defaultID domain.ChannelID
+	marked := 0
 	for index, channel := range definition.Channels {
 		path := fmt.Sprintf("channels[%d]", index)
-		if err := createChannelTree(ctx, hub, 0, channel, path); err != nil {
+		if err := createChannelTree(ctx, hub, 0, channel, path, &defaultID, &marked); err != nil {
 			return nil, err
 		}
+	}
+	if marked == 0 {
+		// Keep definitions from before the flag usable, but only choose a
+		// channel that every registered account can actually enter.
+		for _, channel := range hub.ListChannels() {
+			if channel.MinJoinLevel == 0 && channel.MaxUsers == 0 {
+				defaultID = channel.ID
+				break
+			}
+		}
+		if defaultID == 0 {
+			return nil, errors.New("server definition needs an unrestricted default channel")
+		}
+	}
+	if err := hub.SetDefaultChannel(defaultID); err != nil {
+		return nil, fmt.Errorf("select default channel %d: %w", defaultID, err)
 	}
 	return hub, nil
 }
@@ -204,25 +226,35 @@ func createChannelTree(
 	parentID domain.ChannelID,
 	definition ChannelDefinition,
 	path string,
+	defaultID *domain.ChannelID,
+	marked *int,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	channel, err := hub.CreateChannel(domain.Channel{
-		ParentID:    parentID,
-		Name:        definition.Name,
-		Topic:       definition.Topic,
-		Description: definition.Description,
-		Position:    definition.Position,
-		MaxUsers:    definition.MaxUsers,
-		Audio:       definition.Audio,
+		ParentID:     parentID,
+		Name:         definition.Name,
+		Topic:        definition.Topic,
+		Description:  definition.Description,
+		Position:     definition.Position,
+		MaxUsers:     definition.MaxUsers,
+		MinJoinLevel: definition.MinJoinLevel,
+		Audio:        definition.Audio,
 	})
 	if err != nil {
 		return fmt.Errorf("%s (%q): %w", path, definition.Name, err)
 	}
+	if definition.Default {
+		*marked = *marked + 1
+		if *marked > 1 {
+			return errors.New("server definition has more than one default channel")
+		}
+		*defaultID = channel.ID
+	}
 	for index, child := range definition.Children {
 		childPath := fmt.Sprintf("%s.children[%d]", path, index)
-		if err := createChannelTree(ctx, hub, channel.ID, child, childPath); err != nil {
+		if err := createChannelTree(ctx, hub, channel.ID, child, childPath, defaultID, marked); err != nil {
 			return err
 		}
 	}
@@ -233,13 +265,15 @@ func definitionsFromSpecs(specs []ChannelSpec) []ChannelDefinition {
 	definitions := make([]ChannelDefinition, len(specs))
 	for index, spec := range specs {
 		definitions[index] = ChannelDefinition{
-			Name:        spec.Name,
-			Topic:       spec.Topic,
-			Description: spec.Description,
-			Position:    spec.Position,
-			MaxUsers:    spec.MaxUsers,
-			Audio:       audioProfileFromSpec(spec.Audio),
-			Children:    definitionsFromSpecs(spec.Children),
+			Name:         spec.Name,
+			Default:      spec.Default,
+			Topic:        spec.Topic,
+			Description:  spec.Description,
+			Position:     spec.Position,
+			MaxUsers:     spec.MaxUsers,
+			MinJoinLevel: spec.MinJoinLevel,
+			Audio:        audioProfileFromSpec(spec.Audio),
+			Children:     definitionsFromSpecs(spec.Children),
 		}
 	}
 	return definitions

@@ -27,3 +27,9 @@ node_modules/
 # Locally generated default media identity
 /govts-media.crt
 /govts-media.key
+
+# Local server state
+/govts.db
+/govts.db-wal
+/govts.db-shm
+/govts-voice.seed

@@ -39,8 +39,8 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 			name:    "channels",
 			command: "channels",
 			want: "channels revision=5 count=2\n" +
-				"- id=1 name=\"default\" parent=0 position=0 users=0/unlimited type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
-				"- id=2 name=\"main\" parent=0 position=10 users=1/unlimited type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n",
+				"- id=1 name=\"default\" parent=0 position=0 users=0/unlimited default=true min_join_level=0 type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
+				"- id=2 name=\"main\" parent=0 position=10 users=1/unlimited default=false min_join_level=0 type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n",
 		},
 		{
 			name:    "users",
@@ -52,7 +52,7 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 		{
 			name:    "channel by name",
 			command: "channel main",
-			want: "channel id=2 name=\"main\" parent=0 position=10 users=1/unlimited type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
+			want: "channel id=2 name=\"main\" parent=0 position=10 users=1/unlimited default=false min_join_level=0 type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
 				"  topic=\"Main topic\"\n" +
 				"  description=\"Main description\"\n" +
 				"  id=20 name=\"alice\" channel_id=2 channel=\"main\" endpoint=\"127.0.0.1:9001\" last_seen=2026-09-11T12:00:50Z idle=10s\n",
@@ -60,7 +60,7 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 		{
 			name:    "channel by ID",
 			command: "channel " + strconv.FormatUint(uint64(mainID), 10),
-			want: "channel id=2 name=\"main\" parent=0 position=10 users=1/unlimited type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
+			want: "channel id=2 name=\"main\" parent=0 position=10 users=1/unlimited default=false min_join_level=0 type=permanent audio=opus/48000Hz/1ch/20ms/24000bps/voip\n" +
 				"  topic=\"Main topic\"\n" +
 				"  description=\"Main description\"\n" +
 				"  id=20 name=\"alice\" channel_id=2 channel=\"main\" endpoint=\"127.0.0.1:9001\" last_seen=2026-09-11T12:00:50Z idle=10s\n",

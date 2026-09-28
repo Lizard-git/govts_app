@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
+	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/voice"
 )
 
@@ -19,7 +21,26 @@ func CleanupLoop(
 	cache *voice.RequestCache,
 	timeout time.Duration,
 	interval time.Duration,
+	codecs ...*protocol.SecureDatagramCodec,
 ) error {
+	return cleanupLoop(ctx, hub, cache, timeout, interval, nil, codecs...)
+}
+
+// CleanupLoopWithPolicyGate keeps timeout removals from racing with durable
+// moderation audits and console privilege changes.
+func CleanupLoopWithPolicyGate(
+	ctx context.Context,
+	hub *voice.Hub,
+	cache *voice.RequestCache,
+	timeout time.Duration,
+	interval time.Duration,
+	gate *sync.Mutex,
+	codecs ...*protocol.SecureDatagramCodec,
+) error {
+	return cleanupLoop(ctx, hub, cache, timeout, interval, gate, codecs...)
+}
+
+func cleanupLoop(ctx context.Context, hub *voice.Hub, cache *voice.RequestCache, timeout, interval time.Duration, gate *sync.Mutex, codecs ...*protocol.SecureDatagramCodec) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -29,9 +50,15 @@ func CleanupLoop(
 			return ctx.Err()
 
 		case now := <-ticker.C:
+			if gate != nil {
+				gate.Lock()
+			}
 			removed := hub.RemoveInactive(now, timeout)
 
 			for _, session := range removed {
+				if len(codecs) > 0 && codecs[0] != nil {
+					codecs[0].Remove(session.ID)
+				}
 				cache.RemoveSession(session.ID)
 				log.Printf(
 					"session timed out: id=%d name=%q",
@@ -40,6 +67,17 @@ func CleanupLoop(
 				)
 			}
 			cache.RemoveExpired()
+			if len(codecs) > 0 && codecs[0] != nil {
+				for _, id := range codecs[0].SessionIDs() {
+					if _, ok := hub.Get(id); !ok {
+						codecs[0].Remove(id)
+						cache.RemoveSession(id)
+					}
+				}
+			}
+			if gate != nil {
+				gate.Unlock()
+			}
 		}
 	}
 }

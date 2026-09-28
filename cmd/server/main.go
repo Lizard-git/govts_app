@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"uniclog.io/govts/internal/appversion"
+	"uniclog.io/govts/internal/identity"
 	"uniclog.io/govts/internal/media"
+	"uniclog.io/govts/internal/persist"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/server"
 	"uniclog.io/govts/internal/transport/udp"
@@ -23,24 +26,26 @@ import (
 func main() {
 	showVersion := flag.Bool("version", false, "print server version and exit")
 	configPath := flag.String("config", "", "path to server JSON config")
+	databasePath := flag.String("db", "govts.db", "path to persistent SQLite database")
 	port := flag.Int("port", 9000, "UDP listen port (1..65535)")
 	mediaPort := flag.Int("media-port", -1, "HTTPS media signaling port; -1 uses voice port + 2, 0 disables screen sharing")
 	mediaMinPort := flag.Int("media-min-port", 20000, "first UDP port used by WebRTC")
 	mediaMaxPort := flag.Int("media-max-port", 20100, "last UDP port used by WebRTC")
 	mediaAdvertisedIP := flag.String("media-advertised-ip", "", "public IP advertised by WebRTC; empty uses local interfaces")
 	mediaIdentity := flag.String("media-identity", "govts-media", "path prefix for generated media TLS certificate and key")
+	voiceIdentity := flag.String("voice-identity", "govts-voice.seed", "path to persistent server signing seed")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(serverVersion())
 		return
 	}
 
-	if err := run(*configPath, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity); err != nil {
+	if err := run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string) error {
+func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string) error {
 	currentVersion, err := appversion.Parse(serverVersion())
 	if err != nil {
 		return fmt.Errorf("invalid embedded server version: %w", err)
@@ -65,7 +70,12 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 		source = server.JSONBootstrapSource{Path: configPath}
 		configSource = configPath
 	}
-	hub, err := server.BootstrapHub(ctx, source)
+	store, err := persist.Open(databasePath)
+	if err != nil {
+		return fmt.Errorf("open server database: %w", err)
+	}
+	defer store.Close()
+	hub, err := server.BootstrapPersistentHub(ctx, store, source)
 	if err != nil {
 		return fmt.Errorf("bootstrap server channels: %w", err)
 	}
@@ -74,6 +84,27 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 		return errors.New("invalid media signaling port")
 	}
 	hub.SetMediaPort(uint16(mediaPort))
+	signer, err := identity.LoadOrCreate(voiceIdentityPath)
+	if err != nil {
+		return fmt.Errorf("load voice server identity: %w", err)
+	}
+	secureCodec := protocol.NewSecureDatagramCodec(true)
+	authenticator, err := voice.NewAuthenticator(signer, store, secureCodec)
+	if err != nil {
+		return err
+	}
+	policyGate := &sync.Mutex{}
+	authenticator.SetPolicyGate(policyGate)
+	rawConn, err := udp.ListenUDP(port)
+	if err != nil {
+		return fmt.Errorf("listen UDP: %w", err)
+	}
+	conn, err := udp.NewServerPacketConn(rawConn, secureCodec)
+	if err != nil {
+		_ = rawConn.Close()
+		return fmt.Errorf("configure UDP packet connection: %w", err)
+	}
+	defer conn.Close()
 	var mediaServer *http.Server
 	var mediaManager *media.Manager
 	mediaErrCh := make(chan error, 1)
@@ -89,7 +120,7 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 		if err != nil {
 			return fmt.Errorf("create media manager: %w", err)
 		}
-		handler, handlerErr := media.NewHTTPHandler(hub, mediaManager)
+		handler, handlerErr := media.NewHTTPHandler(hub, mediaManager, policyGate)
 		if handlerErr != nil {
 			return handlerErr
 		}
@@ -103,17 +134,6 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 		close(mediaErrCh)
 	}
 
-	rawConn, err := udp.ListenUDP(port)
-	if err != nil {
-		return fmt.Errorf("listen UDP: %w", err)
-	}
-	conn, err := udp.NewServerPacketConn(rawConn, protocol.PlainDatagramCodec{})
-	if err != nil {
-		_ = rawConn.Close()
-		return fmt.Errorf("configure UDP packet connection: %w", err)
-	}
-	defer conn.Close()
-
 	cache := voice.NewRequestCache()
 	cleanupErrCh := make(chan error, 1)
 	dispatchErrCh := make(chan error, 1)
@@ -124,18 +144,31 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 	}()
 
 	go func() {
-		cleanupErrCh <- server.CleanupLoop(
+		cleanupErrCh <- server.CleanupLoopWithPolicyGate(
 			ctx,
 			hub,
 			cache,
 			server.SessionTimeout,
 			server.CleanupInterval,
+			policyGate,
+			secureCodec,
 		)
 	}()
 	console := server.NewConsole(hub, os.Stdin, os.Stdout, server.ConsoleInfo{
 		StartedAt:     startedAt,
 		ListenAddress: rawConn.LocalAddr().String(),
 		ConfigSource:  configSource,
+	}, store)
+	console.SetPolicyGate(policyGate)
+	console.SetPrivilegeNotifier(func(userID int64, level uint16, permissions uint8) {
+		payload := []byte{byte(level >> 8), byte(level), permissions}
+		for _, session := range hub.Inspect().Sessions {
+			if session.UserID == userID {
+				if err := voice.SendToSession(conn, session, protocol.VoicePacket{Type: protocol.PacketAccountPrivileges, SessionID: session.ID, Payload: payload}); err != nil {
+					log.Printf("cannot notify account %d: %v", userID, err)
+				}
+			}
+		}
 	})
 	log.Println("local server console ready; type help")
 	go func() {
@@ -151,7 +184,7 @@ func run(configPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, med
 		configSource,
 		len(hub.ListChannels()),
 	)
-	serveErr := voice.ServeUDP(ctx, conn, hub, cache)
+	serveErr := voice.ServeUDP(ctx, conn, hub, cache, authenticator)
 	cancel()
 	if mediaServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)

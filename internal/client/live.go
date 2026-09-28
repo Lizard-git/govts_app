@@ -18,6 +18,8 @@ type ClientViewState struct {
 	Participants       []domain.Participant
 	ScreenStreams      []domain.ScreenStream
 	SessionID          uint64
+	JoinLevel          uint16
+	Permissions        uint8
 	ChannelID          domain.ChannelID
 	SnapshotFresh      bool
 	Muted, Deafened    bool
@@ -102,6 +104,7 @@ func (s *State) SnapshotView() ClientViewState {
 	vadSettings := s.Audio.VADSnapshot()
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
 		Channels: snapshot.Channels, Participants: snapshot.Participants, ScreenStreams: snapshot.ScreenStreams, SessionID: s.sessionID, ChannelID: s.channelID,
+		JoinLevel: s.joinLevel, Permissions: s.permissions,
 		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
 		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool)}

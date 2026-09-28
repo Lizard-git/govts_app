@@ -1,6 +1,8 @@
 package wailsui
 
 import (
+	"bytes"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -43,6 +45,24 @@ func TestViewDTOUsesNonNilArrays(t *testing.T) {
 	dto := viewDTO(voiceclient.ClientViewState{}, "")
 	if dto.Channels == nil || dto.Participants == nil {
 		t.Fatalf("nil arrays in DTO: %#v", dto)
+	}
+}
+
+func TestViewDTOExposesOnlyChannelAccessNotLevels(t *testing.T) {
+	view := voiceclient.ClientViewState{JoinLevel: 24, Channels: []domain.Channel{
+		{ID: 1, Name: "default", Audio: domain.DefaultAudioProfile()},
+		{ID: 2, Name: "private", MinJoinLevel: 25, Audio: domain.DefaultAudioProfile()},
+	}}
+	dto := viewDTO(view, "")
+	if !dto.Channels[0].CanJoin || dto.Channels[1].CanJoin {
+		t.Fatalf("channel access flags = %+v", dto.Channels)
+	}
+	encoded, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("joinLevel")) || bytes.Contains(encoded, []byte("minJoinLevel")) {
+		t.Fatalf("UI response leaked numeric levels: %s", encoded)
 	}
 }
 

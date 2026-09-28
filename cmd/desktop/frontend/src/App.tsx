@@ -11,6 +11,7 @@ import {ParticipantRow} from "./features/participants/ParticipantRow";
 const emptyView: ClientViewDTO = {
     connectionStatus: "disconnected",
     server: {name: ""}, revision: "0", sessionId: "0", channelId: "0", snapshotFresh: false,
+    canKick: false, canBan: false, canDrag: false,
     channels: [], participants: [], screenStreams: [],
     audio: {
         muted: false,
@@ -176,6 +177,7 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                     <div><p className="eyebrow">ПРОСТРАНСТВА</p><h2>Каналы</h2></div>
                     <span className="count-badge">{participants.length}</span></div>
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants}
+                                                             canKick={view.canKick} canBan={view.canBan} canDrag={view.canDrag}
                                                              selectedID={selectedID} currentID={view.channelId}
                                                              onError={onError} onSelect={setSelectedID} onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
@@ -200,9 +202,12 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
     </section>;
 }
 
-function ChannelTree({channels, participants, selectedID, currentID, onSelect, onJoin, onError}: {
+function ChannelTree({channels, participants, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onError}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
+    canKick: boolean;
+    canBan: boolean;
+    canDrag: boolean;
     selectedID: string;
     currentID: string;
     onSelect: (id: string) => void;
@@ -218,10 +223,12 @@ function ChannelTree({channels, participants, selectedID, currentID, onSelect, o
             <button
                 className={`channel-row ${selectedID === channel.id ? "selected" : ""} ${currentID === channel.id ? "current" : ""}`}
                 style={{paddingLeft: 14 + depth * 18}} onClick={() => onSelect(channel.id)}
+                title={!channel.canJoin ? "Нет доступа к каналу" : undefined}
                 onDoubleClick={() => onJoin(channel.id)}><span className="channel-icon" aria-hidden="true">⌁</span><span
                 className="channel-name">{channel.name}</span><span className="channel-count">{members.length}</span>
             </button>
             {members.map((participant) => <ParticipantRow key={participant.sessionId} participant={participant}
+                                                          channels={channels} canKick={canKick} canBan={canBan} canDrag={canDrag}
                                                           depth={depth} onError={onError}/>)}{renderLevel(channel.id, depth + 1)}</div>;
     });
     return <div className="channel-tree">{channels.length ? renderLevel("0", 0) :

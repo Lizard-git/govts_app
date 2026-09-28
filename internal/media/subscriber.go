@@ -7,12 +7,16 @@ func (s *subscriber) close() {
 	})
 }
 
-func runSubscriber(s *subscriber) {
+func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 	for {
 		select {
 		case <-s.closed:
 			return
 		case packet := <-s.packets:
+			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
+				m.Unsubscribe(s.sessionID, p.id, s.id)
+				return
+			}
 			if err := s.track.WriteRTP(packet); err != nil {
 				s.close()
 				return

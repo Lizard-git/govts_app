@@ -54,7 +54,7 @@ func TestSnapshotPayloadRoundTrip(t *testing.T) {
 	channel := domain.Channel{ID: 2, ParentID: 1, Name: "music", Topic: "topic", Description: "description", Position: 4, MaxUsers: 8, Type: domain.ChannelTypePermanent, Audio: domain.DefaultAudioProfile()}
 	participant := domain.Participant{SessionID: 11, DisplayName: "alice", ChannelID: 2}
 	responses := []SnapshotResponse{
-		{Kind: SnapshotKindMetadata, Status: SnapshotStatusOK, Revision: 9, ServerInfo: domain.ServerInfo{Name: "Server"}, ChannelCount: 2, ParticipantCount: 1},
+		{Kind: SnapshotKindMetadata, Status: SnapshotStatusOK, Revision: 9, ServerInfo: domain.ServerInfo{Name: "Server", DefaultChannelID: 2}, ChannelCount: 2, ParticipantCount: 1},
 		{Kind: SnapshotKindChannels, Status: SnapshotStatusOK, Revision: 9, Channels: []domain.Channel{channel}},
 		{Kind: SnapshotKindParticipants, Status: SnapshotStatusOK, Revision: 9, Participants: []domain.Participant{participant}},
 		{Kind: SnapshotKindChannels, Status: SnapshotStatusRevisionChanged, Revision: 10},
@@ -67,6 +67,9 @@ func TestSnapshotPayloadRoundTrip(t *testing.T) {
 		got, err := DecodeSnapshotResponse(payload)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if want.Kind == SnapshotKindMetadata && got.ServerInfo.DefaultChannelID != want.ServerInfo.DefaultChannelID {
+			t.Fatalf("default channel ID = %d, want %d", got.ServerInfo.DefaultChannelID, want.ServerInfo.DefaultChannelID)
 		}
 		encodedAgain, err := EncodeSnapshotResponse(got)
 		if err != nil {

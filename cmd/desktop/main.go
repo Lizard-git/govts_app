@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"uniclog.io/govts/internal/clientapp"
-	wailsui "uniclog.io/govts/internal/ui/wails"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"uniclog.io/govts/internal/clientapp"
+	wailsui "uniclog.io/govts/internal/ui/wails"
 )
 
 func init() {
@@ -28,7 +28,7 @@ func main() {
 	}
 	webviewDataPath := filepath.Join(configDir, "Govts", "WebView2")
 
-	client := clientapp.New(clientapp.Options{Logger: log.Default()})
+	client := clientapp.New(clientapp.Options{Logger: log.Default(), Secure: true})
 	service := wailsui.NewService(client)
 	if err := wailsui.EnableDefaultSettings(service); err != nil {
 		log.Printf("load settings: %v", err)

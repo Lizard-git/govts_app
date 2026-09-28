@@ -4,7 +4,7 @@ import { buildChannelGroups, mergeEventTail } from "./model";
 
 const audio = { codec: "opus", sampleRate: 48000, channels: 1, frameDurationMs: 20, bitrate: 24000, application: "voip" };
 const channel = (id: string, parentId: string, position: number): ChannelDTO => ({
-  id, parentId, position, name: id, topic: "", description: "", maxUsers: 0, audio,
+  id, parentId, position, name: id, topic: "", description: "", maxUsers: 0, canJoin: true, audio,
 });
 
 describe("buildChannelGroups", () => {

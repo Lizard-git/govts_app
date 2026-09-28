@@ -24,6 +24,8 @@ type State struct {
 	measurements       connectionMeasurements
 
 	sessionID        uint64
+	joinLevel        uint16
+	permissions      uint8
 	name             string
 	channelID        domain.ChannelID
 	snapshot         domain.ServerSnapshot
@@ -124,6 +126,8 @@ func (s *State) PrepareConnection() error {
 	s.syncedGeneration = 0
 	s.observedRevision = 0
 	s.sessionID = 0
+	s.joinLevel = 0
+	s.permissions = 0
 	s.channelID = 0
 	s.snapshot = domain.ServerSnapshot{}
 	s.status = ConnectionConnecting
@@ -147,6 +151,8 @@ func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.measurements.reset()
 	s.channelID = 0
 	s.sessionID = 0
+	s.joinLevel = 0
+	s.permissions = 0
 	s.observedRevision = 0
 drainNotices:
 	for {
@@ -184,6 +190,8 @@ func (s *State) StartSession(sessionID uint64) (uint64, error) {
 	}
 	s.generation++
 	s.sessionID = sessionID
+	s.joinLevel = 0
+	s.permissions = 0
 	s.channelID = 0
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
@@ -193,6 +201,14 @@ func (s *State) StartSession(sessionID uint64) (uint64, error) {
 	clear(s.speaking)
 	s.notifyLocked()
 	return s.generation, nil
+}
+
+func (s *State) SetAccountPrivileges(level uint16, permissions uint8) {
+	s.mu.Lock()
+	s.joinLevel = level
+	s.permissions = permissions
+	s.notifyLocked()
+	s.mu.Unlock()
 }
 
 func (s *State) SetChannelIDForGeneration(generation uint64, channelID domain.ChannelID) bool {

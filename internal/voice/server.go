@@ -48,6 +48,7 @@ func ServeUDP(
 	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
+	authenticators ...*Authenticator,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -73,7 +74,23 @@ func ServeUDP(
 			return fmt.Errorf("read UDP packet: %w", err)
 		}
 
-		if err := HandlePacket(conn, hub, cache, packet, addr); err != nil {
+		var handleErr error
+		if len(authenticators) > 0 && authenticators[0] != nil && authenticators[0].policyGate != nil {
+			authenticators[0].policyGate.Lock()
+		}
+		if len(authenticators) > 0 && authenticators[0] != nil && packet.Type == protocol.PacketHello {
+			handleErr = conn.WritePacket(0, addr, protocol.NewErrorPacket(0, packet.RequestID, "client upgrade required: secure authentication"))
+		} else if len(authenticators) > 0 && authenticators[0] != nil && (packet.Type == protocol.PacketAuthInit || packet.Type == protocol.PacketAuthFinish) {
+			handleErr = authenticators[0].Handle(conn, hub, cache, packet, addr)
+		} else if len(authenticators) > 0 && authenticators[0] != nil && (packet.Type == protocol.PacketKick || packet.Type == protocol.PacketBan || packet.Type == protocol.PacketDrag) {
+			handleErr = authenticators[0].HandleModeration(conn, hub, cache, packet, addr)
+		} else {
+			handleErr = HandlePacket(conn, hub, cache, packet, addr)
+		}
+		if len(authenticators) > 0 && authenticators[0] != nil && authenticators[0].policyGate != nil {
+			authenticators[0].policyGate.Unlock()
+		}
+		if err := handleErr; err != nil {
 			log.Printf("cannot handle packet: %v", err)
 			continue
 		}

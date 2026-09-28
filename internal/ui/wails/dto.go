@@ -31,6 +31,7 @@ type ChannelDTO struct {
 	Description string          `json:"description"`
 	Position    uint32          `json:"position"`
 	MaxUsers    uint32          `json:"maxUsers"`
+	CanJoin     bool            `json:"canJoin"`
 	Audio       AudioProfileDTO `json:"audio"`
 }
 
@@ -101,6 +102,9 @@ type ClientViewDTO struct {
 	Revision         string            `json:"revision"`
 	SessionID        string            `json:"sessionId"`
 	ChannelID        string            `json:"channelId"`
+	CanKick          bool              `json:"canKick"`
+	CanBan           bool              `json:"canBan"`
+	CanDrag          bool              `json:"canDrag"`
 	SnapshotFresh    bool              `json:"snapshotFresh"`
 	Channels         []ChannelDTO      `json:"channels"`
 	Participants     []ParticipantDTO  `json:"participants"`
@@ -127,6 +131,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 			Description: channel.Description,
 			Position:    channel.Position,
 			MaxUsers:    channel.MaxUsers,
+			CanJoin:     view.JoinLevel >= channel.MinJoinLevel,
 			Audio:       audioProfileDTO(channel.Audio),
 		})
 	}
@@ -151,6 +156,9 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		Revision:         formatUint64(uint64(view.Revision)),
 		SessionID:        formatUint64(view.SessionID),
 		ChannelID:        formatUint64(uint64(view.ChannelID)),
+		CanKick:          view.Permissions&1 != 0,
+		CanBan:           view.Permissions&2 != 0,
+		CanDrag:          view.Permissions&4 != 0,
 		SnapshotFresh:    view.SnapshotFresh,
 		Channels:         channels,
 		Participants:     participants,

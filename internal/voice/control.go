@@ -203,6 +203,11 @@ func HandleJoinChannelPacket(
 	}
 	revision, err := hub.JoinChannelWithRevision(packet.SessionID, channelID)
 	if err != nil {
+		userID := int64(0)
+		if session, ok := hub.Get(packet.SessionID); ok {
+			userID = session.UserID
+		}
+		log.Printf("channel join rejected: user_id=%d session_id=%d channel_id=%d reason=%s", userID, packet.SessionID, channelID, joinRejectionReason(err))
 		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("cannot join channel: %v", err))
 	}
 	session, ok := hub.Get(packet.SessionID)
@@ -221,6 +226,19 @@ func HandleJoinChannelPacket(
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	return SendToSession(conn, session, ack)
+}
+
+func joinRejectionReason(err error) string {
+	switch {
+	case errors.Is(err, ErrChannelForbidden):
+		return "permission_denied"
+	case errors.Is(err, ErrChannelFull):
+		return "channel_full"
+	case errors.Is(err, ErrChannelNotFound):
+		return "channel_not_found"
+	default:
+		return "join_failed"
+	}
 }
 
 func HandleMediaCredentialPacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {

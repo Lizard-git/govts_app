@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -40,6 +41,11 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketAccountPrivileges:
+				if packet.RequestID != 0 || len(packet.Payload) != 3 {
+					continue
+				}
+				state.SetAccountPrivileges(binary.BigEndian.Uint16(packet.Payload[:2]), packet.Payload[2])
 			case protocol.PacketStateEvent:
 				if packet.RequestID != 0 {
 					continue
@@ -50,7 +56,7 @@ func ControlLoop(
 					continue
 				}
 				state.ApplyEvent(generation, event)
-			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck,
+			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck, protocol.PacketModerationAck,
 				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid, protocol.PacketMediaCredentialAck:
 				response := ControlResponse{
 					Type:      packet.Type,

@@ -2,12 +2,16 @@ package clientapp
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"uniclog.io/govts/internal/audio/voicegate"
 	voiceclient "uniclog.io/govts/internal/client"
 	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/identity"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
 )
@@ -43,15 +48,17 @@ type audioDeviceChange struct {
 }
 
 type Options struct {
-	Commands <-chan voiceclient.Command
-	Output   io.Writer
-	Logger   *log.Logger
+	Commands     <-chan voiceclient.Command
+	Output       io.Writer
+	Logger       *log.Logger
+	Secure       bool
+	IdentityPath string
+	PinsPath     string
 }
 
 type ConnectOptions struct {
 	Name             string
 	Server           string
-	InitialChannel   string
 	MinServerVersion string
 }
 
@@ -63,6 +70,9 @@ type App struct {
 	commands            <-chan voiceclient.Command
 	output              io.Writer
 	logger              *log.Logger
+	secure              bool
+	identityPath        string
+	pinsPath            string
 	listAudioDevices    func() (audio.DeviceList, error)
 	audioDeviceChangeMu sync.Mutex
 	audioDeviceChanges  chan audioDeviceChange
@@ -76,7 +86,6 @@ type App struct {
 	runDone        chan struct{}
 	currentConn    *udp.ClientPacketConn
 	serverEndpoint netip.AddrPort
-	preference     *channelPreference
 	lastError      string
 }
 
@@ -98,6 +107,9 @@ func New(options Options) *App {
 		commands:           options.Commands,
 		output:             options.Output,
 		logger:             options.Logger,
+		secure:             options.Secure,
+		identityPath:       options.IdentityPath,
+		pinsPath:           options.PinsPath,
 		listAudioDevices:   audio.ListDevices,
 		audioDeviceChanges: make(chan audioDeviceChange),
 	}
@@ -108,7 +120,11 @@ func (a *App) Connect(options ConnectOptions) error {
 		return errors.New("display name is required")
 	}
 	if options.MinServerVersion == "" {
-		options.MinServerVersion = voiceclient.MinimumServerVersion
+		if a.secure {
+			options.MinServerVersion = "0.2.1"
+		} else {
+			options.MinServerVersion = voiceclient.MinimumServerVersion
+		}
 	}
 	if _, err := appversion.Parse(options.MinServerVersion); err != nil {
 		return fmt.Errorf("invalid minimum server version: %w", err)
@@ -135,7 +151,6 @@ func (a *App) Connect(options ConnectOptions) error {
 	a.runCancel = cancel
 	a.runDone = done
 	a.lastError = ""
-	a.preference = newChannelPreference(options.InitialChannel)
 	a.serverEndpoint = endpoint
 	a.events.clear()
 	a.events.append("connection", "Подключение к "+endpoint.String(), 0)
@@ -164,7 +179,32 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 }
 
 func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string) (runErr error) {
-	conn, err := openClientPacketConn(endpoint)
+	var private ed25519.PrivateKey
+	if a.secure {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return err
+		}
+		seedPath := a.identityPath
+		if seedPath == "" {
+			seedPath = filepath.Join(configDir, "Govts", "client.seed")
+		}
+		private, err = identity.LoadOrCreate(seedPath)
+		if err != nil {
+			return fmt.Errorf("load client identity: %w", err)
+		}
+		if a.pinsPath == "" {
+			a.pinsPath = filepath.Join(configDir, "Govts", "voice-pins.json")
+		}
+	}
+	open := func() (*udp.ClientPacketConn, *protocol.SecureDatagramCodec, error) {
+		if a.secure {
+			return openSecureClientPacketConn(endpoint)
+		}
+		conn, err := openClientPacketConn(endpoint)
+		return conn, nil, err
+	}
+	conn, secureCodec, err := open()
 	if err != nil {
 		return err
 	}
@@ -185,7 +225,16 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		} else {
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
 		}
-		sessionID, err := voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
+		var sessionID uint64
+		var joinLevel uint16
+		var permissions uint8
+		if a.secure {
+			var result voiceclient.SecureHandshakeResult
+			result, err = voiceclient.PerformSecureHandshakeAttempts(ctx, conn, secureCodec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
+			sessionID, joinLevel, permissions = result.SessionID, result.JoinLevel, result.Permissions
+		} else {
+			sessionID, err = voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -194,11 +243,16 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			if errors.As(err, &versionError) {
 				return err
 			}
+			var rejected *voiceclient.AuthenticationRejectedError
+			if errors.As(err, &rejected) {
+				return err
+			}
 			if shouldReplaceClientSocket(err) {
-				replacement, replaceErr := openClientPacketConn(endpoint)
+				replacement, replacementCodec, replaceErr := open()
 				if replaceErr == nil {
 					_ = conn.Close()
 					conn = replacement
+					secureCodec = replacementCodec
 				}
 			}
 			delay := backoff.Next()
@@ -214,12 +268,13 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if _, err := a.state.StartSession(sessionID); err != nil {
 			return fmt.Errorf("start client session: %w", err)
 		}
+		a.state.SetAccountPrivileges(joinLevel, permissions)
 		a.mu.Lock()
 		a.currentConn = conn
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
 		noticeOutput := io.MultiWriter(a.output, eventWriter{log: a.events})
-		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, a.preference, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
+		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
 			backoff.Reset()
 			if everConnected {
 				a.events.append("connection", "Соединение восстановлено", uint64(a.state.SnapshotView().Revision))
@@ -237,6 +292,9 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.state.InvalidateSession(voiceclient.ConnectionReconnecting)
 		if err := conn.ClearSession(sessionID); err != nil {
 			return fmt.Errorf("clear UDP session: %w", err)
+		}
+		if secureCodec != nil {
+			secureCodec.Remove(sessionID)
 		}
 		if !errors.Is(sessionErr, voiceclient.ErrConnectionLost) {
 			return sessionErr
@@ -416,21 +474,40 @@ func (a *App) JoinChannel(ctx context.Context, channelID domain.ChannelID) error
 	}
 	a.mu.Lock()
 	conn := a.currentConn
-	preference := a.preference
 	a.mu.Unlock()
 	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
 		return ErrNotConnected
 	}
-	snapshot := a.state.Snapshot()
-	locator, err := voiceclient.BuildChannelLocator(snapshot, channelID)
-	if err != nil {
-		return err
-	}
 	if err := voiceclient.JoinChannel(ctx, conn, a.state, channelID); err != nil {
-		return err
+		channelName := fmt.Sprintf("%d", channelID)
+		for _, channel := range a.state.Snapshot().Channels {
+			if channel.ID == channelID {
+				channelName = channel.Name
+				break
+			}
+		}
+		joinErr := channelJoinError(channelName, err)
+		a.events.append("error", joinErr.Error(), 0)
+		return joinErr
 	}
-	preference.Set(locator)
 	return nil
+}
+
+func channelJoinError(channelName string, err error) error {
+	if strings.Contains(err.Error(), "channel join level is too low") {
+		return fmt.Errorf("нет доступа к каналу %q", channelName)
+	}
+	return fmt.Errorf("не удалось войти в канал %q: %w", channelName, err)
+}
+
+func (a *App) Moderate(ctx context.Context, action uint8, targetID uint64, channelID domain.ChannelID) error {
+	a.mu.Lock()
+	conn := a.currentConn
+	a.mu.Unlock()
+	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
+		return ErrNotConnected
+	}
+	return voiceclient.Moderate(ctx, conn, a.state, action, targetID, channelID)
 }
 
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }
@@ -522,4 +599,18 @@ func openClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, error
 		return nil, fmt.Errorf("configure UDP packet connection: %w", err)
 	}
 	return conn, nil
+}
+
+func openSecureClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, *protocol.SecureDatagramCodec, error) {
+	rawConn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(endpoint))
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect UDP: %w", err)
+	}
+	codec := protocol.NewSecureDatagramCodec(false)
+	conn, err := udp.NewClientPacketConn(rawConn, codec)
+	if err != nil {
+		_ = rawConn.Close()
+		return nil, nil, err
+	}
+	return conn, codec, nil
 }

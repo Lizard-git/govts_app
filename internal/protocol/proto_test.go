@@ -152,8 +152,8 @@ func TestEncodeDecodeMaximumPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != MaxWireDatagramSize {
-		t.Fatalf("encoded size = %d, want %d", len(data), MaxWireDatagramSize)
+	if len(data) != HeaderSize+MaxPayloadSize {
+		t.Fatalf("encoded size = %d, want %d", len(data), HeaderSize+MaxPayloadSize)
 	}
 	if _, err := DecodePacket(data); err != nil {
 		t.Fatal(err)

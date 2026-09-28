@@ -1,0 +1,36 @@
+package client
+
+import (
+	"context"
+	"encoding/binary"
+	"errors"
+	"time"
+
+	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/transport/udp"
+)
+
+func Moderate(ctx context.Context, conn *udp.ClientPacketConn, state *State, action uint8, targetID uint64, channelID domain.ChannelID) error {
+	if targetID == 0 || targetID == state.SessionID() {
+		return errors.New("moderation requires another participant")
+	}
+	if action != protocol.PacketKick && action != protocol.PacketBan && action != protocol.PacketDrag {
+		return errors.New("unsupported moderation action")
+	}
+	payload := binary.BigEndian.AppendUint64(nil, targetID)
+	if action == protocol.PacketDrag {
+		if channelID == 0 {
+			return errors.New("drag requires a channel")
+		}
+		payload = binary.BigEndian.AppendUint64(payload, uint64(channelID))
+	}
+	response, err := DoRequest(ctx, conn, state, protocol.VoicePacket{Type: action, Payload: payload}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if response.Type != protocol.PacketModerationAck {
+		return errors.New("unexpected moderation response")
+	}
+	return nil
+}

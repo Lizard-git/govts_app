@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4"
 	"uniclog.io/govts/internal/domain"
 	"uniclog.io/govts/internal/mediasignal"
 	"uniclog.io/govts/internal/voice"
-	"github.com/pion/rtp"
-	"github.com/pion/webrtc/v4"
 )
 
 var (
@@ -200,7 +200,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
 	go drainRTCP(p, s, sender)
-	go runSubscriber(s)
+	go m.runSubscriber(p, s)
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("screen subscriber state: stream=%d session=%d subscriber=%q state=%s", streamID, sessionID, subscriberID, state)
 		if state == webrtc.PeerConnectionStateConnected {

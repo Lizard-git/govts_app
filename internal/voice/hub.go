@@ -22,6 +22,7 @@ var (
 	ErrSessionNotInChannel   = errors.New("session has not joined a channel")
 	ErrChannelNotFound       = errors.New("channel not found")
 	ErrChannelFull           = errors.New("channel is full")
+	ErrChannelForbidden      = errors.New("channel join level is too low")
 	ErrChannelNameTaken      = errors.New("channel name is already in use")
 	ErrInvalidChannel        = errors.New("invalid channel")
 	ErrInvalidServerInfo     = errors.New("invalid server info")
@@ -119,10 +120,23 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 			Audio: domain.DefaultAudioProfile(),
 		}
 		hub.channels[DefaultChannelID] = &defaultChannel
+		hub.serverInfo.DefaultChannelID = DefaultChannelID
 		hub.nextChannelID = DefaultChannelID + 1
 		hub.revision = 1
 	}
 	return hub, nil
+}
+
+// SetDefaultChannel selects the unrestricted channel used for every new connection.
+func (h *Hub) SetDefaultChannel(id domain.ChannelID) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	channel := h.channels[id]
+	if channel == nil || channel.MinJoinLevel != 0 || channel.MaxUsers != 0 {
+		return fmt.Errorf("%w: default channel must exist, have join level 0 and no user limit", ErrInvalidChannel)
+	}
+	h.serverInfo.DefaultChannelID = id
+	return nil
 }
 
 func (h *Hub) SetServerVersion(version appversion.Number) {
@@ -258,11 +272,14 @@ func (h *Hub) joinChannelLocked(id uint64, channelID domain.ChannelID) error {
 	if session.ChannelID == channelID {
 		return nil
 	}
-	h.stopScreenShareByOwnerLocked(id)
+	if session.JoinLevel < channel.MinJoinLevel {
+		return ErrChannelForbidden
+	}
 	if channel.MaxUsers > 0 && h.channelMemberCountLocked(channelID) >= channel.MaxUsers {
 		return fmt.Errorf("%w: %q", ErrChannelFull, channel.Name)
 	}
 
+	h.stopScreenShareByOwnerLocked(id)
 	session.ChannelID = channelID
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantMoved, SessionID: id, ChannelID: channelID})
@@ -352,6 +369,87 @@ func (h *Hub) CreateChannel(channel domain.Channel) (domain.Channel, error) {
 	h.channels[id] = cloneChannel(channel)
 	h.revision++
 	return channel, nil
+}
+
+// RestoreChannel inserts a persisted channel with its original ID at startup.
+// Parents must be restored before children.
+func (h *Hub) RestoreChannel(channel domain.Channel) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if channel.ID == 0 || channel.Type != domain.ChannelTypePermanent {
+		return ErrInvalidChannel
+	}
+	if _, exists := h.channels[channel.ID]; exists {
+		return ErrInvalidChannel
+	}
+	if err := validateChannel(channel); err != nil {
+		return err
+	}
+	if err := h.validateChannelParentLocked(channel.ParentID); err != nil {
+		return err
+	}
+	if h.channelNameExistsLocked(channel.ParentID, channel.Name) {
+		return ErrChannelNameTaken
+	}
+	h.channels[channel.ID] = cloneChannel(channel)
+	if channel.ID >= h.nextChannelID {
+		h.nextChannelID = channel.ID + 1
+	}
+	h.revision++
+	return nil
+}
+
+// ApplyJoinLevel changes the effective level of every active session for an
+// account. Sessions that no longer qualify for their channel are disconnected.
+func (h *Hub) ApplyJoinLevel(userID int64, level uint16) []uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var removed []uint64
+	for id, session := range h.sessions {
+		if session.UserID != userID {
+			continue
+		}
+		session.JoinLevel = level
+		if channel := h.channels[session.ChannelID]; channel != nil && level < channel.MinJoinLevel {
+			delete(h.sessions, id)
+			h.stopScreenShareByOwnerLocked(id)
+			h.revision++
+			h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
+			removed = append(removed, id)
+		}
+	}
+	sort.Slice(removed, func(i, j int) bool { return removed[i] < removed[j] })
+	return removed
+}
+
+func (h *Hub) SetChannelJoinLevel(channelID domain.ChannelID, level uint16) ([]uint64, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	channel := h.channels[channelID]
+	if channel == nil {
+		return nil, ErrChannelNotFound
+	}
+	if channelID == h.serverInfo.DefaultChannelID && level != 0 {
+		return nil, fmt.Errorf("%w: default channel must have join level 0", ErrInvalidChannel)
+	}
+	if channel.MinJoinLevel == level {
+		return nil, nil
+	}
+	channel.MinJoinLevel = level
+	h.revision++
+	var removed []uint64
+	for id, session := range h.sessions {
+		if session.ChannelID != channelID || session.JoinLevel >= level {
+			continue
+		}
+		delete(h.sessions, id)
+		h.stopScreenShareByOwnerLocked(id)
+		h.revision++
+		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
+		removed = append(removed, id)
+	}
+	sort.Slice(removed, func(i, j int) bool { return removed[i] < removed[j] })
+	return removed, nil
 }
 
 func (h *Hub) GetChannel(id domain.ChannelID) (domain.Channel, bool) {
@@ -487,6 +585,40 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
 	session, _, err := h.CreateSessionReplacingEndpoint(name, addr)
 	return session, err
+}
+
+// CreateAuthenticatedSession binds a fresh transport session to a verified
+// account. A prior session at the same endpoint is removed, regardless of its
+// display name or account, so endpoint reuse cannot inherit another identity.
+func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID int64, level uint16, permissions uint8, owner bool) (Session, []uint64, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := validateParticipantName(name); err != nil {
+		return Session{}, nil, err
+	}
+	if addr == nil || userID <= 0 {
+		return Session{}, nil, errors.New("authenticated session requires an account and endpoint")
+	}
+	var replaced []uint64
+	for id, old := range h.sessions {
+		if !sameUDPAddr(old.Addr, addr) {
+			continue
+		}
+		delete(h.sessions, id)
+		h.stopScreenShareByOwnerLocked(id)
+		h.revision++
+		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
+		replaced = append(replaced, id)
+	}
+	id, err := h.availableSessionID()
+	if err != nil {
+		return Session{}, replaced, err
+	}
+	session := &Session{ID: id, UserID: userID, JoinLevel: level, Permissions: permissions, Owner: owner, Name: name, Addr: cloneUDPAddr(addr), LastSeen: time.Now()}
+	h.sessions[id] = session
+	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, DisplayName: name}})
+	return *cloneSession(session), replaced, nil
 }
 
 func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Session, []uint64, error) {

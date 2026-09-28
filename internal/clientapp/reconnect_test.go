@@ -9,6 +9,7 @@ import (
 	"time"
 
 	voiceclient "uniclog.io/govts/internal/client"
+	"uniclog.io/govts/internal/domain"
 )
 
 func TestReconnectBackoff(t *testing.T) {
@@ -22,6 +23,23 @@ func TestReconnectBackoff(t *testing.T) {
 	backoff.Reset()
 	if got := backoff.Next(); got != time.Second {
 		t.Fatalf("delay after reset = %s", got)
+	}
+}
+
+func TestConnectionAlwaysSelectsMarkedDefaultChannel(t *testing.T) {
+	snapshot := domain.ServerSnapshot{
+		Info: domain.ServerInfo{DefaultChannelID: 2},
+		Channels: []domain.Channel{
+			{ID: 1, Name: "private", MinJoinLevel: 25},
+			{ID: 2, Name: "welcome"},
+		},
+	}
+	if id, err := defaultChannelForConnection(snapshot); err != nil || id != 2 {
+		t.Fatalf("selected channel = %d, %v", id, err)
+	}
+	snapshot.Channels[1].MaxUsers = 10
+	if _, err := defaultChannelForConnection(snapshot); err == nil {
+		t.Fatal("limited default channel was accepted")
 	}
 }
 

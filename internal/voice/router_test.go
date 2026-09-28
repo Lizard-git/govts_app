@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -440,6 +442,35 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 	if fullResponse.Type != protocol.PacketError ||
 		!strings.Contains(string(fullResponse.Payload), ErrChannelFull.Error()) {
 		t.Fatalf("full channel response = %+v", fullResponse)
+	}
+
+	restricted := mustCreateChannel(t, hub, domain.Channel{Name: "restricted", MinJoinLevel: 25})
+	request.RequestID++
+	request.Payload, err = protocol.EncodeJoinChannelRequest(restricted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logOutput bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&logOutput)
+	defer log.SetOutput(previousOutput)
+	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	deniedResponse := receiveTestPacket(t, clientPacketConn)
+	if deniedResponse.Type != protocol.PacketError || !strings.Contains(string(deniedResponse.Payload), ErrChannelForbidden.Error()) {
+		t.Fatalf("restricted channel response = %+v", deniedResponse)
+	}
+	if err := HandleJoinChannelPacket(serverPacketConn, hub, cache, request, clientAddr); err != nil {
+		t.Fatal(err)
+	}
+	_ = receiveTestPacket(t, clientPacketConn)
+	entry := logOutput.String()
+	if strings.Count(entry, "channel join rejected:") != 1 ||
+		!strings.Contains(entry, "channel_id="+strconv.FormatUint(uint64(restricted.ID), 10)) ||
+		!strings.Contains(entry, "reason=permission_denied") ||
+		strings.Contains(entry, "join_level") {
+		t.Fatalf("unexpected denial log: %q", entry)
 	}
 
 	stored, ok := hub.Get(session.ID)
