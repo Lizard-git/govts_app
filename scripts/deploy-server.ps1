@@ -22,7 +22,10 @@ param(
     [int]$MediaMinPort = 20000,
 
     [ValidateRange(1, 65535)]
-    [int]$MediaMaxPort = 20100
+    [int]$MediaMaxPort = 20100,
+
+    [ValidatePattern('^[A-Za-z0-9_-]+$')]
+    [string]$TmuxSession = 'govts-server'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,10 +61,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "redeploy script upload failed with exit code $LASTEXITCODE"
 }
 
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' '$remoteScript' '$remoteBinary'"
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' '$remoteScript' '$remoteBinary'"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {
     throw "remote redeploy failed with exit code $LASTEXITCODE"
 }
 
 Write-Host "Deploy completed: $Target ($RemoteDir)"
+Write-Host "Console: ssh -t $Target 'tmux attach-session -t $TmuxSession'"

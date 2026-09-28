@@ -15,6 +15,8 @@ MEDIA_MAX_PORT="${MEDIA_MAX_PORT:-20100}"
 PUBLIC_IP="${PUBLIC_IP:-193.187.92.89}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-15}"
 START_TIMEOUT="${START_TIMEOUT:-10}"
+TMUX_SESSION="${TMUX_SESSION:-govts-server}"
+TMUX_PANE="=$TMUX_SESSION:0.0"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -43,6 +45,14 @@ valid_server_pid() {
 current_pid() {
   local pid="" candidates=""
 
+  if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+    pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null || true)"
+    valid_server_pid "$pid" \
+      || fail "tmux session $TMUX_SESSION exists but does not run the expected server; inspect it manually"
+    printf '%s\n' "$pid"
+    return 0
+  fi
+
   if [[ -f "$PID_FILE" ]]; then
     pid="$(<"$PID_FILE")"
     if valid_server_pid "$pid"; then
@@ -62,7 +72,7 @@ current_pid() {
 }
 
 stop_server() {
-  local pid="$1" deadline
+  local pid="$1" deadline pane_pid=""
   [[ -n "$pid" ]] || return 0
 
   echo "Stopping PID $pid with SIGTERM"
@@ -76,29 +86,45 @@ stop_server() {
     fi
     sleep 1
   done
+  if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+    pane_pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null || true)"
+    if [[ "$pane_pid" == "$pid" ]]; then
+      tmux kill-session -t "=$TMUX_SESSION" 2>/dev/null || true
+    fi
+  fi
   rm -f "$PID_FILE"
 }
 
 start_server() {
-  nohup "$LIVE_BIN" \
+  local pid deadline
+  if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+    echo "tmux session $TMUX_SESSION already exists" >&2
+    return 1
+  fi
+  : >>"$LOG_FILE"
+  tmux new-session -d -s "$TMUX_SESSION" -c "$APP_DIR" \
+    bash -c 'log_file="$1"; shift; exec > >(tee -a "$log_file") 2>&1; exec "$@"' \
+    _ "$LOG_FILE" "$LIVE_BIN" \
     -config "$CONFIG" \
     -port "$VOICE_PORT" \
     -media-port "$MEDIA_PORT" \
     -media-min-port "$MEDIA_MIN_PORT" \
     -media-max-port "$MEDIA_MAX_PORT" \
-    -media-advertised-ip "$PUBLIC_IP" \
-    >>"$LOG_FILE" 2>&1 </dev/null &
-  local pid=$!
+    -media-advertised-ip "$PUBLIC_IP"
+  pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$pid" >"$PID_FILE"
 
-  local deadline=$((SECONDS + START_TIMEOUT))
+  deadline=$((SECONDS + START_TIMEOUT))
   while (( SECONDS < deadline )); do
     if ! kill -0 "$pid" 2>/dev/null; then
       return 1
     fi
-    if ss -H -lun "sport = :$VOICE_PORT" | grep -q . \
+    if valid_server_pid "$pid" \
+      && ss -H -lun "sport = :$VOICE_PORT" | grep -q . \
       && ss -H -ltn "sport = :$MEDIA_PORT" | grep -q .; then
-      echo "Server started: PID $pid, UDP :$VOICE_PORT, TCP :$MEDIA_PORT"
+      echo "Server started: PID $pid in tmux session $TMUX_SESSION, UDP :$VOICE_PORT, TCP :$MEDIA_PORT"
+      echo "Console: tmux attach-session -t $TMUX_SESSION (detach with Ctrl-b, then d)"
       return 0
     fi
     sleep 1
@@ -108,6 +134,10 @@ start_server() {
 
 command -v ss >/dev/null || fail "ss is required"
 command -v readlink >/dev/null || fail "readlink is required"
+command -v tmux >/dev/null || fail "tmux is required"
+command -v tee >/dev/null || fail "tee is required"
+[[ "$TMUX_SESSION" =~ ^[A-Za-z0-9_-]+$ ]] \
+  || fail "TMUX_SESSION must contain only letters, digits, underscores or hyphens"
 is_positive_integer "$VOICE_PORT" && (( VOICE_PORT <= 65535 )) \
   || fail "VOICE_PORT must be in range 1..65535"
 is_positive_integer "$MEDIA_PORT" && (( MEDIA_PORT <= 65535 )) \
@@ -161,9 +191,17 @@ failed_pid=""
 if [[ -f "$PID_FILE" ]]; then
   failed_pid="$(<"$PID_FILE")"
 fi
+if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+  failed_pane_pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null || true)"
+  [[ -n "$failed_pid" && "$failed_pane_pid" == "$failed_pid" ]] \
+    || fail "tmux session $TMUX_SESSION remains after failed start; inspect it before rollback"
+fi
 if [[ -n "$failed_pid" ]] && kill -0 "$failed_pid" 2>/dev/null; then
   stop_server "$failed_pid"
 else
+  if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+    tmux kill-session -t "=$TMUX_SESSION" 2>/dev/null || true
+  fi
   rm -f "$PID_FILE"
 fi
 
