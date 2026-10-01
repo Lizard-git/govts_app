@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"uniclog.io/govts/internal/logging"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
 )
@@ -60,6 +61,8 @@ func ServeUDP(
 		_ = conn.SetReadDeadline(time.Now())
 	})
 	defer stopWakeup()
+	rejected := logging.NewFailures("server_udp_decode")
+	defer rejected.Close()
 
 	for {
 		packet, addr, err := conn.ReadPacket()
@@ -71,6 +74,7 @@ func ServeUDP(
 				return fmt.Errorf("read UDP packet: %w", err)
 			}
 			if isMalformedPacket(err) {
+				rejected.RecordKind(protocol.DatagramFailureReason(err), err, addr)
 				continue
 			}
 			return fmt.Errorf("read UDP packet: %w", err)
@@ -93,7 +97,7 @@ func ServeUDP(
 			authenticators[0].policyGate.Unlock()
 		}
 		if err := handleErr; err != nil {
-			log.Printf("cannot handle packet: %v", err)
+			log.Printf("cannot handle packet: type=%d session_id=%d request_id=%d addr=%v error=%v", packet.Type, packet.SessionID, packet.RequestID, addr, err)
 			continue
 		}
 	}

@@ -76,7 +76,12 @@ func (a *App) UnsubscribeScreen(ctx context.Context, streamID, subscriberID, pin
 	return a.mediaRequest(ctx, "/media/unsubscribe", mediasignal.StreamRequest{StreamID: streamID, SubscriberID: subscriberID}, pinnedFingerprint, nil)
 }
 
-func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pin string, responseBody any) error {
+func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pin string, responseBody any) (requestErr error) {
+	started := time.Now()
+	sessionID := a.state.SessionID()
+	defer func() {
+		a.logger.Printf("media request completed: operation=%s session_id=%d duration=%s error=%v", path, sessionID, time.Since(started), requestErr)
+	}()
 	a.mu.Lock()
 	conn := a.currentConn
 	a.mu.Unlock()
@@ -92,6 +97,7 @@ func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pi
 		return err
 	}
 	pin = normalizeFingerprint(pin)
+	a.logger.Printf("media request starting: operation=%s session_id=%d server=%s", path, sessionID, endpoint)
 	if pin == "" {
 		return errors.New("media server fingerprint is not trusted")
 	}

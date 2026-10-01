@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/logging"
 )
 
 type DecoderFactory func() (audio.Decoder, error)
@@ -95,6 +96,8 @@ func DecodeLoop(
 	states ...*State,
 ) error {
 	defer close(pcmOutCh)
+	invalid := logging.NewFailures("audio_decode")
+	defer invalid.Close()
 	decoders := newStreamDecoders(newDecoder)
 	cleanupTicker := time.NewTicker(streamCleanupInterval)
 	defer cleanupTicker.Stop()
@@ -113,6 +116,7 @@ func DecodeLoop(
 
 			pcmFrame, err := decoders.decode(frame)
 			if errors.Is(err, errInvalidAudioFrame) {
+				invalid.Record(err, frame.SenderID)
 				continue
 			}
 			if err != nil {

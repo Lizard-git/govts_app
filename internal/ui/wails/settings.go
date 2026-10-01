@@ -3,6 +3,7 @@ package wailsui
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -55,7 +56,12 @@ func (s *Service) enableSettings(path string) error {
 	return errors.Join(restoreErrors...)
 }
 
-func (s *Service) saveSettings() error {
+func (s *Service) saveSettings() (saveErr error) {
+	defer func() {
+		if saveErr != nil {
+			log.Printf("save client settings failed: error=%v", saveErr)
+		}
+	}()
 	if s.settings == nil {
 		return nil
 	}

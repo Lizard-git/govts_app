@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"strings"
@@ -171,6 +172,7 @@ func (h *Hub) Remove(id uint64) (Session, bool) {
 	h.stopScreenShareByOwnerLocked(id)
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: id})
+	log.Printf("session removed: id=%d name=%q addr=%v reason=explicit_removal", id, session.Name, session.Addr)
 	return *cloneSession(session), true
 }
 
@@ -627,6 +629,7 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 		if !sameUDPAddr(old.Addr, addr) {
 			continue
 		}
+		log.Printf("session removed: id=%d name=%q addr=%v reason=endpoint_replaced new_name=%q new_user_id=%d", id, old.Name, old.Addr, name, userID)
 		delete(h.sessions, id)
 		h.stopScreenShareByOwnerLocked(id)
 		h.revision++
@@ -659,11 +662,13 @@ func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Se
 				// endpoint and display name. Resume that session so transient
 				// control-plane loss does not tear down its media publisher.
 				if oldSession.Name == name {
+					log.Printf("session resumed: id=%d name=%q addr=%v", oldID, name, addr)
 					oldSession.LastSeen = time.Now()
 					oldSession.voiceSeen = nil
 					oldSession.voiceArrivals = nil
 					return *cloneSession(oldSession), nil, nil
 				}
+				log.Printf("session removed: id=%d name=%q addr=%v reason=endpoint_replaced new_name=%q", oldID, oldSession.Name, oldSession.Addr, name)
 				delete(h.sessions, oldID)
 				h.stopScreenShareByOwnerLocked(oldID)
 				h.revision++

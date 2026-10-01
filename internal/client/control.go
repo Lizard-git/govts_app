@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/logging"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
 )
@@ -27,6 +28,8 @@ func ControlLoop(
 	controlCh <-chan protocol.VoicePacket,
 ) error {
 	generation := state.Generation()
+	invalidEvents := logging.NewFailures("client_state_event_decode")
+	defer invalidEvents.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -52,6 +55,7 @@ func ControlLoop(
 				}
 				event, err := protocol.DecodeStateEvent(packet.Payload)
 				if err != nil {
+					invalidEvents.Record(err, packet.SessionID)
 					state.RequestResync(generation)
 					continue
 				}

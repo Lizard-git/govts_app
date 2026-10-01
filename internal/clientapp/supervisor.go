@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"sync"
 )
 
@@ -41,11 +42,18 @@ func (s *loopSupervisor) Cancel() {
 }
 
 func (s *loopSupervisor) Go(loop func(context.Context) error) {
+	s.GoNamed("unnamed", loop)
+}
+
+func (s *loopSupervisor) GoNamed(name string, loop func(context.Context) error) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 
 		err := unexpectedLoopError(loop(s.ctx))
+		if err != nil || s.ctx.Err() == nil {
+			log.Printf("session loop ended: operation=%s error=%v", name, err)
+		}
 		if err != nil {
 			s.mu.Lock()
 			s.errors = append(s.errors, err)

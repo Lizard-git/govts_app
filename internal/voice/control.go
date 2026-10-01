@@ -102,6 +102,7 @@ func cacheAndSendHandshakeError(
 	message string,
 ) error {
 	response := protocol.NewErrorPacket(0, requestID, message)
+	log.Printf("handshake rejected: request_id=%d addr=%v reason=%q", requestID, addr, message)
 	cache.PutHandshake(addr.AddrPort(), requestID, response)
 	return conn.WritePacket(0, addr, response)
 }
@@ -121,6 +122,15 @@ func HandleHeartbeatPacket(
 	}
 	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
 		if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrInvalidSessionAddr) {
+			reason := "session_not_found"
+			var expectedAddr *net.UDPAddr
+			if errors.Is(err, ErrInvalidSessionAddr) {
+				reason = "address_mismatch"
+				if session, ok := hub.Get(packet.SessionID); ok {
+					expectedAddr = session.Addr
+				}
+			}
+			log.Printf("heartbeat rejected: session_id=%d request_id=%d reason=%s actual_addr=%s expected_addr=%v", packet.SessionID, packet.RequestID, reason, addr, expectedAddr)
 			response := protocol.VoicePacket{
 				Type:      protocol.PacketSessionInvalid,
 				SessionID: packet.SessionID,
@@ -299,6 +309,7 @@ func HandleMediaCredentialPacket(conn *udp.ServerPacketConn, hub *Hub, cache *Re
 }
 
 func cacheAndSendSessionError(conn *udp.ServerPacketConn, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr, message string) error {
+	log.Printf("session request rejected: type=%d session_id=%d request_id=%d addr=%v reason=%q", packet.Type, packet.SessionID, packet.RequestID, addr, message)
 	response := protocol.NewErrorPacket(packet.SessionID, packet.RequestID, message)
 	cache.Put(packet.SessionID, packet.RequestID, response)
 	return conn.WritePacket(packet.SessionID, addr, response)

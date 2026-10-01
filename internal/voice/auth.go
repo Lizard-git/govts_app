@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"sync"
@@ -178,6 +179,7 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	payload = append(payload, account.Permissions)
 	ack := protocol.VoicePacket{Type: protocol.PacketAuthAck, SessionID: session.ID, RequestID: packet.RequestID, Sequence: pending.version, Payload: payload}
 	pending.ack = &ack
+	log.Printf("client authenticated: session_id=%d user_id=%d name=%q addr=%s request_id=%d replaced_sessions=%v", session.ID, account.ID, session.Name, addr, packet.RequestID, replaced)
 	return conn.WritePacket(0, addr, ack)
 }
 

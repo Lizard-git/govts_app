@@ -1,8 +1,15 @@
 package wailsui
 
-import "strings"
+import (
+	"log"
+	"strings"
+)
 
-func (s *Service) SetMuted(value bool) { _ = s.client.SetMuted(value) }
+func (s *Service) SetMuted(value bool) {
+	if err := s.client.SetMuted(value); err != nil {
+		log.Printf("set muted failed: value=%t error=%v", value, err)
+	}
+}
 
 func (s *Service) SetDeafened(value bool) error {
 	if err := s.client.SetDeafened(value); err != nil {

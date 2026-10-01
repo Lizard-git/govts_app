@@ -61,9 +61,13 @@ func cleanupLoop(ctx context.Context, hub *voice.Hub, cache *voice.RequestCache,
 				}
 				cache.RemoveSession(session.ID)
 				log.Printf(
-					"session timed out: id=%d name=%q",
+					"session timed out: id=%d name=%q addr=%v last_seen=%s idle=%s timeout=%s",
 					session.ID,
 					session.Name,
+					session.Addr,
+					session.LastSeen.Local().Format(time.RFC3339Nano),
+					now.Sub(session.LastSeen),
+					timeout,
 				)
 			}
 			cache.RemoveExpired()

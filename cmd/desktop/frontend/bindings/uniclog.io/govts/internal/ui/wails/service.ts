@@ -52,6 +52,14 @@ export function Kick(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(2906324561, sessionID);
 }
 
+/**
+ * LogDiagnostic receives infrequent browser-side lifecycle events. It accepts
+ * bounded text only; callers must not pass SDP, credentials or media content.
+ */
+export function LogDiagnostic(operation: string, message: string): $CancellablePromise<void> {
+    return $Call.ByID(2427776576, operation, message);
+}
+
 export function MediaServerIdentity(): $CancellablePromise<$models.MediaTrustDTO> {
     return $Call.ByID(869671352);
 }

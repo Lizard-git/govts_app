@@ -81,27 +81,27 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	networkLoop := func(operation string, loop func() error) error {
 		return classifyNetworkLoopError(operation, loop())
 	}
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("decode", func(ctx context.Context) error {
 		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) { return audio.NewOpusDecoder(codecConfig) }, orderedInCh, decodedCh, state)
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("jitter", func(ctx context.Context) error {
 		return voiceclient.JitterLoop(ctx, encodedInCh, orderedInCh, voiceclient.DefaultJitterDepth)
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("heartbeat", func(ctx context.Context) error {
 		return networkLoop("heartbeat", func() error { return voiceclient.HeartbeatLoop(ctx, conn, state) })
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("receive", func(ctx context.Context) error {
 		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh, state) })
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("mix", func(ctx context.Context) error {
 		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond, state.NotificationSounds())
 	})
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
-	supervisor.Go(func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
+	supervisor.GoNamed("playback", func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
+	supervisor.GoNamed("control", func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
+	supervisor.GoNamed("speaking", func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
+	supervisor.GoNamed("notices", func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
 	if commands != nil {
-		supervisor.Go(func(ctx context.Context) error {
+		supervisor.GoNamed("commands", func(ctx context.Context) error {
 			return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, nil)
 		})
 	}
@@ -120,7 +120,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err != nil {
 		return finish(fmt.Errorf("%w: load server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
-	supervisor.Go(syncer.Run)
+	supervisor.GoNamed("state_sync", syncer.Run)
 	channelID, err := defaultChannelForConnection(snapshot)
 	if err != nil {
 		return finish(err)
@@ -167,19 +167,19 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	// AudioControlState survives reconnects. Restore availability explicitly
 	// when a new session opens the recorder after an earlier device failure.
 	state.Audio.SetCaptureAvailable(recorder.Available())
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("encode", func(ctx context.Context) error {
 		return voiceclient.EncodeLoopWithPipeline(ctx, encoder, filter, detector, gate, pcmCh, audioCh, state)
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("capture", func(ctx context.Context) error {
 		return voiceclient.RecordLoop(ctx, recorder, pcmCh, codecConfig.SamplesPerFrame, state.Audio)
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("voice_send", func(ctx context.Context) error {
 		return networkLoop("voice send", func() error { return voiceclient.SendLoopWithStats(ctx, conn, sessionID, audioCh, state.Audio, state) })
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("audio_state", func(ctx context.Context) error {
 		return networkLoop("audio state", func() error { return voiceclient.AudioStateLoop(ctx, conn, state) })
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("audio_profile", func(ctx context.Context) error {
 		changed, unsubscribe := state.Subscribe(ctx)
 		defer unsubscribe()
 		channelID := state.ChannelID()
@@ -201,13 +201,14 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			}
 		}
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("audio_devices", func(ctx context.Context) error {
 		current := devices
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case request := <-audioDeviceChanges:
+				logger.Printf("audio device switch: old_capture=%q new_capture=%q old_playback=%q new_playback=%q", current.CaptureID, request.selection.CaptureID, current.PlaybackID, request.selection.PlaybackID)
 				var changeErr error
 				if request.selection.CaptureID != current.CaptureID || !recorder.Available() {
 					changeErr = recorder.Switch(request.selection.CaptureID)
@@ -219,6 +220,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 					current = request.selection
 				}
 				request.done <- changeErr
+				logger.Printf("audio device switch completed: error=%v", changeErr)
 			}
 		}
 	})

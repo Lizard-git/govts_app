@@ -2,6 +2,7 @@ package clientapp
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ type EventLog struct {
 	next        uint64
 	entries     []ClientEvent
 	subscribers map[chan struct{}]struct{}
+	logger      *log.Logger
 }
 
 func newEventLog() *EventLog {
@@ -32,6 +34,9 @@ func (l *EventLog) append(kind, message string, revision uint64) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return
+	}
+	if l.logger != nil {
+		l.logger.Printf("client event: kind=%s revision=%d message=%q", kind, revision, message)
 	}
 	l.mu.Lock()
 	l.next++

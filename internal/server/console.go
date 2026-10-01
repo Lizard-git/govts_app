@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sort"
 	"strconv"
@@ -119,7 +120,7 @@ func (console *Console) Run(ctx context.Context) error {
 	}
 }
 
-func (console *Console) Execute(line string) error {
+func (console *Console) Execute(line string) (executeErr error) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
@@ -131,6 +132,9 @@ func (console *Console) Execute(line string) error {
 		argument = strings.TrimSpace(line[separator:])
 	}
 	command = strings.ToLower(command)
+	defer func() {
+		log.Printf("server console command: command=%q argument=%q error=%v", command, argument, executeErr)
+	}()
 
 	snapshot := console.hub.Inspect()
 	now := console.now()
@@ -375,7 +379,7 @@ func (console *Console) writeUserLine(
 		session.ChannelID,
 		channelName,
 		udpAddressText(session.Addr),
-		session.LastSeen.UTC().Format(time.RFC3339Nano),
+		session.LastSeen.Local().Format(time.RFC3339Nano),
 		idle,
 	)
 	return err

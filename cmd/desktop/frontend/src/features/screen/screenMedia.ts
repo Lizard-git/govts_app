@@ -1,4 +1,4 @@
-import {desktopAPI} from "../../api";
+import {desktopAPI, logDiagnostic} from "../../api";
 import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
 import {defaultScreenProfile, type ScreenProfile} from "./screenProfiles";
 
@@ -104,14 +104,15 @@ export class ScreenMediaController {
                     height: {ideal: profile.height, max: profile.height},
                     frameRate: {min: profile.minFrameRate, ideal: profile.frameRate, max: profile.frameRate},
                 });
-            } catch {
+            } catch (error) {
+                logDiagnostic("screen_capture_constraints_fallback", error);
                 // Some capture backends reject minimum frame-rate constraints.
                 // Retain the preferred target without aborting screen sharing.
                 await captureTrack.applyConstraints({
                     width: {ideal: profile.width, max: profile.width},
                     height: {ideal: profile.height, max: profile.height},
                     frameRate: {ideal: profile.frameRate, max: profile.frameRate},
-                }).catch(() => undefined);
+                }).catch((error) => { logDiagnostic("screen_capture_constraints", error); });
             }
             const transceiver = pc.addTransceiver(captureTrack, {
                 direction: "sendonly",
@@ -120,7 +121,7 @@ export class ScreenMediaController {
             });
             const senderParameters = transceiver.sender.getParameters();
             senderParameters.degradationPreference = profile.degradationPreference;
-            await transceiver.sender.setParameters(senderParameters).catch(() => undefined);
+            await transceiver.sender.setParameters(senderParameters).catch((error) => { logDiagnostic("screen_sender_parameters", error); });
             await ensureTrusted();
             const result = await desktopAPI.publishScreen(await localOffer(pc));
             await pc.setRemoteDescription({type: "answer", sdp: result.answer.sdp});
@@ -133,6 +134,7 @@ export class ScreenMediaController {
             let disconnectedTimer: number | undefined;
             let disconnectExpired = false;
             const connectionChanged = () => {
+                logDiagnostic("screen_publisher_state", `stream=${streamID} connection=${pc.connectionState} ice=${pc.iceConnectionState}`);
                 window.clearTimeout(disconnectedTimer);
                 disconnectedTimer = undefined;
                 if (pc.connectionState === "disconnected" && !disconnectExpired) {
@@ -152,17 +154,18 @@ export class ScreenMediaController {
                 capture.getTracks().forEach((track) => track.stop());
                 pc.removeEventListener("connectionstatechange", connectionChanged);
                 if (pc.connectionState !== "closed") pc.close();
-                void desktopAPI.stopScreen(streamID).catch(() => undefined);
+                void desktopAPI.stopScreen(streamID).catch((error) => { logDiagnostic("screen_stop_cleanup", error); });
                 onEnded();
             };
             pc.addEventListener("connectionstatechange", connectionChanged);
             captureTrack.onended = () => void this.stopPublishing().finally(onEnded);
             return result.streamId;
         } catch (error) {
+            logDiagnostic("screen_publish_failed", error);
             if (this.pendingPublisher === pending) this.pendingPublisher = undefined;
             capture.getTracks().forEach((track) => track.stop());
             pc.close();
-            if (streamID) await desktopAPI.stopScreen(streamID).catch(() => undefined);
+            if (streamID) await desktopAPI.stopScreen(streamID).catch((error) => { logDiagnostic("screen_publish_cleanup", error); });
             throw error;
         }
     }
@@ -187,6 +190,9 @@ export class ScreenMediaController {
         await this.unsubscribe();
         await ensureTrusted();
         const pc = new RTCPeerConnection({iceServers: []});
+        pc.addEventListener("connectionstatechange", () => {
+            logDiagnostic("screen_viewer_state", `stream=${streamID} connection=${pc.connectionState} ice=${pc.iceConnectionState}`);
+        });
         // Install the listener before applying the answer: WebRTC dispatches `track`
         // from setRemoteDescription, before the signaling call below returns.
         const remoteVideo = waitForRemoteVideo(pc);
@@ -202,6 +208,7 @@ export class ScreenMediaController {
             this.viewerStats.reset();
             return remote;
         } catch (error) {
+            logDiagnostic("screen_subscribe_failed", error);
             pc.close();
             throw error;
         }

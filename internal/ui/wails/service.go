@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -44,6 +45,18 @@ type Service struct {
 }
 
 func NewService(client *clientapp.App) *Service { return &Service{client: client} }
+
+// LogDiagnostic receives infrequent browser-side lifecycle events. It accepts
+// bounded text only; callers must not pass SDP, credentials or media content.
+func (s *Service) LogDiagnostic(operation, message string) {
+	if len(operation) > 128 {
+		operation = operation[:128]
+	}
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	log.Printf("frontend diagnostic: operation=%q message=%q", operation, message)
+}
 
 func (s *Service) Connect(request ConnectRequest) error {
 	request.Name = strings.TrimSpace(request.Name)

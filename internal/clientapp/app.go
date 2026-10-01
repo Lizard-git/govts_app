@@ -99,11 +99,13 @@ func New(options Options) *App {
 	if options.Logger == nil {
 		options.Logger = log.New(io.Discard, "", 0)
 	}
+	events := newEventLog()
+	events.logger = options.Logger
 	return &App{
 		lifetimeCtx:        ctx,
 		cancelLifetime:     cancel,
 		state:              state,
-		events:             newEventLog(),
+		events:             events,
 		commands:           options.Commands,
 		output:             options.Output,
 		logger:             options.Logger,
@@ -216,6 +218,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 
 	backoff := newReconnectBackoff()
 	everConnected := false
+	attempt := 0
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -226,6 +229,8 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
 		}
 		var sessionID uint64
+		attempt++
+		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s secure=%t", attempt, endpoint, conn.LocalAddr(), a.secure)
 		var joinLevel uint16
 		var permissions uint8
 		if a.secure {
@@ -236,6 +241,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			sessionID, err = voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
 		}
 		if err != nil {
+			a.logger.Printf("handshake failed: attempt=%d server=%s local=%s error=%v", attempt, endpoint, conn.LocalAddr(), err)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -250,9 +256,12 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			if shouldReplaceClientSocket(err) {
 				replacement, replacementCodec, replaceErr := open()
 				if replaceErr == nil {
+					a.logger.Printf("replacing UDP socket: old_local=%s new_local=%s", conn.LocalAddr(), replacement.LocalAddr())
 					_ = conn.Close()
 					conn = replacement
 					secureCodec = replacementCodec
+				} else {
+					a.logger.Printf("replace UDP socket failed: error=%v", replaceErr)
 				}
 			}
 			delay := backoff.Next()
@@ -265,6 +274,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if err := conn.BindSession(sessionID); err != nil {
 			return fmt.Errorf("bind UDP session: %w", err)
 		}
+		a.logger.Printf("handshake succeeded: attempt=%d session_id=%d server=%s local=%s", attempt, sessionID, endpoint, conn.LocalAddr())
 		if _, err := a.state.StartSession(sessionID); err != nil {
 			return fmt.Errorf("start client session: %w", err)
 		}
@@ -273,6 +283,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.currentConn = conn
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
+		sessionStarted := time.Now()
 		noticeOutput := io.MultiWriter(a.output, eventWriter{log: a.events})
 		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
 			backoff.Reset()
@@ -283,6 +294,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			}
 			everConnected = true
 		})
+		a.logger.Printf("session ended: session_id=%d server=%s local=%s duration=%s error=%v", sessionID, endpoint, conn.LocalAddr(), time.Since(sessionStarted), sessionErr)
 		a.mu.Lock()
 		a.currentConn = nil
 		a.mu.Unlock()

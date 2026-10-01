@@ -1,5 +1,7 @@
 package media
 
+import "log"
+
 func (s *subscriber) close() {
 	s.closeOnce.Do(func() {
 		close(s.closed)
@@ -18,6 +20,7 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 				return
 			}
 			if err := s.track.WriteRTP(packet); err != nil {
+				log.Printf("screen subscriber RTP failed: stream_id=%d session_id=%d subscriber=%q error=%v", p.id, s.sessionID, s.id, err)
 				s.close()
 				return
 			}

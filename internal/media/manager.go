@@ -252,7 +252,10 @@ func (m *Manager) StopPublisher(ownerID uint64, streamID domain.StreamID) {
 	delete(m.ownerStreams, ownerID)
 	m.mu.Unlock()
 	p.close()
-	_ = m.hub.StopScreenShare(ownerID, streamID)
+	if err := m.hub.StopScreenShare(ownerID, streamID); err != nil {
+		log.Printf("stop screen state failed: stream_id=%d owner_session_id=%d error=%v", streamID, ownerID, err)
+	}
+	log.Printf("screen publisher stopped: stream_id=%d owner_session_id=%d", streamID, ownerID)
 }
 
 func (m *Manager) Close() {

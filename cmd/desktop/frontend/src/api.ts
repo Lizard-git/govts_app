@@ -1,4 +1,4 @@
-import {Events} from "@wailsio/runtime";
+import {Call, Events} from "@wailsio/runtime";
 import {Service} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 export type {
@@ -16,6 +16,16 @@ export type {
 } from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 import type {AudioMeterDTO, ConnectRequest} from "../bindings/uniclog.io/govts/internal/ui/wails";
+
+let diagnosticsInFlight = 0;
+export function logDiagnostic(operation: string, message: unknown): void {
+    if (diagnosticsInFlight >= 16) return;
+    diagnosticsInFlight++;
+    const text = message instanceof Error ? `${message.name}: ${message.message}` : String(message);
+    void Call.ByName("uniclog.io/govts/internal/ui/wails.Service.LogDiagnostic", operation.slice(0, 128), text.slice(0, 2048))
+        .catch(() => undefined)
+        .finally(() => { diagnosticsInFlight--; });
+}
 
 export const desktopAPI = {
     snapshot: () => Service.Snapshot(),

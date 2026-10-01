@@ -3,6 +3,7 @@ package voice
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	"uniclog.io/govts/internal/domain"
@@ -55,6 +56,7 @@ func (h *Hub) Kick(actorID, targetID uint64) (Session, error) {
 	h.stopScreenShareByOwnerLocked(targetID)
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: targetID})
+	log.Printf("session removed: id=%d user_id=%d name=%q addr=%v reason=kick actor_session_id=%d", targetID, target.UserID, target.Name, target.Addr, actorID)
 	return removed, nil
 }
 
@@ -102,6 +104,7 @@ func (h *Hub) RemoveUserSessions(userID int64) []uint64 {
 		if session.UserID != userID {
 			continue
 		}
+		log.Printf("session removed: id=%d user_id=%d name=%q addr=%v reason=account_sessions_removed", id, userID, session.Name, session.Addr)
 		delete(h.sessions, id)
 		h.stopScreenShareByOwnerLocked(id)
 		h.revision++

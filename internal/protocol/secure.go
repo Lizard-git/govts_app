@@ -12,6 +12,26 @@ import (
 const secureRecordMarker = 0xff
 const secureRecordHeader = 17 // marker, session ID, packet counter
 
+var (
+	ErrUnknownSecureSession = errors.New("unknown secure session")
+	ErrReplayedSecureRecord = errors.New("replayed or old secure record")
+	ErrSecureAuthentication = errors.New("secure record authentication")
+)
+
+// DatagramFailureReason returns a bounded diagnostic category, not packet data.
+func DatagramFailureReason(err error) string {
+	switch {
+	case errors.Is(err, ErrUnknownSecureSession):
+		return "unknown_session"
+	case errors.Is(err, ErrReplayedSecureRecord):
+		return "replayed_record"
+	case errors.Is(err, ErrSecureAuthentication):
+		return "authentication_failed"
+	default:
+		return "malformed_packet"
+	}
+}
+
 type secureSession struct {
 	send       cipher.AEAD
 	receive    cipher.AEAD
@@ -140,14 +160,17 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session := c.sessions[id]
-	if session == nil || !session.canReceive(counter) {
-		return VoicePacket{}, rejectDatagram(errors.New("unknown or replayed secure record"))
+	if session == nil {
+		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: id=%d", ErrUnknownSecureSession, id))
+	}
+	if !session.canReceive(counter) {
+		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: id=%d counter=%d receive_max=%d", ErrReplayedSecureRecord, id, counter, session.receiveMax))
 	}
 	var nonce [12]byte
 	binary.BigEndian.PutUint64(nonce[4:], counter)
 	plain, err := session.receive.Open(nil, nonce[:], datagram[secureRecordHeader:], datagram[:secureRecordHeader])
 	if err != nil {
-		return VoicePacket{}, rejectDatagram(fmt.Errorf("secure record authentication: %w", err))
+		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: %w", ErrSecureAuthentication, err))
 	}
 	packet, err := DecodePacket(plain)
 	if err != nil || isAuthPacket(packet.Type) || (c.server && packet.SessionID != id) || (!c.server && packet.Type != PacketVoice && packet.SessionID != id) {

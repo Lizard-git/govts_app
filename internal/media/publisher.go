@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"log"
 
 	"github.com/pion/webrtc/v4"
 	"uniclog.io/govts/internal/domain"
@@ -14,6 +15,7 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 	for {
 		packet, _, err := remote.ReadRTP()
 		if err != nil {
+			log.Printf("screen publisher RTP ended: stream_id=%d owner_session_id=%d error=%v", p.id, p.ownerID, err)
 			return
 		}
 		p.inBytes.Add(uint64(packet.MarshalSize()))

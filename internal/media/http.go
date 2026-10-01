@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,11 +39,19 @@ func NewHTTPHandler(hub *voice.Hub, manager *Manager, gates ...*sync.Mutex) (*HT
 }
 
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	status := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	w = status
+	var sessionID uint64
+	defer func() {
+		log.Printf("media HTTP request: method=%s path=%q session_id=%d remote=%q status=%d duration=%s", r.Method, r.URL.Path, sessionID, r.RemoteAddr, status.status, time.Since(started))
+	}()
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sessionID, ok := h.authenticate(r)
+	var ok bool
+	sessionID, ok = h.authenticate(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -60,6 +69,28 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(data []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(data)
 }
 
 func (h *HTTPHandler) publish(w http.ResponseWriter, r *http.Request, sessionID uint64) {
@@ -168,6 +199,7 @@ func parseStreamID(value string) (domain.StreamID, error) {
 }
 func writeJSON(w http.ResponseWriter, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Printf("encode media HTTP response failed: error=%v", err)
 		http.Error(w, "encode response", http.StatusInternalServerError)
 	}
 }
@@ -175,6 +207,7 @@ func signalingContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), 15*time.Second)
 }
 func writeMediaError(w http.ResponseWriter, err error) {
+	log.Printf("media operation failed: error=%v", err)
 	status := http.StatusBadRequest
 	if errors.Is(err, ErrSubscriptionDenied) {
 		status = http.StatusForbidden

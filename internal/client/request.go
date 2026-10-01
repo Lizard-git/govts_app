@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -259,6 +260,7 @@ func doRequestAttempts(
 
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := conn.SendPacket(packet); err != nil {
+			log.Printf("control request send failed: type=%d session_id=%d request_id=%d attempt=%d error=%v", packet.Type, packet.SessionID, requestID, attempt, err)
 			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
 		}
 
@@ -267,10 +269,12 @@ func doRequestAttempts(
 		case response := <-responseCh:
 			timer.Stop()
 			if response.Type == protocol.PacketError {
+				log.Printf("control request rejected: type=%d session_id=%d request_id=%d attempt=%d reason=%q", packet.Type, packet.SessionID, requestID, attempt, response.Payload)
 				return ControlResponse{}, fmt.Errorf("server error: %s", string(response.Payload))
 			}
 			return response, nil
 		case <-timer.C:
+			log.Printf("control request timeout: type=%d session_id=%d request_id=%d attempt=%d attempts=%d timeout=%s", packet.Type, packet.SessionID, requestID, attempt, attempts, timeout)
 			if attempt == attempts {
 				if attempts == 1 {
 					return ControlResponse{}, fmt.Errorf("request %d timed out", requestID)

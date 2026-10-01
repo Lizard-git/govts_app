@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"uniclog.io/govts/internal/audio"
+	"uniclog.io/govts/internal/logging"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
 )
@@ -22,6 +23,8 @@ func ReceiveLoop(
 ) error {
 	defer close(encodedCh)
 	defer close(controlCh)
+	rejected := logging.NewFailures("client_udp_decode")
+	defer rejected.Close()
 
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(receivePollInterval)); err != nil {
@@ -40,6 +43,7 @@ func ReceiveLoop(
 				}
 			}
 			if errors.Is(err, protocol.ErrRejectedDatagram) {
+				rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.LocalAddr())
 				continue
 			}
 			return err

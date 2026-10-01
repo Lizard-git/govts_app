@@ -7,12 +7,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
 	"uniclog.io/govts/internal/appversion"
 	"uniclog.io/govts/internal/auth"
 	"uniclog.io/govts/internal/identity"
+	"uniclog.io/govts/internal/logging"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
 )
@@ -90,6 +92,8 @@ func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketC
 
 func exchangeAuth(ctx context.Context, conn *udp.ClientPacketConn, request protocol.VoicePacket, wantType uint8, requestID uint32, timeout time.Duration, attempts int, minimum appversion.Number) (protocol.VoicePacket, error) {
 	defer conn.SetReadDeadline(time.Time{})
+	rejected := logging.NewFailures("secure_handshake_decode")
+	defer rejected.Close()
 	for attempt := 0; attempt < attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return protocol.VoicePacket{}, err
@@ -102,16 +106,20 @@ func exchangeAuth(ctx context.Context, conn *udp.ClientPacketConn, request proto
 			return protocol.VoicePacket{}, err
 		}
 		if err := conn.SendPacket(request); err != nil {
+			log.Printf("authentication send failed: phase=%d request_id=%d attempt=%d error=%v", request.Type, requestID, attempt+1, err)
 			return protocol.VoicePacket{}, err
 		}
+		log.Printf("authentication phase sent: phase=%d request_id=%d attempt=%d attempts=%d timeout=%s", request.Type, requestID, attempt+1, attempts, timeout)
 		for {
 			response, err := conn.ReceivePacket()
 			if err != nil {
 				if errors.Is(err, protocol.ErrRejectedDatagram) {
+					rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.LocalAddr())
 					continue
 				}
 				var netErr net.Error
 				if errors.As(err, &netErr) && netErr.Timeout() {
+					log.Printf("authentication phase timeout: phase=%d request_id=%d attempt=%d", request.Type, requestID, attempt+1)
 					break
 				}
 				return protocol.VoicePacket{}, err
@@ -126,6 +134,7 @@ func exchangeAuth(ctx context.Context, conn *udp.ClientPacketConn, request proto
 				return protocol.VoicePacket{}, &AuthenticationRejectedError{Reason: string(response.Payload)}
 			}
 			if response.Type == wantType {
+				log.Printf("authentication phase completed: phase=%d request_id=%d attempt=%d", request.Type, requestID, attempt+1)
 				return response, nil
 			}
 		}
