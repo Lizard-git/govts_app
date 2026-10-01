@@ -2,6 +2,7 @@ import {useEffect, useState} from "react";
 import type {ClientViewDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {ConnectionStatsPopup} from "./ConnectionStatsPopup";
+import {Icon} from "../../components/Icon";
 
 export type Page = "channels" | "settings";
 const serverAddressStorageKey = "govts.serverAddress";
@@ -74,28 +75,35 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     </section></main>;
 }
 
-export function StatusBar({view, page, onPageChange, invoke}: {
+export function StatusBar({view, page, onPageChange}: {
     view: ClientViewDTO;
     page: Page;
     onPageChange: (page: Page) => void;
-    invoke: (operation: () => Promise<unknown>) => Promise<void>;
 }) {
     return <header className="status-bar">
-        <button className="header-nav-button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
-            <span aria-hidden="true">{page === "settings" ? "←" : "⚙"}</span><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
-        </button>
-        <div className="server-summary"><p className="eyebrow">СЕРВЕР</p><h1>{view.server.name || "Govts"}</h1></div>
-        <div className="audio-control-island" role="group" aria-label="Управление звуком">
-            <button className={`voice-control ${view.audio.muted || !view.audio.captureAvailable ? "active" : ""}`}
-                aria-pressed={view.audio.muted} disabled={!view.audio.captureAvailable}
-                onClick={() => void invoke(() => desktopAPI.setMuted(!view.audio.muted))}>{!view.audio.captureAvailable ? "Нет микрофона" : view.audio.muted ? "Микрофон выкл." : "Микрофон"}</button>
-            <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
-                onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}>{view.audio.deafened ? "Звук выкл." : "Звук"}</button>
-        </div>
+        <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong></div>
+        <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>Синхронизация…</div>
         <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus}/>
-        {!view.snapshotFresh && <div className="sync-pill">Синхронизация…</div>}
-        <button className="header-nav-button disconnect-button" onClick={() => void invoke(() => desktopAPI.disconnect())}>
-            <span aria-hidden="true">↪</span><span>Отключиться</span>
+        <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
+            <Icon name={page === "settings" ? "channels" : "settings"}/><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
         </button>
     </header>;
+}
+
+export function AudioControls({view, invoke}: {
+    view: ClientViewDTO;
+    invoke: (operation: () => Promise<unknown>) => Promise<void>;
+}) {
+    return <div className="audio-control-island" role="group" aria-label="Управление звуком">
+            <button className={`voice-control ${view.audio.muted || !view.audio.captureAvailable ? "active" : ""}`}
+                aria-pressed={view.audio.muted} disabled={!view.audio.captureAvailable}
+                title={!view.audio.captureAvailable ? "Нет микрофона" : view.audio.muted ? "Включить микрофон" : "Выключить микрофон"}
+                onClick={() => void invoke(() => desktopAPI.setMuted(!view.audio.muted))}><Icon name="mic"/>Микрофон</button>
+            <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
+                title={view.audio.deafened ? "Включить звук" : "Выключить звук"}
+                onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}><Icon name="sound"/>Аудио</button>
+        <button className="voice-control disconnect-button" title="Отключиться от сервера" onClick={() => void invoke(() => desktopAPI.disconnect())}>
+            <Icon name="hangup"/>Выйти
+        </button>
+    </div>;
 }

@@ -1,11 +1,19 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import type {Dispatch, SetStateAction} from "react";
 import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
 import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
 import {ScreenSharing, ScreenViewerWindow} from "./features/screen/ScreenViews";
-import {ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
+import {AudioControls, ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
+import {Icon} from "./components/Icon";
+import {ChatPanel} from "./features/chat/ChatPanel";
+import {useWorkspaceResize} from "./components/useWorkspaceResize";
+
+const contentTabs = ["chat", "screens", "events"] as const;
+type ContentTab = typeof contentTabs[number] | `direct:${string}`;
+type DirectChat = {sessionId: string; displayName: string};
 
 const participantDragType = "application/x-govts-participant";
 
@@ -59,9 +67,10 @@ function App() {
 function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) => Promise<void>}) {
     const [view, setView] = useState<ClientViewDTO>(emptyView);
     const [page, setPage] = useState<Page>("channels");
+    const [contentTab, setContentTab] = useState<ContentTab>("chat");
+    const [directChats, setDirectChats] = useState<DirectChat[]>([]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
-    const [eventPanelHeight, setEventPanelHeight] = useState(135);
     const lastSequence = useRef("0");
     const screenMedia = useRef<ScreenMediaController | null>(null);
     if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
@@ -94,6 +103,8 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
 
     const clearEvents = useCallback(() => {
         setEvents([]);
+        setDirectChats([]);
+        setContentTab("chat");
         lastSequence.current = "0";
     }, []);
 
@@ -144,51 +155,139 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
 
     return <div className="app-shell">
         <main className="main-area">
-            <StatusBar view={view} page={page} onPageChange={setPage} invoke={invoke}/>
+            <StatusBar view={view} page={page} onPageChange={setPage}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
-                ? <ChannelsPage view={view} events={events} eventPanelHeight={eventPanelHeight}
-                                onEventPanelHeightChange={setEventPanelHeight} invoke={invoke} screenMedia={screenMedia.current}
-                                onError={setActionError}/>
-                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
+                ? <ChannelsPage view={view} events={events} invoke={invoke} screenMedia={screenMedia.current}
+                                onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats}/>
+                : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke}/></div></>}
         </main>
     </div>;
 }
 
-function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange, invoke, screenMedia, onError}: {
+function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, setContentTab, directChats, setDirectChats}: {
     view: ClientViewDTO;
     events: ClientEventDTO[];
-    eventPanelHeight: number;
-    onEventPanelHeightChange: (height: number | ((current: number) => number)) => void;
     invoke: (operation: () => Promise<unknown>) => Promise<void>
     screenMedia: ScreenMediaController;
     onError: (message: string) => void;
+    contentTab: ContentTab;
+    setContentTab: Dispatch<SetStateAction<ContentTab>>;
+    directChats: DirectChat[];
+    setDirectChats: Dispatch<SetStateAction<DirectChat[]>>;
 }) {
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
+    const screenOwners = useMemo(() => new Set((view.screenStreams ?? []).map((stream) => stream.ownerSessionId)), [view.screenStreams]);
     const [selectedID, setSelectedID] = useState(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
+    const previousChannelID = useRef(view.channelId);
     useEffect(() => {
+        if (previousChannelID.current !== view.channelId) {
+            previousChannelID.current = view.channelId;
+            setSelectedID(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
+            return;
+        }
         if (selectedID && channels.some((channel) => channel.id === selectedID)) return;
         setSelectedID(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
     }, [channels, selectedID, view.channelId]);
     const selected = channels.find((channel) => channel.id === selectedID);
+    const [showInfo, setShowInfo] = useState(false);
+    const [usersExpanded, setUsersExpanded] = useState(false);
+    const allTabs: ContentTab[] = [...contentTabs, ...directChats.map((chat): ContentTab => `direct:${chat.sessionId}`)];
+    const openMessage = (participant: ParticipantDTO) => {
+        setDirectChats((current) => current.some((chat) => chat.sessionId === participant.sessionId) ? current :
+            [...current, {sessionId: participant.sessionId, displayName: participant.displayName}]);
+        const tab: ContentTab = `direct:${participant.sessionId}`;
+        setContentTab(tab);
+        requestAnimationFrame(() => {
+            const element = document.getElementById(`${tab}-tab`);
+            element?.focus();
+            element?.scrollIntoView({block: "nearest", inline: "nearest"});
+        });
+    };
+    const closeMessage = (sessionId: string) => {
+        const tab: ContentTab = `direct:${sessionId}`;
+        const next = contentTab === tab ? allTabs[Math.max(0, allTabs.indexOf(tab) - 1)] : contentTab;
+        setDirectChats((current) => current.filter((chat) => chat.sessionId !== sessionId));
+        setContentTab(next);
+        requestAnimationFrame(() => document.getElementById(`${next}-tab`)?.focus());
+    };
+    const serverUsers = useMemo(() => [...participants].sort((left, right) =>
+        left.displayName.localeCompare(right.displayName, "ru") || left.sessionId.localeCompare(right.sessionId)), [participants]);
+    const infoVisible = showInfo && Boolean(selected);
+    const workspaceResize = useWorkspaceResize(infoVisible);
+    const members = participants.filter((item) => item.channelId === selectedID);
     return <section className="channels-page">
-        <div className="channels-layout">
-            <section className="panel channel-browser">
+        <div ref={workspaceResize.layoutRef} style={workspaceResize.style} className={`channels-layout ${infoVisible ? "" : "info-hidden"} ${workspaceResize.resizing ? "is-resizing" : ""}`}>
+            <section id="channel-browser-pane" className={`panel channel-browser ${usersExpanded ? "users-expanded" : ""}`}>
+                <section className="sidebar-section" aria-label="Каналы сервера">
                 <div className="panel-heading">
-                    <div><p className="eyebrow">ПРОСТРАНСТВА</p><h2>Каналы</h2></div>
+                    <div><h2>Каналы</h2></div>
                     <span className="count-badge">{participants.length}</span></div>
-                <div className="channel-scroll"><ChannelTree channels={channels} participants={participants}
+                <div className="channel-scroll"><ChannelTree channels={channels} participants={participants} screenOwners={screenOwners}
                                                              canKick={view.canKick} canBan={view.canBan}
                                                              canDrag={view.canDrag && view.connectionStatus === "connected"}
                                                              selectedID={selectedID} currentID={view.channelId}
-                                                             onError={onError} onSelect={setSelectedID} onJoin={(id) => {
+                                                             onError={onError} onMessage={openMessage} onSelect={setSelectedID} onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }} onMoveParticipant={(sessionID, channelID) => {
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
                 }}/></div>
+                </section>
+                <section className="sidebar-section server-users" aria-label="Пользователи сервера">
+                    <button className="users-toggle" type="button" aria-expanded={usersExpanded} aria-controls="server-users-list" onClick={() => setUsersExpanded((current) => !current)}>
+                        <span className="users-chevron" aria-hidden="true">{usersExpanded ? "▾" : "▸"}</span><span>Пользователи</span><span className="count-badge">{serverUsers.length}</span>
+                    </button>
+                    <div id="server-users-list" className="users-scroll" hidden={!usersExpanded}>{serverUsers.map((participant) => <ParticipantRow key={participant.sessionId}
+                        participant={participant} variant="list" canKick={view.canKick} canBan={view.canBan} canDrag={false}
+                        depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>)}</div>
+                </section>
             </section>
-            <section className="panel channel-detail">{selected ? <><p className="eyebrow">ВЫБРАННЫЙ КАНАЛ</p>
+            <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
+            <section className="channel-stage">{selected ? <>
+                <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || "Голосовой канал"}>{selected.topic || "Голосовой канал"}</p></div>
+                    {selected.id !== view.channelId && <button className="header-nav-button" disabled={!selected.canJoin || view.connectionStatus !== "connected"} onClick={() => void invoke(() => desktopAPI.joinChannel(selected.id))}>Войти</button>}
+                    <button className="info-toggle" aria-label="Информация о канале" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
+                </header>
+                <div className="participants-stage" role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><div className="stage-landscape" aria-hidden="true"/><div className="participants-strip">
+                    {members.length ? members.map((participant) => <ParticipantRow key={participant.sessionId}
+                        participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
+                        depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>) : <div className="stage-empty">В канале пока никого нет</div>}
+                </div></div>
+                <section className="channel-content">
+                    <div className="channel-tabs" role="tablist" aria-label="Содержимое канала" onKeyDown={(event) => {
+                        if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
+                        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                        event.preventDefault();
+                        const index = allTabs.indexOf(contentTab);
+                        const next = event.key === "Home" ? allTabs[0] : event.key === "End" ? allTabs[allTabs.length - 1] : allTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + allTabs.length) % allTabs.length];
+                        setContentTab(next);
+                        document.getElementById(`${next}-tab`)?.focus();
+                    }}>
+                        <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>Чат</button>
+                        <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>Демонстрации</button>
+                        <button id="events-tab" role="tab" tabIndex={contentTab === "events" ? 0 : -1} aria-selected={contentTab === "events"} aria-controls="events-panel" onClick={() => setContentTab("events")}>События</button>
+                        {directChats.map((chat) => {
+                            const tab: ContentTab = `direct:${chat.sessionId}`;
+                            const name = participants.find((participant) => participant.sessionId === chat.sessionId)?.displayName ?? chat.displayName;
+                            return <div className="direct-tab" role="presentation" key={chat.sessionId} data-active={contentTab === tab}>
+                                <button id={`${tab}-tab`} role="tab" tabIndex={contentTab === tab ? 0 : -1} aria-selected={contentTab === tab} aria-controls={`${tab}-panel`} title={name} onClick={() => setContentTab(tab)}><span>{name}</span></button>
+                                <button className="close-chat-tab" type="button" aria-label={`Закрыть личный чат: ${name}`} title="Закрыть вкладку" onClick={() => closeMessage(chat.sessionId)}>×</button>
+                            </div>;
+                        })}
+                    </div>
+                    <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}><ChatPanel channelName={selected.name}/></div>
+                    <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants} controller={screenMedia}/></div>
+                    <div id="events-panel" role="tabpanel" aria-labelledby="events-tab" hidden={contentTab !== "events"}><EventPanel events={events} active={contentTab === "events"}/></div>
+                    {directChats.map((chat) => <div key={chat.sessionId} id={`direct:${chat.sessionId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.sessionId}-tab`} hidden={contentTab !== `direct:${chat.sessionId}`}>
+                        <ChatPanel recipientName={participants.find((participant) => participant.sessionId === chat.sessionId)?.displayName ?? chat.displayName}/>
+                    </div>)}
+                </section>
+            </> : <div className="empty-state">Выберите канал</div>}
+                <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke}/></div>
+            </section>
+            {infoVisible && <div className="workspace-divider info-divider" {...workspaceResize.separatorProps("info")}/>}
+            {showInfo && selected && <section id="channel-info-pane" className="panel channel-detail">{selected ? <><div className="channel-info-heading"><span>Информация о канале</span><button aria-label="Закрыть информацию о канале" onClick={() => setShowInfo(false)}>×</button></div>
                 <h2>{selected.name}</h2>
                 <p className="channel-topic">{selected.topic || "Голосовой канал"}</p><p
                     className="channel-description">{selected.description || "Описание канала пока не задано."}</p>
@@ -200,16 +299,15 @@ function ChannelsPage({view, events, eventPanelHeight, onEventPanelHeightChange,
                     <div><span>Частота</span><strong>{selected.audio.sampleRate / 1000} кГц</strong></div>
                     <div><span>Битрейт</span><strong>{selected.audio.bitrate / 1000} кбит/с</strong></div>
                 </div>
-                <ScreenSharing view={view} channelID={selected.id} participants={participants} controller={screenMedia}/>
-            </> : <div className="empty-state">Выберите канал</div>}</section>
+            </> : <div className="empty-state">Выберите канал</div>}</section>}
         </div>
-        <EventPanel events={events} height={eventPanelHeight} onHeightChange={onEventPanelHeightChange}/>
     </section>;
 }
 
-function ChannelTree({channels, participants, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onMoveParticipant, onError}: {
+function ChannelTree({channels, participants, screenOwners, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onMoveParticipant, onError, onMessage}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
+    screenOwners: Set<string>;
     canKick: boolean;
     canBan: boolean;
     canDrag: boolean;
@@ -219,6 +317,7 @@ function ChannelTree({channels, participants, canKick, canBan, canDrag, selected
     onJoin: (id: string) => void
     onMoveParticipant: (sessionID: string, channelID: string) => void;
     onError: (message: string) => void;
+    onMessage: (participant: ParticipantDTO) => void;
 }) {
     const [draggingSessionID, setDraggingSessionID] = useState<string | null>(null);
     const [dropTargetID, setDropTargetID] = useState<string | null>(null);
@@ -252,12 +351,13 @@ function ChannelTree({channels, participants, canKick, canBan, canDrag, selected
                     setDraggingSessionID(null);
                     onMoveParticipant(draggingSessionID, channel.id);
                 }}
-                onDoubleClick={() => onJoin(channel.id)}><span className="channel-icon" aria-hidden="true">⌁</span><span
-                className="channel-name">{channel.name}</span><span className="channel-count">{members.length}</span>
+                onDoubleClick={() => { if (channel.canJoin) onJoin(channel.id); }}><span className="channel-icon" aria-hidden="true"><Icon name="sound"/></span><span
+                className="channel-name">{channel.name}</span><span className="channel-count">{members.length}{channel.maxUsers ? `/${channel.maxUsers}` : ""}</span>
             </button>
             {members.map((participant) => <ParticipantRow key={participant.sessionId} participant={participant}
-                                                          channels={channels} canKick={canKick} canBan={canBan} canDrag={canDrag}
-                                                          depth={depth} onError={onError}
+                                                          sharingScreen={screenOwners.has(participant.sessionId)}
+                                                          canKick={canKick} canBan={canBan} canDrag={canDrag}
+                                                          depth={depth} onError={onError} onMessage={onMessage}
                                                           onDragStart={(event, source) => {
                                                               if (!canDrag) {
                                                                   event.preventDefault();
@@ -270,81 +370,27 @@ function ChannelTree({channels, participants, canKick, canBan, canDrag, selected
                                                           onDragEnd={() => { setDraggingSessionID(null); setDropTargetID(null); }}/>)}{renderLevel(channel.id, depth + 1)}</div>;
     });
     return <div className="channel-tree">{channels.length ? renderLevel("0", 0) :
-        <div className="empty-state">Каналы ещё не загружены</div>}</div>;
+        <div className="empty-state">Нет доступных каналов или совпадений</div>}</div>;
 }
 
-function EventPanel({events, height, onHeightChange}: {
-    events: ClientEventDTO[];
-    height: number;
-    onHeightChange: (height: number | ((current: number) => number)) => void
-}) {
+function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean}) {
     const listRef = useRef<HTMLDivElement>(null);
-    const dockRef = useRef<HTMLDivElement>(null);
     const stickToBottom = useRef(true);
-    const dragRef = useRef<{ startY: number; startHeight: number; maxHeight: number } | null>(null);
     useEffect(() => {
-        if (stickToBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-    }, [events]);
-    useEffect(() => {
-        const move = (event: PointerEvent) => {
-            const drag = dragRef.current;
-            if (!drag) return;
-            onHeightChange(Math.max(135, Math.min(drag.maxHeight, drag.startHeight + drag.startY - event.clientY)));
-        };
-        const stop = () => {
-            if (!dragRef.current) return;
-            dragRef.current = null;
-            document.body.style.removeProperty("cursor");
-            document.body.style.removeProperty("user-select");
-        };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", stop);
-        window.addEventListener("pointercancel", stop);
-        return () => {
-            stop();
-            window.removeEventListener("pointermove", move);
-            window.removeEventListener("pointerup", stop);
-            window.removeEventListener("pointercancel", stop);
-        };
-    }, [onHeightChange]);
-    useEffect(() => {
-        const page = dockRef.current?.parentElement;
-        if (!page) return;
-        const observer = new ResizeObserver(() => onHeightChange((current) => Math.min(current, Math.max(135, page.clientHeight - 250))));
-        observer.observe(page);
-        return () => observer.disconnect();
-    }, [onHeightChange]);
-    const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-        if (event.button !== 0) return;
-        const page = dockRef.current?.parentElement;
-        if (!page) return;
-        event.preventDefault();
-        dragRef.current = {
-            startY: event.clientY,
-            startHeight: height,
-            maxHeight: Math.max(135, page.clientHeight - 250)
-        };
-        document.body.style.cursor = "ns-resize";
-        document.body.style.userSelect = "none";
-    };
-    return <div className="event-dock" ref={dockRef} style={{height}}>
-        <div className="event-resize-handle" role="separator" aria-label="Изменить высоту журнала событий"
-             aria-orientation="horizontal" onPointerDown={startResize}></div>
-        <section className="panel event-panel">
-            <div className="event-list" ref={listRef} onScroll={(event) => {
-                const element = event.currentTarget;
-                stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 12;
-            }}>{events.length === 0 ?
-                <div className="empty-event">События появятся после подключения</div> : events.map((item) => <div
-                    className={`event-row kind-${item.kind}`} key={item.sequence}>
-                    <time>{new Date(item.time).toLocaleTimeString("ru-RU", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit"
-                    })}</time>
-                    <span className="event-marker"/><span>{item.message}</span></div>)}</div>
-        </section>
-    </div>;
+        if (active && stickToBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    }, [events, active]);
+    return <section className="panel event-panel" aria-label="Журнал событий">
+        <div className="event-list" ref={listRef} onScroll={(event) => {
+            const element = event.currentTarget;
+            stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 12;
+        }}>{events.length === 0 ? <div className="empty-event">События появятся после подключения</div> :
+            events.map((item) => <div className={`event-row kind-${item.kind}`} key={item.sequence}>
+                <time>{new Date(item.time).toLocaleTimeString("ru-RU", {
+                    hour: "2-digit", minute: "2-digit", second: "2-digit"
+                })}</time>
+                <span className="event-marker"/><span>{item.message}</span>
+            </div>)}</div>
+    </section>;
 }
 
 function SettingsPage({view, invoke, theme, setTheme}: {

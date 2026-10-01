@@ -5,6 +5,7 @@ import {desktopAPI} from "../../api";
 import {ScreenMediaController} from "./screenMedia";
 import {defaultScreenProfile, screenProfiles, type ScreenProfileID} from "./screenProfiles";
 import type {ScreenStats} from "./screenStats";
+import {Icon} from "../../components/Icon";
 
 function errorText(error: unknown): string {
     return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
@@ -111,8 +112,13 @@ export function ScreenSharing({view, channelID, participants, controller}: {
     });
     const [publisherStats, setPublisherStats] = useState<ScreenStats | null>(null);
     const streams = (view.screenStreams ?? []).filter((stream) => stream.channelId === channelID);
-    const own = streams.find((stream) => stream.ownerSessionId === view.sessionId);
+    const own = (view.screenStreams ?? []).find((stream) => stream.ownerSessionId === view.sessionId);
     const profile = screenProfiles.find((item) => item.id === profileID) ?? defaultScreenProfile;
+
+    useEffect(() => {
+        setPublishing(false);
+        setPublisherStats(null);
+    }, [view.channelId]);
 
     useEffect(() => {
         if (!publishing && !own) { setPublisherStats(null); return; }
@@ -141,6 +147,8 @@ export function ScreenSharing({view, channelID, participants, controller}: {
         finally { setPending(false); }
     };
 
+    const screenControl = <button className="screen-start" disabled={pending || view.connectionStatus !== "connected" || view.channelId === "0"}
+        onClick={() => void (publishing || own ? stop() : start())}><Icon name="screen"/>{publishing || own ? "Завершить" : "Демонстрация"}</button>;
     return <section className="screen-sharing">
         <div className="screen-heading"><div><span>Демонстрации экрана</span></div>
             <label className="screen-profile"><span>Качество</span><select value={profileID}
@@ -149,20 +157,20 @@ export function ScreenSharing({view, channelID, participants, controller}: {
                     setProfileID(value);
                     localStorage.setItem("govts.screenProfile", value);
                 }}>{screenProfiles.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-            {channelID === view.channelId && (publishing || own
-                ? <button disabled={pending} onClick={() => void stop()}>Завершить</button>
-                : <button className="screen-start" disabled={pending} onClick={() => void start()}>Показать экран</button>)}</div>
+            {screenControl}</div>
+        <div className="screen-list">
         {error && <div className="screen-error" role="alert">{error}</div>}
         {publisherStats && <div className="screen-publisher-stats">Отправка: {publisherStats.width || profile.width}×{publisherStats.height || profile.height} · {publisherStats.fps.toFixed(0)} FPS · {bitrateText(publisherStats.bitrate)} · кадры {publisherStats.frames}, ключевые {publisherStats.keyFrames}{publisherStats.qualityLimitation ? ` · limit: ${publisherStats.qualityLimitation}` : ""}</div>}
         {streams.length ? <div className="screen-cards">{streams.map((stream) => {
             const owner = participants.find((item) => item.sessionId === stream.ownerSessionId);
             const ownerName = owner?.displayName ?? "Участник";
             return <article className="screen-card" key={stream.id}>
-                <span className="screen-icon" aria-hidden="true">▣</span>
+                <div className="screen-card-preview" aria-label={`Демонстрация ${ownerName}`}><Icon name="screen"/><span>{ownerName}</span><small>Демонстрация экрана</small></div>
                 <div><strong>{ownerName}</strong><small>показывает экран</small></div>
                 {stream.ownerSessionId === view.sessionId ? <span className="screen-own">Вы</span>
                     : <button disabled={pending || channelID !== view.channelId} onClick={() => void watch(stream.id, ownerName)}>Смотреть</button>}
             </article>;
         })}</div> : <p className="screen-empty">Сейчас никто не демонстрирует экран.</p>}
+        </div>
     </section>;
 }

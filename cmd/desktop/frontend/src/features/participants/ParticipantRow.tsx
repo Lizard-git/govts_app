@@ -1,9 +1,10 @@
 import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
-import type {ChannelDTO, ParticipantDTO} from "../../api";
+import type {ParticipantDTO} from "../../api";
 import {desktopAPI} from "../../api";
+import {Icon} from "../../components/Icon";
 
-type MenuState = {x: number; y: number; volume: number; channelID: string} | null;
+type MenuState = {x: number; y: number; volume: number} | null;
 
 function MicOffIcon() {
     return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" fill="none"
@@ -35,9 +36,8 @@ function SpeakerIcon({muted = false}: {muted?: boolean}) {
     </svg>;
 }
 
-export function ParticipantRow({participant, channels, canKick, canBan, canDrag, depth, onError, onDragStart, onDragEnd}: {
+export function ParticipantRow({participant, canKick, canBan, canDrag, depth, onError, onDragStart, onDragEnd, onMessage, variant = "tree", sharingScreen = false}: {
     participant: ParticipantDTO;
-    channels: ChannelDTO[];
     canKick: boolean;
     canBan: boolean;
     canDrag: boolean;
@@ -45,6 +45,9 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
     onError: (message: string) => void;
     onDragStart: (event: React.DragEvent<HTMLDivElement>, participant: ParticipantDTO) => void;
     onDragEnd: () => void;
+    onMessage: (participant: ParticipantDTO) => void;
+    variant?: "tree" | "list" | "stage";
+    sharingScreen?: boolean;
 }) {
     const [menu, setMenu] = useState<MenuState>(null);
     const rowRef = useRef<HTMLDivElement>(null);
@@ -54,9 +57,10 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
 
     const open = async (x: number, y: number) => {
         if (participant.local) return;
+        setMenu({x, y, volume: 1});
         try {
             const volume = await desktopAPI.participantVolume(participant.sessionId);
-            setMenu({x, y, volume, channelID: channels.find((channel) => channel.id !== participant.channelId)?.id ?? ""});
+            setMenu((current) => current && current.x === x && current.y === y ? {...current, volume} : current);
         } catch (error) {
             onError(errorText(error));
         }
@@ -72,13 +76,12 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
         if (immediate) commit();
         else timerRef.current = window.setTimeout(commit, 40);
     };
-    const moderate = async (action: "kick" | "ban" | "drag") => {
+    const moderate = async (action: "kick" | "ban") => {
         if (!menu) return;
         if (action === "ban" && !window.confirm(`Заблокировать ${participant.displayName}?`)) return;
         try {
             if (action === "kick") await desktopAPI.kick(participant.sessionId);
             if (action === "ban") await desktopAPI.ban(participant.sessionId);
-            if (action === "drag") await desktopAPI.drag(participant.sessionId, menu.channelID);
             close();
         } catch (error) {
             onError(errorText(error));
@@ -96,7 +99,7 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
         };
         window.addEventListener("pointerdown", dismiss);
         window.addEventListener("keydown", keydown);
-        requestAnimationFrame(() => menuRef.current?.querySelector<HTMLInputElement>("input")?.focus());
+        requestAnimationFrame(() => (menuRef.current?.querySelector<HTMLInputElement>("input") ?? menuRef.current?.querySelector<HTMLButtonElement>("button"))?.focus());
         return () => {
             window.removeEventListener("pointerdown", dismiss);
             window.removeEventListener("keydown", keydown);
@@ -108,35 +111,53 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
         top: Math.max(8, Math.min(menu.y, window.innerHeight - 320)),
     } : undefined;
     return <>
-        <div ref={rowRef} className={`participant-row ${participant.speaking ? "speaking" : ""} ${canDrag ? "draggable" : ""}`}
-             style={{paddingLeft: 46 + depth * 18}} tabIndex={participant.local ? -1 : 0}
+        <div ref={rowRef} className={`${variant === "stage" ? "stage-participant" : "participant-row"} participant-${variant} ${variant !== "list" && participant.speaking ? "speaking" : ""} ${variant !== "list" && participant.muted ? "muted" : ""} ${canDrag ? "draggable" : ""} ${participant.local ? "local" : ""}`}
+             style={variant === "stage" ? undefined : {paddingLeft: variant === "list" ? 12 : 46 + depth * 18}} tabIndex={participant.local ? -1 : 0}
              draggable={canDrag}
              onDragStart={(event) => onDragStart(event, participant)} onDragEnd={onDragEnd}
-             onContextMenu={(event) => {
+             onDoubleClick={(event) => {
+                 event.stopPropagation();
                  if (participant.local) return;
+                 setMenu(null);
+                 onMessage(participant);
+             }}
+             onContextMenu={(event) => {
                  event.preventDefault();
+                 if (participant.local) return;
                  void open(event.clientX, event.clientY);
              }} onKeyDown={(event) => {
-                if (!participant.local && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
                     event.preventDefault();
+                    if (participant.local) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
                     void open(bounds.left + 40, bounds.bottom);
                 }
-             }}><span className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
-            <span>{participant.displayName}{participant.local ? " (вы)" : ""}</span>
-            <span className="participant-status">
+             }}>{variant === "stage" ? <>
+            <span className="stage-avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
+            <span className="stage-label"><span className="stage-name" title={`${participant.displayName}${participant.local ? " (вы)" : ""}`}>{participant.displayName}{participant.local ? " (вы)" : ""}</span>
+            </span>
+            <span className="stage-voice" aria-label={participant.muted ? "Микрофон выключен" : participant.deafened ? "Звук выключен" : participant.speaking ? "Говорит" : "Не говорит"}>
+                {sharingScreen && <span className="participant-screen" title="Демонстрирует экран" aria-label="Демонстрирует экран"><Icon name="screen"/></span>}
+                {participant.muted ? <MicOffIcon/> : participant.deafened ? <SoundOffIcon/> : participant.speaking ? <span className="voice-bars"><i/><i/><i/><i/><i/></span> : null}
+            </span>
+            </> : <><span className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
+            <span className="participant-label"><span className="participant-name" title={participant.displayName}>{participant.displayName}{participant.local ? " (вы)" : ""}</span>
+            </span>
+            {variant !== "list" && <span className="participant-status">
+                {sharingScreen && <span className="participant-screen" title="Демонстрирует экран" aria-label="Демонстрирует экран"><Icon name="screen"/></span>}
                 {participant.muted && <span className="participant-flag" aria-label="Микрофон выключен"><MicOffIcon/></span>}
                 {participant.deafened && <span className="participant-flag" aria-label="Звук выключен"><SoundOffIcon/></span>}
                 <span className="speaking-ring" aria-label={participant.speaking ? "Говорит" : "Не говорит"}/>
-            </span>
+            </span>}</>}
         </div>
-        {menu && createPortal(<div ref={menuRef} className="participant-menu" role="menu" style={position}
+        {!participant.local && menu && createPortal(<div ref={menuRef} className="participant-menu" role="menu" style={position}
                                    aria-label={`Управление пользователем ${participant.displayName}`}>
             <div className="participant-menu-user">
                 <span className="participant-menu-avatar" aria-hidden="true">{participant.displayName.slice(0, 1).toUpperCase()}</span>
                 <strong>{participant.displayName}</strong>
             </div>
             <div className="participant-menu-separator"/>
+            {!participant.local && <>
             <div className="participant-volume-heading">
                 <label htmlFor={`participant-volume-${participant.sessionId}`}>Громкость пользователя</label>
                 <output>{Math.round(menu.volume * 100)}%</output>
@@ -151,21 +172,15 @@ export function ParticipantRow({participant, channels, canKick, canBan, canDrag,
                        onPointerUp={(event) => setVolume(Number(event.currentTarget.value), true)}
                        onKeyUp={(event) => setVolume(Number(event.currentTarget.value), true)}/>
             </div>
+            </>}
             <div className="participant-menu-actions">
-                <button type="button" role="menuitem" className={menu.volume === 0 ? "active" : ""}
+                <button type="button" role="menuitem" onClick={() => { onMessage(participant); close(); }}><span><Icon name="chat"/></span>Сообщение</button>
+                {!participant.local && <button type="button" role="menuitem" className={menu.volume === 0 ? "active" : ""}
                         onClick={() => setVolume(menu.volume === 0 ? 1 : 0, true)}>
                     <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? "Включить звук" : "Заглушить"}
-                </button>
-                {canKick && <button type="button" role="menuitem" onClick={() => void moderate("kick")}>Отключить</button>}
-                {canBan && <button type="button" role="menuitem" onClick={() => void moderate("ban")}>Заблокировать</button>}
-                {canDrag && menu.channelID && <div className="participant-drag-control">
-                    <select aria-label="Канал для перемещения" value={menu.channelID}
-                            onChange={(event) => setMenu((current) => current ? {...current, channelID: event.target.value} : null)}>
-                        {channels.filter((channel) => channel.id !== participant.channelId).map((channel) =>
-                            <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                    </select>
-                    <button type="button" role="menuitem" onClick={() => void moderate("drag")}>Переместить</button>
-                </div>}
+                </button>}
+                {!participant.local && canKick && <button type="button" role="menuitem" onClick={() => void moderate("kick")}>Отключить</button>}
+                {!participant.local && canBan && <button type="button" role="menuitem" onClick={() => void moderate("ban")}>Заблокировать</button>}
             </div>
         </div>, document.body)}
     </>;
