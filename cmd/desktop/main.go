@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"uniclog.io/govts/internal/clientapp"
+	"uniclog.io/govts/internal/logging"
 	wailsui "uniclog.io/govts/internal/ui/wails"
 )
 
@@ -27,6 +28,12 @@ func main() {
 		log.Fatalf("resolve application data directory: %v", err)
 	}
 	webviewDataPath := filepath.Join(configDir, "Govts", "WebView2")
+	stopLogging, err := logging.Start(filepath.Join(configDir, "Govts", "logs", "client.log"))
+	if err != nil {
+		log.Printf("file logging unavailable; continuing with console logging: %v", err)
+	}
+	defer stopLogging()
+	log.Printf("client starting: version=%s", applicationVersion())
 
 	client := clientapp.New(clientapp.Options{Logger: log.Default(), Secure: true})
 	service := wailsui.NewService(client)
@@ -81,7 +88,9 @@ func main() {
 
 	if err := app.Run(); err != nil {
 		shutdown()
-		log.Fatal(err)
+		log.Printf("client stopped with error: %v", err)
+		stopLogging()
+		os.Exit(1)
 	}
 	shutdown()
 }

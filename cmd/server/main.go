@@ -15,6 +15,7 @@ import (
 
 	"uniclog.io/govts/internal/appversion"
 	"uniclog.io/govts/internal/identity"
+	"uniclog.io/govts/internal/logging"
 	"uniclog.io/govts/internal/media"
 	"uniclog.io/govts/internal/persist"
 	"uniclog.io/govts/internal/protocol"
@@ -27,6 +28,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print server version and exit")
 	configPath := flag.String("config", "", "path to server JSON config")
 	databasePath := flag.String("db", "govts.db", "path to persistent SQLite database")
+	logPath := flag.String("log-file", "logs/server.log", "base path for per-run server log files")
 	port := flag.Int("port", 9000, "UDP listen port (1..65535)")
 	mediaPort := flag.Int("media-port", -1, "HTTPS media signaling port; -1 uses voice port + 2, 0 disables screen sharing")
 	mediaMinPort := flag.Int("media-min-port", 20000, "first UDP port used by WebRTC")
@@ -40,8 +42,18 @@ func main() {
 		return
 	}
 
-	if err := run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity); err != nil {
-		log.Fatal(err)
+	stopLogging, err := logging.StartLocal(*logPath)
+	if err != nil {
+		log.Printf("file logging unavailable; continuing with console logging: %v", err)
+	}
+	log.Printf("server starting: version=%s", serverVersion())
+	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity)
+	if err != nil {
+		log.Printf("server stopped with error: %v", err)
+	}
+	stopLogging()
+	if err != nil {
+		os.Exit(1)
 	}
 }
 
