@@ -89,6 +89,11 @@ func (s *State) SetChannelID(channelID domain.ChannelID) {
 }
 
 func (s *State) Generation() uint64 { s.mu.RLock(); defer s.mu.RUnlock(); return s.generation }
+func (s *State) SessionIdentity() (uint64, uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generation, s.sessionID
+}
 func (s *State) ConnectionStatus() ConnectionStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

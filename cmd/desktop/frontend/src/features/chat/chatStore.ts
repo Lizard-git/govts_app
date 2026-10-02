@@ -5,7 +5,7 @@ export type PendingMessage = {clientId: string; text: string; sentAtMS: number; 
 export type Conversation = {
     messages: ChatMessageDTO[]; pending: PendingMessage[]; draft: string;
     loaded: boolean; loading: boolean; error: string; hasOlder: boolean;
-    cursor: string; readId: string; unread: number; olderWindow: boolean;
+    cursor: string; readId: string; unread: number; olderWindow: boolean; newMessages: boolean;
 };
 const keyOf = (t: ChatTarget) => `${t.kind}:${t.id}`;
 const compare = (a: string, b: string) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
@@ -35,9 +35,60 @@ export class ChatStore {
     private reading = new Set<string>();
     private listing = false;
     private disposed = false;
+    private connected = false;
+    private epoch = 0;
+    private lifecycle = new AbortController();
+    private requestTail: Promise<unknown> = Promise.resolve();
+    private lastRequestAt = 0;
+    private pausedUntil = 0;
+    private nextSyncAt = 0;
+    private scheduled = false;
+    private watched = new Map<string, {target: ChatTarget; count: number}>();
+    private readQueue = new Map<string, {target: ChatTarget; id: string}>();
+    private dismissedDialogs = new Map<string, string>();
+    private timer: number;
 
-    constructor(context: string, userId: string) { this.context = context; this.userId = userId; }
-    dispose() { this.disposed = true; this.listeners.clear(); }
+    constructor(context: string, userId: string) {
+        this.context = context; this.userId = userId;
+        this.timer = window.setInterval(() => void this.reconcile(), 1000);
+    }
+    dispose() { this.disposed = true; this.lifecycle.abort(); window.clearInterval(this.timer); this.listeners.clear(); }
+    setConnected(connected: boolean) {
+        if (connected === this.connected) return;
+        this.connected = connected; this.epoch++; this.lifecycle.abort(); this.lifecycle = new AbortController();
+        if (!connected) this.readQueue.clear();
+        this.nextSyncAt = 0;
+    }
+    invalidate() { this.nextSyncAt = Math.min(this.nextSyncAt, Date.now() + 3000); }
+    watch(target: ChatTarget) {
+        const key = keyOf(target), entry = this.watched.get(key);
+        this.watched.set(key, {target, count: (entry?.count ?? 0) + 1});
+        this.nextSyncAt = 0;
+        return () => {
+            const entry = this.watched.get(key);
+            if (entry && entry.count > 1) entry.count--;
+            else this.watched.delete(key);
+        };
+    }
+    dismissDialog(userId: string) {
+        const c = this.conversation({kind: "direct", id: userId});
+        const latest = maxID(this.dialogs.find((d) => d.userId === userId)?.latestId ?? "0", c.messages[c.messages.length - 1]?.id ?? c.cursor);
+        this.dismissedDialogs.set(userId, latest);
+    }
+    shouldOpenDialog(dialog: ChatDialogDTO) { return dialog.unread > 0 && compare(dialog.latestId, this.dismissedDialogs.get(dialog.userId) ?? "0") > 0; }
+    private async reconcile() {
+        if (!this.connected || this.disposed || this.scheduled || Date.now() < Math.max(this.nextSyncAt, this.pausedUntil)) return;
+        this.scheduled = true;
+        const epoch = this.epoch;
+        this.nextSyncAt = Date.now() + 5000;
+        try {
+            await this.flushReads();
+            if (epoch !== this.epoch || !this.connected) return;
+            await Promise.all([...this.watched.values()].map(({target}) => this.sync(target)));
+            if (epoch !== this.epoch || !this.connected) return;
+            await this.refreshDialogs();
+        } finally { this.scheduled = false; }
+    }
     subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
     private notify() { if (!this.disposed) for (const listener of this.listeners) listener(); }
 
@@ -50,7 +101,7 @@ export class ChatStore {
                 if (evict) this.conversations.delete(evict[0]);
                 else break; // Only pinned drafts, sends and in-flight requests remain.
             }
-            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", readId: "0", unread: 0, olderWindow: false};
+            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
             this.conversations.set(key, c);
         }
         // Touch entries so old channel histories are evicted before visible tabs.
@@ -65,33 +116,62 @@ export class ChatStore {
     }
 
     private async request(operation: string, target?: ChatTarget, extra: Partial<ChatRequestDTO> = {}): Promise<ChatPageDTO> {
-        if (this.disposed) throw new Error("Контекст чата закрыт");
-        const page = await desktopAPI.chat({context: this.context, operation, kind: target?.kind ?? "", targetId: target?.id ?? "0", cursor: "0", forward: false, clientId: "", text: "", ...extra});
-        if (this.disposed || page.userId !== this.userId) throw new Error("Учётная запись чата изменилась");
-        return page;
+        const epoch = this.epoch, signal = this.lifecycle.signal;
+        const check = () => {
+            if (this.disposed || !this.connected || epoch !== this.epoch || signal.aborted) throw new Error("Сессия чата завершена");
+        };
+        const run = async () => {
+            check();
+            if (Date.now() < this.pausedUntil) throw new Error("Лимит запросов чата; повторите позже");
+            const delay = Math.max(0, this.lastRequestAt + 1000 - Date.now());
+            if (delay) await new Promise<void>((resolve, reject) => {
+                const aborted = () => { window.clearTimeout(timer); reject(new Error("Сессия чата завершена")); };
+                const timer = window.setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, delay);
+                signal.addEventListener("abort", aborted, {once: true});
+            });
+            check(); this.lastRequestAt = Date.now();
+            try {
+                const page = await desktopAPI.chat({context: this.context, operation, kind: target?.kind ?? "", targetId: target?.id ?? "0", cursor: "0", forward: false, clientId: "", text: "", ...extra});
+                check();
+                if (page.userId !== this.userId) throw new Error("Учётная запись чата изменилась");
+                return page;
+            } catch (e) {
+                if (/лимит запросов чата/i.test(chatError(e))) this.pausedUntil = Date.now() + 60000;
+                throw e;
+            }
+        };
+        const result = this.requestTail.then(run, run);
+        this.requestTail = result.catch(() => undefined);
+        return result;
     }
     private merge(c: Conversation, page: ChatPageDTO, history = false, older = false) {
         const messages = new Map(c.messages.map((m) => [m.id, m]));
-        for (const m of page.messages ?? []) messages.set(m.id, m);
+        const confirmed = new Set((page.messages ?? []).filter((m) => m.senderId === this.userId).map((m) => m.clientId));
+        c.pending = c.pending.filter((p) => !confirmed.has(p.clientId));
+        const frozen = c.olderWindow && !older;
+        for (const m of page.messages ?? []) {
+            if (!frozen || messages.has(m.id)) messages.set(m.id, m);
+            else c.newMessages = true;
+        }
         const sorted = [...messages.values()].sort((a, b) => compare(a.id, b.id));
         if (older && sorted.length > 500) { c.messages = sorted.slice(0, 500); c.olderWindow = true; }
         else c.messages = sorted.slice(-500);
-        const confirmed = new Set(c.messages.filter((m) => m.senderId === this.userId).map((m) => m.clientId));
-        c.pending = c.pending.filter((p) => !confirmed.has(p.clientId));
         c.readId = maxID(c.readId, page.readId);
         if (history) c.unread = page.unread;
     }
 
     async sync(target: ChatTarget, older = false) {
-        if (target.id === "0" || this.disposed) return;
+        if (target.id === "0" || this.disposed || !this.connected) return;
         const key = keyOf(target);
         if (this.busy.has(key)) return;
         const c = this.conversation(target);
+        const epoch = this.epoch;
         this.busy.add(key); c.loading = true; this.notify();
         try {
             if (!c.loaded || older) {
                 let cursor = older ? c.messages[0]?.id ?? "0" : "0";
-                for (let i = 0; i < 4; i++) {
+                for (let i = 0; i < (older ? 2 : 1); i++) {
+                    if (epoch !== this.epoch) break;
                     const page = await this.request("history", target, {cursor});
                     this.merge(c, page, true, older);
                     c.hasOlder = page.hasMore;
@@ -101,42 +181,38 @@ export class ChatStore {
                     cursor = page.cursor;
                 }
             } else {
-                for (let i = 0; i < 8; i++) {
-                    const page = await this.request("history", target, {cursor: c.cursor, forward: true});
-                    this.merge(c, page, true);
-                    c.cursor = maxID(c.cursor, page.cursor);
-                    if (!page.hasMore) break;
-                }
+                const page = await this.request("history", target, {cursor: c.cursor, forward: true});
+                this.merge(c, page, true);
+                c.cursor = maxID(c.cursor, page.cursor);
+                if (page.hasMore) this.invalidate();
             }
             c.error = "";
-        } catch (e) { if (!this.disposed) c.error = chatError(e); }
+        } catch (e) { if (!this.disposed && epoch === this.epoch) c.error = chatError(e); }
         finally { c.loading = false; this.busy.delete(key); this.notify(); }
     }
 
     async refreshDialogs(more = false) {
-        if (this.listing || this.disposed) return;
+        if (this.listing || this.disposed || !this.connected) return;
         this.listing = true;
+        const epoch = this.epoch;
         try {
             const result = new Map<string, ChatDialogDTO>(this.dialogs.map((d) => [d.userId, d]));
-            let cursor = more || this.dialogHasMore ? this.dialogCursor : "0";
-            for (let i = 0; i < 4; i++) {
-                const page = await this.request("dialogs", undefined, {cursor});
-                for (const d of page.dialogs ?? []) result.set(d.userId, d);
-                this.dialogHasMore = page.hasMore;
-                this.dialogCursor = page.cursor;
-                if (!page.hasMore) break;
-                cursor = page.cursor;
-            }
+            const cursor = more || this.dialogHasMore ? this.dialogCursor : "0";
+            const page = await this.request("dialogs", undefined, {cursor});
+            for (const d of page.dialogs ?? []) result.set(d.userId, d);
+            this.dialogHasMore = page.hasMore;
+            this.dialogCursor = page.cursor;
+            if (page.hasMore) this.invalidate();
             this.dialogs = [...result.values()].sort((a, b) => compare(b.latestId, a.latestId)).slice(0, 256);
             this.dialogError = "";
-        } catch (e) { if (!this.disposed) this.dialogError = chatError(e); }
+        } catch (e) { if (!this.disposed && epoch === this.epoch) this.dialogError = chatError(e); }
         finally { this.listing = false; this.notify(); }
     }
 
     async latest(target: ChatTarget) {
         const c = this.conversation(target);
         if (this.busy.has(keyOf(target))) return;
-        c.messages = []; c.loaded = false; c.olderWindow = false; c.hasOlder = false; c.cursor = "0";
+        c.messages = []; c.loaded = false; c.olderWindow = false; c.newMessages = false; c.hasOlder = false; c.cursor = "0";
         await this.sync(target);
     }
 
@@ -165,20 +241,37 @@ export class ChatStore {
         try { this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text})); c.error = ""; }
         catch (e) { if (!this.disposed) { pending.state = "error"; pending.error = chatError(e); } }
         finally { this.notify(); }
-        void this.refreshDialogs();
+        this.invalidate();
     }
 
     async markRead(target: ChatTarget) {
         const key = keyOf(target), c = this.conversation(target);
         const last = c.messages[c.messages.length - 1]?.id ?? "0";
         const id = compare(last, c.cursor) < 0 ? last : c.cursor;
-        if (this.disposed || this.reading.has(key) || compare(id, c.readId) <= 0) return;
-        this.reading.add(key);
-        try {
-            await this.request("read", target, {cursor: id});
-            c.readId = maxID(c.readId, id); c.unread = c.messages.filter((m) => m.senderId !== this.userId && compare(m.id, id) > 0).length; this.notify();
-            void this.refreshDialogs();
-        } catch (e) { if (!this.disposed) { c.error = chatError(e); this.notify(); } }
-        finally { this.reading.delete(key); }
+        if (this.disposed || !this.connected || c.olderWindow || compare(id, c.readId) <= 0) return;
+        this.readQueue.set(key, {target, id: maxID(id, this.readQueue.get(key)?.id ?? "0")});
+        this.invalidate();
+    }
+    private async flushReads() {
+        const epoch = this.epoch;
+        for (const [key, {target, id}] of [...this.readQueue]) {
+            if (epoch !== this.epoch || !this.connected) break;
+            if (target.kind === "channel" && !this.watched.has(key)) { this.readQueue.delete(key); continue; }
+            if (this.reading.has(key)) continue;
+            this.readQueue.delete(key);
+            const c = this.conversation(target);
+            if (compare(id, c.readId) <= 0) continue;
+            this.reading.add(key);
+            try {
+                await this.request("read", target, {cursor: id});
+                c.readId = maxID(c.readId, id);
+                this.notify();
+            } catch (e) {
+                if (!this.disposed && this.connected && epoch === this.epoch && this.watched.has(key)) {
+                    this.readQueue.set(key, {target, id: maxID(id, this.readQueue.get(key)?.id ?? "0")});
+                    c.error = chatError(e); this.notify();
+                }
+            } finally { this.reading.delete(key); }
+        }
     }
 }

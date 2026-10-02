@@ -247,6 +247,7 @@ func doRequestAttempts(
 	packet protocol.VoicePacket,
 	timeout time.Duration,
 	attempts int,
+	guards ...func() error,
 ) (ControlResponse, error) {
 	if attempts <= 0 {
 		return ControlResponse{}, errors.New("request attempts must be positive")
@@ -259,6 +260,14 @@ func doRequestAttempts(
 	defer state.CancelRequest(requestID)
 
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return ControlResponse{}, err
+		}
+		for _, guard := range guards {
+			if err := guard(); err != nil {
+				return ControlResponse{}, err
+			}
+		}
 		if err := conn.SendPacket(packet); err != nil {
 			log.Printf("control request send failed: type=%d session_id=%d request_id=%d attempt=%d error=%v", packet.Type, packet.SessionID, requestID, attempt, err)
 			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)

@@ -85,6 +85,7 @@ type App struct {
 	runCancel          context.CancelFunc
 	runDone            chan struct{}
 	currentConn        *udp.ClientPacketConn
+	chatSession        *chatSession
 	serverEndpoint     netip.AddrPort
 	chatServerIdentity string
 	chatClientIdentity string
@@ -286,8 +287,11 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			return fmt.Errorf("start client session: %w", err)
 		}
 		a.state.SetAccountPrivileges(joinLevel, permissions)
+		chatCtx, cancelChat := context.WithCancel(ctx)
+		chat := &chatSession{ctx: chatCtx, cancel: cancelChat}
 		a.mu.Lock()
 		a.currentConn = conn
+		a.chatSession = chat
 		a.chatServerIdentity = serverIdentity
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
@@ -301,11 +305,15 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 				a.events.append("connection", "Подключено", uint64(a.state.SnapshotView().Revision))
 			}
 			everConnected = true
-		})
+		}, cancelChat)
 		a.logger.Printf("session ended: session_id=%d server=%s local=%s duration=%s error=%v", sessionID, endpoint, conn.LocalAddr(), time.Since(sessionStarted), sessionErr)
 		a.mu.Lock()
 		a.currentConn = nil
+		a.chatSession = nil
+		chat.cancel()
 		a.mu.Unlock()
+		// Drain chat requests before rebinding the socket or starting a new session.
+		chat.requests.Wait()
 		if ctx.Err() != nil {
 			return nil
 		}

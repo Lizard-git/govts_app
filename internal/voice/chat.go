@@ -178,14 +178,23 @@ func (w *chatWorker) handle(parent context.Context, job chatJob) {
 			page = domain.ChatPage{UserID: actor.UserID}
 		}
 	}
+	w.complete(ctx, job, actor, page, err)
+}
+
+// complete keeps post-commit delivery separate from authorization and storage.
+func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, page domain.ChatPage, err error) {
 	var payload []byte
 	if err == nil {
 		payload, err = fitChatPage(&page, job.request)
 	}
 	w.lockPolicy()
-	// Never return cached history across a channel change, kick or ban.
-	if _, e := w.check(job); e != nil {
-		err = e
+	// Revalidate reads before exposing history. Writes were authorized on
+	// acceptance and committed by the store: a later channel change cannot
+	// turn a successful commit into a rejection or suppress its notifications.
+	if job.request.Operation == protocol.ChatHistory || job.request.Operation == protocol.ChatDialogs {
+		if _, e := w.check(job); e != nil {
+			err = e
+		}
 	}
 	w.unlockPolicy()
 	if err != nil {

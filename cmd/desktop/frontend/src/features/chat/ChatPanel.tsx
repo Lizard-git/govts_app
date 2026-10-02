@@ -18,6 +18,7 @@ export function ChatPanel({store, target, title, active, connected, online, loca
     const composer = useRef<HTMLTextAreaElement>(null);
     const atBottom = useRef(true);
     const previousHeight = useRef<number | null>(null);
+    const previousAnchor = useRef<{id: string; top: number} | null>(null);
     const [newMessages, setNewMessages] = useState(false);
     const [visible, setVisible] = useState(document.visibilityState === "visible");
     useEffect(() => store.subscribe(refresh), [store]);
@@ -47,18 +48,20 @@ export function ChatPanel({store, target, title, active, connected, online, loca
     const lastID = c.messages[c.messages.length - 1]?.id;
     useEffect(() => {
         if (!active || !connected || !visible) return;
-        void store.sync(target);
-        const timer = window.setInterval(() => void store.sync(target), 5000);
-        return () => window.clearInterval(timer);
+        return store.watch(target);
     }, [store, target.kind, target.id, active, connected, visible]);
     useLayoutEffect(() => {
         if (!active || !history.current) return;
+        if (previousHeight.current !== null && c.loading) return;
         if (previousHeight.current !== null) {
-            history.current.scrollTop += history.current.scrollHeight - previousHeight.current;
+            const anchor = previousAnchor.current;
+            const node = anchor ? history.current.querySelector<HTMLElement>(`[data-message-id="${anchor.id}"]`) : null;
+            history.current.scrollTop += node && anchor ? node.getBoundingClientRect().top - anchor.top : history.current.scrollHeight - previousHeight.current;
             previousHeight.current = null;
+            previousAnchor.current = null;
         } else if (atBottom.current) history.current.scrollTop = history.current.scrollHeight;
         else setNewMessages(true);
-    }, [lastID, c.messages.length, c.pending.length, active]);
+    }, [lastID, c.messages[0]?.id, c.messages.length, c.pending.length, active]);
     useEffect(() => {
         if (active && connected && visible && atBottom.current) void store.markRead(target);
     }, [lastID, c.loading, active, connected, visible, store, target.id, target.kind]);
@@ -67,8 +70,16 @@ export function ChatPanel({store, target, title, active, connected, online, loca
     const send = () => { if (connected && valid) void store.send(target, c.draft); };
     const older = async () => {
         if (c.loading) return;
+        const first = c.messages[0]?.id, last = c.messages[c.messages.length - 1]?.id;
         previousHeight.current = history.current?.scrollHeight ?? null;
+        const top = history.current?.getBoundingClientRect().top ?? 0;
+        const anchor = [...(history.current?.querySelectorAll<HTMLElement>("[data-message-id]") ?? [])].find((node) => node.getBoundingClientRect().bottom > top);
+        previousAnchor.current = anchor ? {id: anchor.dataset.messageId!, top: anchor.getBoundingClientRect().top} : null;
         await store.sync(target, true);
+        // A failed/no-op load must not affect the next incoming message's scroll.
+        if (first === c.messages[0]?.id && last === c.messages[c.messages.length - 1]?.id) {
+            previousHeight.current = null; previousAnchor.current = null;
+        }
         refresh();
     };
     return <section className="chat-panel" aria-label={title}>
@@ -87,7 +98,7 @@ export function ChatPanel({store, target, title, active, connected, online, loca
             {c.hasOlder && <button className="chat-older" disabled={!connected || c.loading} onClick={() => void older()}>Более ранние сообщения</button>}
             {!c.loaded && <div className="chat-placeholder"><Icon name="chat"/><p>{c.loading ? "Загрузка сообщений…" : connected ? "Откройте чат для загрузки" : "Ожидание подключения"}</p></div>}
             {c.loaded && !c.messages.length && !c.pending.length && <div className="chat-placeholder">Сообщений пока нет</div>}
-            {c.messages.map((m) => <article key={m.id} className={`chat-message ${m.senderId === store.userId ? "own" : ""}`}>
+            {c.messages.map((m) => <article key={m.id} data-message-id={m.id} className={`chat-message ${m.senderId === store.userId ? "own" : ""}`}>
                 <time dateTime={new Date(m.sentAtMs).toISOString()}>{messageDate(m.sentAtMs)}</time>{" "}<strong>{m.senderName}</strong>{": "}<span>{m.text}</span>
             </article>)}
             {c.pending.map((p) => <article key={p.clientId} className="chat-message own pending">
@@ -95,8 +106,9 @@ export function ChatPanel({store, target, title, active, connected, online, loca
                 {p.state === "sending" ? <span className="chat-send-status" role="status" aria-label="Отправляется" title="Отправляется">…</span> : <button disabled={!connected} title={p.error} aria-label={`Повторить отправку: ${p.error ?? "ошибка"}`} onClick={() => void store.send(target, p.text, p)}>Повторить</button>}
             </article>)}
         </div>
-        {(newMessages || c.olderWindow) && <button className="chat-new" disabled={!connected || c.loading} onClick={() => {
-            if (c.olderWindow) void store.latest(target);
+        {(newMessages || c.olderWindow || c.newMessages) && <button className="chat-new" disabled={!connected || c.loading} onClick={async () => {
+            atBottom.current = true;
+            if (c.olderWindow) await store.latest(target);
             if (history.current) history.current.scrollTop = history.current.scrollHeight;
             atBottom.current = true; setNewMessages(false);
             if (active && connected && visible) void store.markRead(target);

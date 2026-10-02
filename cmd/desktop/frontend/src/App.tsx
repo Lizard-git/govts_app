@@ -84,11 +84,9 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     }, [view.chatContext, view.userId, view.connectionStatus]);
     useEffect(() => () => chatStoreRef.current?.dispose(), []);
     useEffect(() => {
-        if (!chatStore || view.connectionStatus !== "connected") return;
-        void chatStore.refreshDialogs();
-        const timer = window.setInterval(() => void chatStore.refreshDialogs(), 5000);
-        return () => window.clearInterval(timer);
-    }, [chatStore, view.connectionStatus, view.chatRevision]);
+        chatStore?.setConnected(view.connectionStatus === "connected");
+    }, [chatStore, view.connectionStatus]);
+    useEffect(() => { chatStore?.invalidate(); }, [chatStore, view.chatRevision]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
     const lastSequence = useRef("0");
@@ -205,25 +203,21 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     if (view.channelId !== "0") lastChatChannel.current = view.channelId;
     const chatChannelID = view.channelId !== "0" ? view.channelId : lastChatChannel.current;
     const [, refreshChats] = useReducer((n: number) => n + 1, 0);
-    const dismissedDialogs = useRef(new Map<string, string>());
     useEffect(() => chatStore?.subscribe(refreshChats), [chatStore]);
     const dialogs = chatStore?.dialogs ?? [];
     useEffect(() => {
         setDirectChats((current) => {
             const next = [...current];
             for (const d of dialogs) {
-                if (d.unread && !next.some((chat) => chat.userId === d.userId) && dismissedDialogs.current.get(d.userId) !== d.latestId && next.length < 16) next.push({userId: d.userId, displayName: d.displayName});
+                if (chatStore?.shouldOpenDialog(d) && !next.some((chat) => chat.userId === d.userId) && next.length < 16) next.push({userId: d.userId, displayName: d.displayName});
             }
             return next.length === current.length ? current : next;
         });
-    }, [dialogs, setDirectChats]);
+    }, [dialogs, setDirectChats, chatStore]);
     useEffect(() => {
         if (!chatStore || view.connectionStatus !== "connected" || view.channelId === "0") return;
-        void chatStore.sync({kind: "channel", id: view.channelId});
-        if (contentTab.startsWith("direct:")) void chatStore.sync({kind: "direct", id: contentTab.slice(7)});
-        const timer = window.setInterval(() => void chatStore.sync({kind: "channel", id: view.channelId}), 5000);
-        return () => window.clearInterval(timer);
-    }, [chatStore, view.chatRevision, view.connectionStatus, view.channelId, contentTab]);
+        return chatStore.watch({kind: "channel", id: view.channelId});
+    }, [chatStore, view.connectionStatus, view.channelId]);
     const screenOwners = useMemo(() => new Set((view.screenStreams ?? []).map((stream) => stream.ownerSessionId)), [view.screenStreams]);
     const [selectedID, setSelectedID] = useState(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
     const previousChannelID = useRef(view.channelId);
@@ -255,7 +249,7 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     };
     const openMessage = (participant: ParticipantDTO) => openDirect(participant.userId ?? "0", participant.displayName);
     const closeMessage = (userId: string) => {
-        dismissedDialogs.current.set(userId, dialogs.find((d) => d.userId === userId)?.latestId ?? "0");
+        chatStore?.dismissDialog(userId);
         const tab: ContentTab = `direct:${userId}`;
         const next = contentTab === tab ? allTabs[Math.max(0, allTabs.indexOf(tab) - 1)] : contentTab;
         setDirectChats((current) => current.filter((chat) => chat.userId !== userId));

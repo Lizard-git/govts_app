@@ -19,7 +19,13 @@ import (
 	"uniclog.io/govts/internal/transport/udp"
 )
 
-func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func()) (runErr error) {
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func(), onStop ...func()) (runErr error) {
+	stopSession := func() {
+		for _, stop := range onStop {
+			stop()
+		}
+	}
+	defer stopSession()
 	output = &lockedOutput{writer: output}
 	noticeOutput = &lockedOutput{writer: noticeOutput}
 	sessionID := state.SessionID()
@@ -77,6 +83,8 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	defer detachPlayer()
 	supervisor := newLoopSupervisor(parent)
 	ctx := supervisor.Context()
+	stopNotification := context.AfterFunc(ctx, stopSession)
+	defer stopNotification()
 	defer supervisor.Cancel()
 	networkLoop := func(operation string, loop func() error) error {
 		return classifyNetworkLoopError(operation, loop())

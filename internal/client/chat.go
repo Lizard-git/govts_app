@@ -21,13 +21,23 @@ func RequestChat(ctx context.Context, conn *udp.ClientPacketConn, state *State, 
 	if err != nil {
 		return domain.ChatPage{}, err
 	}
-	generation := state.Generation()
-	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketChatRequest, Payload: b}, time.Second, 3)
+	generation, sessionID := state.SessionIdentity()
+	checkSession := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		currentGeneration, currentSession := state.SessionIdentity()
+		if sessionID == 0 || currentGeneration != generation || currentSession != sessionID || state.ConnectionStatus() != ConnectionConnected {
+			return errors.New("сессия чата изменилась")
+		}
+		return nil
+	}
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketChatRequest, Payload: b}, time.Second, 3, checkSession)
 	if err != nil {
 		return domain.ChatPage{}, err
 	}
-	if state.Generation() != generation {
-		return domain.ChatPage{}, errors.New("сессия чата изменилась")
+	if err := checkSession(); err != nil {
+		return domain.ChatPage{}, err
 	}
 	if response.Type != protocol.PacketChatAck {
 		return domain.ChatPage{}, errors.New("неподдерживаемый ответ чата")
