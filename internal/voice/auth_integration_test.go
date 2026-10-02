@@ -30,7 +30,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	}
 	defer store.Close()
 	hub := voice.NewHub()
-	version, err := appversion.Parse("0.2.5")
+	version, err := appversion.Parse("0.2.9")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, "alice", private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.5")
+		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, "alice", private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.9")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,9 +281,9 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer bannedConn.Close()
-	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "alice", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.5")
+	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "alice", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.9")
 	var rejected *client.AuthenticationRejectedError
-	if !errors.As(err, &rejected) {
+	if !errors.As(err, &rejected) || !strings.Contains(rejected.Reason, "banned") {
 		t.Fatalf("banned reconnect error = %v", err)
 	}
 	cancel()

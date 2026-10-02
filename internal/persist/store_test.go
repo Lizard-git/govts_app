@@ -109,6 +109,9 @@ func TestVersionTwoMigrationSelectsUnrestrictedDefault(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE channels SET min_join_level=25,max_users=10 WHERE id=1`,
 		`ALTER TABLE server_settings DROP COLUMN default_channel_id`,
+		`DROP TABLE chat_reads`,
+		`DROP TABLE chat_messages`,
+		`DROP TABLE chat_dialogs`,
 		`PRAGMA user_version=2`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -154,6 +157,9 @@ func TestVersionTwoMigrationPreservesRestrictedChannels(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE channels SET min_join_level=25,max_users=10 WHERE id=1`,
 		`ALTER TABLE server_settings DROP COLUMN default_channel_id`,
+		`DROP TABLE chat_reads`,
+		`DROP TABLE chat_messages`,
+		`DROP TABLE chat_dialogs`,
 		`PRAGMA user_version=2`,
 	} {
 		if _, err := db.Exec(statement); err != nil {

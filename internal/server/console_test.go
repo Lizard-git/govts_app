@@ -74,14 +74,17 @@ func TestConsoleCommandsShowDeterministicState(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// Console timestamps intentionally use the machine's local timezone.
+			want := strings.ReplaceAll(test.want, "2026-09-11T12:00:00Z", now.Add(-time.Minute).Local().Format(time.RFC3339))
+			want = strings.ReplaceAll(want, "2026-09-11T12:00:50Z", now.Add(-10*time.Second).Local().Format(time.RFC3339))
 			var output bytes.Buffer
 			console := NewConsole(hub, strings.NewReader(""), &output, info)
 			console.now = func() time.Time { return now }
 			if err := console.Execute(test.command); err != nil {
 				t.Fatal(err)
 			}
-			if got := output.String(); got != test.want {
-				t.Fatalf("output:\n%s\nwant:\n%s", got, test.want)
+			if got := output.String(); got != want {
+				t.Fatalf("output:\n%s\nwant:\n%s", got, want)
 			}
 		})
 	}

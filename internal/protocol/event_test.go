@@ -9,7 +9,7 @@ import (
 
 func TestStateEventCodec(t *testing.T) {
 	events := []domain.StateEvent{
-		{Kind: domain.ParticipantJoined, Revision: 1, Participant: domain.Participant{SessionID: 7, DisplayName: "Алиса"}},
+		{Kind: domain.ParticipantJoined, Revision: 1, Participant: domain.Participant{SessionID: 7, UserID: 123, DisplayName: "Алиса"}},
 		{Kind: domain.ParticipantLeft, Revision: 2, SessionID: 7},
 		{Kind: domain.ParticipantMoved, Revision: 3, SessionID: 7, ChannelID: 2},
 		{Kind: domain.ParticipantAudio, Revision: 4, SessionID: 7, Muted: true, Deafened: true},
