@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import type {Dispatch, SetStateAction} from "react";
+import {useReducer} from "react";
 import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
 import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
@@ -9,15 +10,17 @@ import {AudioControls, ConnectionPage, StatusBar, type Page} from "./features/co
 import {ParticipantRow} from "./features/participants/ParticipantRow";
 import {Icon} from "./components/Icon";
 import {ChatPanel} from "./features/chat/ChatPanel";
+import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
 
 const contentTabs = ["chat", "screens", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
-type DirectChat = {sessionId: string; displayName: string};
+type DirectChat = {userId: string; displayName: string};
 
 const participantDragType = "application/x-govts-participant";
 
 const emptyView: ClientViewDTO = {
+    chatContext: "", userId: "0", chatRevision: "0",
     connectionStatus: "disconnected",
     server: {name: ""}, revision: "0", sessionId: "0", channelId: "0", snapshotFresh: false,
     canKick: false, canBan: false, canDrag: false,
@@ -69,6 +72,23 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     const [page, setPage] = useState<Page>("channels");
     const [contentTab, setContentTab] = useState<ContentTab>("chat");
     const [directChats, setDirectChats] = useState<DirectChat[]>([]);
+    const [chatStore, setChatStore] = useState<ChatStore | null>(null);
+    const chatStoreRef = useRef<ChatStore | null>(null);
+    useEffect(() => {
+        if (view.userId === "0" || view.connectionStatus !== "connected") return;
+        if (chatStoreRef.current?.context === view.chatContext) return;
+        chatStoreRef.current?.dispose();
+        const store = new ChatStore(view.chatContext, view.userId);
+        chatStoreRef.current = store;
+        setChatStore(store); setDirectChats([]); setContentTab("chat");
+    }, [view.chatContext, view.userId, view.connectionStatus]);
+    useEffect(() => () => chatStoreRef.current?.dispose(), []);
+    useEffect(() => {
+        if (!chatStore || view.connectionStatus !== "connected") return;
+        void chatStore.refreshDialogs();
+        const timer = window.setInterval(() => void chatStore.refreshDialogs(), 5000);
+        return () => window.clearInterval(timer);
+    }, [chatStore, view.connectionStatus, view.chatRevision]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
     const lastSequence = useRef("0");
@@ -104,6 +124,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     const clearEvents = useCallback(() => {
         setEvents([]);
         setDirectChats([]);
+        chatStoreRef.current?.dispose(); chatStoreRef.current = null; setChatStore(null);
         setContentTab("chat");
         lastSequence.current = "0";
     }, []);
@@ -159,13 +180,13 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} invoke={invoke} screenMedia={screenMedia.current}
-                                onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats}/>
+                                onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
                 : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke}/></div></>}
         </main>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, setContentTab, directChats, setDirectChats}: {
+function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
     view: ClientViewDTO;
     events: ClientEventDTO[];
     invoke: (operation: () => Promise<unknown>) => Promise<void>
@@ -175,9 +196,34 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     setContentTab: Dispatch<SetStateAction<ContentTab>>;
     directChats: DirectChat[];
     setDirectChats: Dispatch<SetStateAction<DirectChat[]>>;
+    chatStore: ChatStore | null;
 }) {
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
+    const localChatName = participants.find((p) => p.sessionId === view.sessionId)?.displayName ?? participants.find((p) => p.userId === chatStore?.userId)?.displayName ?? "Вы";
+    const lastChatChannel = useRef(view.channelId);
+    if (view.channelId !== "0") lastChatChannel.current = view.channelId;
+    const chatChannelID = view.channelId !== "0" ? view.channelId : lastChatChannel.current;
+    const [, refreshChats] = useReducer((n: number) => n + 1, 0);
+    const dismissedDialogs = useRef(new Map<string, string>());
+    useEffect(() => chatStore?.subscribe(refreshChats), [chatStore]);
+    const dialogs = chatStore?.dialogs ?? [];
+    useEffect(() => {
+        setDirectChats((current) => {
+            const next = [...current];
+            for (const d of dialogs) {
+                if (d.unread && !next.some((chat) => chat.userId === d.userId) && dismissedDialogs.current.get(d.userId) !== d.latestId && next.length < 16) next.push({userId: d.userId, displayName: d.displayName});
+            }
+            return next.length === current.length ? current : next;
+        });
+    }, [dialogs, setDirectChats]);
+    useEffect(() => {
+        if (!chatStore || view.connectionStatus !== "connected" || view.channelId === "0") return;
+        void chatStore.sync({kind: "channel", id: view.channelId});
+        if (contentTab.startsWith("direct:")) void chatStore.sync({kind: "direct", id: contentTab.slice(7)});
+        const timer = window.setInterval(() => void chatStore.sync({kind: "channel", id: view.channelId}), 5000);
+        return () => window.clearInterval(timer);
+    }, [chatStore, view.chatRevision, view.connectionStatus, view.channelId, contentTab]);
     const screenOwners = useMemo(() => new Set((view.screenStreams ?? []).map((stream) => stream.ownerSessionId)), [view.screenStreams]);
     const [selectedID, setSelectedID] = useState(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
     const previousChannelID = useRef(view.channelId);
@@ -193,11 +239,13 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     const selected = channels.find((channel) => channel.id === selectedID);
     const [showInfo, setShowInfo] = useState(false);
     const [usersExpanded, setUsersExpanded] = useState(false);
-    const allTabs: ContentTab[] = [...contentTabs, ...directChats.map((chat): ContentTab => `direct:${chat.sessionId}`)];
-    const openMessage = (participant: ParticipantDTO) => {
-        setDirectChats((current) => current.some((chat) => chat.sessionId === participant.sessionId) ? current :
-            [...current, {sessionId: participant.sessionId, displayName: participant.displayName}]);
-        const tab: ContentTab = `direct:${participant.sessionId}`;
+    const allTabs: ContentTab[] = [...contentTabs, ...directChats.map((chat): ContentTab => `direct:${chat.userId}`)];
+    const openDirect = (userId: string, displayName: string) => {
+        if (!chatStore || userId === "0" || userId === chatStore.userId) return;
+        if (directChats.length >= 16 && !directChats.some((chat) => chat.userId === userId)) { onError("Закройте одну из личных вкладок перед открытием новой"); return; }
+        setDirectChats((current) => current.some((chat) => chat.userId === userId) ? current :
+            [...current, {userId, displayName}]);
+        const tab: ContentTab = `direct:${userId}`;
         setContentTab(tab);
         requestAnimationFrame(() => {
             const element = document.getElementById(`${tab}-tab`);
@@ -205,10 +253,12 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
             element?.scrollIntoView({block: "nearest", inline: "nearest"});
         });
     };
-    const closeMessage = (sessionId: string) => {
-        const tab: ContentTab = `direct:${sessionId}`;
+    const openMessage = (participant: ParticipantDTO) => openDirect(participant.userId ?? "0", participant.displayName);
+    const closeMessage = (userId: string) => {
+        dismissedDialogs.current.set(userId, dialogs.find((d) => d.userId === userId)?.latestId ?? "0");
+        const tab: ContentTab = `direct:${userId}`;
         const next = contentTab === tab ? allTabs[Math.max(0, allTabs.indexOf(tab) - 1)] : contentTab;
-        setDirectChats((current) => current.filter((chat) => chat.sessionId !== sessionId));
+        setDirectChats((current) => current.filter((chat) => chat.userId !== userId));
         setContentTab(next);
         requestAnimationFrame(() => document.getElementById(`${next}-tab`)?.focus());
     };
@@ -264,23 +314,24 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                         setContentTab(next);
                         document.getElementById(`${next}-tab`)?.focus();
                     }}>
-                        <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>Чат</button>
+                        <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>Чат{chatStore && chatChannelID !== "0" && chatStore.conversation({kind: "channel", id: chatChannelID}).unread > 0 && <span className="count-badge">{chatStore.conversation({kind: "channel", id: chatChannelID}).unread}</span>}</button>
                         <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>Демонстрации</button>
                         <button id="events-tab" role="tab" tabIndex={contentTab === "events" ? 0 : -1} aria-selected={contentTab === "events"} aria-controls="events-panel" onClick={() => setContentTab("events")}>События</button>
                         {directChats.map((chat) => {
-                            const tab: ContentTab = `direct:${chat.sessionId}`;
-                            const name = participants.find((participant) => participant.sessionId === chat.sessionId)?.displayName ?? chat.displayName;
-                            return <div className="direct-tab" role="presentation" key={chat.sessionId} data-active={contentTab === tab}>
-                                <button id={`${tab}-tab`} role="tab" tabIndex={contentTab === tab ? 0 : -1} aria-selected={contentTab === tab} aria-controls={`${tab}-panel`} title={name} onClick={() => setContentTab(tab)}><span>{name}</span></button>
-                                <button className="close-chat-tab" type="button" aria-label={`Закрыть личный чат: ${name}`} title="Закрыть вкладку" onClick={() => closeMessage(chat.sessionId)}>×</button>
+                            const tab: ContentTab = `direct:${chat.userId}`;
+                            const dialog = dialogs.find((d) => d.userId === chat.userId);
+                            const name = participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialog?.displayName ?? chat.displayName;
+                            return <div className="direct-tab" role="presentation" key={chat.userId} data-active={contentTab === tab}>
+                                <button id={`${tab}-tab`} role="tab" tabIndex={contentTab === tab ? 0 : -1} aria-selected={contentTab === tab} aria-controls={`${tab}-panel`} title={name} onClick={() => setContentTab(tab)}><span>{name}</span>{!!dialog?.unread && <span className="count-badge">{dialog.unread}</span>}</button>
+                                <button className="close-chat-tab" type="button" aria-label={`Закрыть личный чат: ${name}`} title="Закрыть вкладку" onClick={() => closeMessage(chat.userId)}>×</button>
                             </div>;
                         })}
                     </div>
-                    <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}><ChatPanel channelName={selected.name}/></div>
+                    <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}>{chatStore && chatChannelID !== "0" ? <ChatPanel key={chatChannelID} store={chatStore} localName={localChatName} target={{kind: "channel", id: chatChannelID}} title={`Чат канала: ${channels.find((c) => c.id === chatChannelID)?.name ?? ""}`} active={contentTab === "chat"} connected={view.connectionStatus === "connected" && view.channelId === chatChannelID}/> : <div className="chat-placeholder">Ожидание подключения к каналу</div>}</div>
                     <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants} controller={screenMedia}/></div>
                     <div id="events-panel" role="tabpanel" aria-labelledby="events-tab" hidden={contentTab !== "events"}><EventPanel events={events} active={contentTab === "events"}/></div>
-                    {directChats.map((chat) => <div key={chat.sessionId} id={`direct:${chat.sessionId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.sessionId}-tab`} hidden={contentTab !== `direct:${chat.sessionId}`}>
-                        <ChatPanel recipientName={participants.find((participant) => participant.sessionId === chat.sessionId)?.displayName ?? chat.displayName}/>
+                    {directChats.map((chat) => <div key={chat.userId} id={`direct:${chat.userId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.userId}-tab`} hidden={contentTab !== `direct:${chat.userId}`}>
+                        {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={`Личные сообщения: ${participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName}`} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
                     </div>)}
                 </section>
             </> : <div className="empty-state">Выберите канал</div>}

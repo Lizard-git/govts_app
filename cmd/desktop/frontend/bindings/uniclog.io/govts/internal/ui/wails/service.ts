@@ -24,6 +24,10 @@ export function Ban(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(2103541416, sessionID);
 }
 
+export function Chat(request: $models.ChatRequestDTO): $CancellablePromise<$models.ChatPageDTO> {
+    return $Call.ByID(1571062045, request);
+}
+
 export function Connect(request: $models.ConnectRequest): $CancellablePromise<void> {
     return $Call.ByID(1135091607, request);
 }

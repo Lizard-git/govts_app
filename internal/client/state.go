@@ -22,6 +22,7 @@ type State struct {
 	speaking           map[uint64]time.Time
 	Audio              *AudioControlState
 	measurements       connectionMeasurements
+	chatRevision       uint64
 
 	sessionID        uint64
 	joinLevel        uint16

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion      uint8  = 5
+	SnapshotSchemaVersion      uint8  = 6
 	SnapshotRequestSize               = 16
 	SnapshotResponseHeaderSize        = 18
 	MaxSnapshotPageItems       uint16 = 32
@@ -101,7 +101,7 @@ func validateSnapshotRequest(r SnapshotRequest) error {
 func EncodedChannelSize(c domain.Channel) int {
 	return 46 + len(c.Name) + len(c.Topic) + len(c.Description)
 }
-func EncodedParticipantSize(p domain.Participant) int { return 19 + len(p.DisplayName) }
+func EncodedParticipantSize(p domain.Participant) int { return 27 + len(p.DisplayName) }
 func EncodedScreenStreamSize(domain.ScreenStream) int { return 24 }
 
 func EncodeSnapshotResponse(r SnapshotResponse) ([]byte, error) {
@@ -370,6 +370,7 @@ func appendParticipant(dst []byte, p domain.Participant) ([]byte, error) {
 	}
 	dst = binary.BigEndian.AppendUint64(dst, p.SessionID)
 	dst = binary.BigEndian.AppendUint64(dst, uint64(p.ChannelID))
+	dst = binary.BigEndian.AppendUint64(dst, uint64(p.UserID))
 	dst, err := appendString(dst, p.DisplayName, domain.MaxParticipantNameBytes)
 	if err != nil {
 		return nil, err
@@ -377,15 +378,15 @@ func appendParticipant(dst []byte, p domain.Participant) ([]byte, error) {
 	return append(dst, audioStateFlags(p.Muted, p.Deafened)), nil
 }
 func takeParticipant(p []byte) (domain.Participant, []byte, error) {
-	if len(p) < 16 {
+	if len(p) < 24 {
 		return domain.Participant{}, nil, errors.New("participant item too short")
 	}
-	v := domain.Participant{SessionID: binary.BigEndian.Uint64(p[:8]), ChannelID: domain.ChannelID(binary.BigEndian.Uint64(p[8:16]))}
+	v := domain.Participant{SessionID: binary.BigEndian.Uint64(p[:8]), ChannelID: domain.ChannelID(binary.BigEndian.Uint64(p[8:16])), UserID: int64(binary.BigEndian.Uint64(p[16:24]))}
 	if v.SessionID == 0 {
 		return v, nil, errors.New("zero participant ID")
 	}
 	var err error
-	v.DisplayName, p, err = takeString(p[16:], domain.MaxParticipantNameBytes)
+	v.DisplayName, p, err = takeString(p[24:], domain.MaxParticipantNameBytes)
 	if err == nil && len(p) < 1 {
 		err = errors.New("participant item too short")
 	}
@@ -412,6 +413,9 @@ func validateSnapshotChannel(c domain.Channel) error {
 	return nil
 }
 func validateSnapshotParticipant(p domain.Participant) error {
+	if p.UserID < 0 {
+		return errors.New("invalid user ID")
+	}
 	if p.SessionID == 0 {
 		return errors.New("zero participant ID")
 	}

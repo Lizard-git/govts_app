@@ -13,9 +13,13 @@ export type {
     ParticipantDTO,
     ScreenStreamDTO,
     MediaTrustDTO,
+    ChatRequestDTO,
+    ChatPageDTO,
+    ChatMessageDTO,
+    ChatDialogDTO,
 } from "../bindings/uniclog.io/govts/internal/ui/wails";
 
-import type {AudioMeterDTO, ConnectRequest} from "../bindings/uniclog.io/govts/internal/ui/wails";
+import type {AudioMeterDTO, ConnectRequest, ChatRequestDTO} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 let diagnosticsInFlight = 0;
 export function logDiagnostic(operation: string, message: unknown): void {
@@ -28,6 +32,7 @@ export function logDiagnostic(operation: string, message: unknown): void {
 }
 
 export const desktopAPI = {
+    chat: (request: ChatRequestDTO) => Service.Chat(request),
     snapshot: () => Service.Snapshot(),
     connectionStats: () => Service.ConnectionStats(),
     eventsAfter: (sequence: string) => Service.EventsAfter(sequence),

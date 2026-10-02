@@ -20,9 +20,10 @@ import (
 )
 
 type SecureHandshakeResult struct {
-	SessionID   uint64
-	JoinLevel   uint16
-	Permissions uint8
+	ServerIdentity string
+	SessionID      uint64
+	JoinLevel      uint16
+	Permissions    uint8
 }
 
 type AuthenticationRejectedError struct{ Reason string }
@@ -87,7 +88,7 @@ func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketC
 	if err := codec.Install(ack.SessionID, c2s, s2c); err != nil {
 		return SecureHandshakeResult{}, err
 	}
-	return SecureHandshakeResult{SessionID: ack.SessionID, JoinLevel: level, Permissions: permissions}, nil
+	return SecureHandshakeResult{ServerIdentity: fmt.Sprintf("%x", challenge.ServerKey), SessionID: ack.SessionID, JoinLevel: level, Permissions: permissions}, nil
 }
 
 func exchangeAuth(ctx context.Context, conn *udp.ClientPacketConn, request protocol.VoicePacket, wantType uint8, requestID uint32, timeout time.Duration, attempts int, minimum appversion.Number) (protocol.VoicePacket, error) {

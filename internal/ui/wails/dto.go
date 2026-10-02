@@ -37,6 +37,7 @@ type ChannelDTO struct {
 
 type ParticipantDTO struct {
 	SessionID   string `json:"sessionId"`
+	UserID      string `json:"userId,omitempty"`
 	DisplayName string `json:"displayName"`
 	ChannelID   string `json:"channelId"`
 	Speaking    bool   `json:"speaking"`
@@ -99,6 +100,9 @@ type ConnectionStatsDTO struct {
 }
 
 type ClientViewDTO struct {
+	ChatContext      string            `json:"chatContext"`
+	UserID           string            `json:"userId"`
+	ChatRevision     string            `json:"chatRevision"`
 	ConnectionStatus string            `json:"connectionStatus"`
 	LastError        string            `json:"lastError,omitempty"`
 	Server           ServerDTO         `json:"server"`
@@ -148,6 +152,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		}
 		participants = append(participants, ParticipantDTO{
 			SessionID:   formatUint64(participant.SessionID),
+			UserID:      strconv.FormatInt(participant.UserID, 10),
 			DisplayName: participant.DisplayName,
 			ChannelID:   formatUint64(uint64(participant.ChannelID)),
 			Speaking:    view.Speaking[participant.SessionID],
@@ -161,6 +166,8 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		streams = append(streams, ScreenStreamDTO{ID: formatUint64(uint64(stream.ID)), OwnerSessionID: formatUint64(stream.OwnerSessionID), ChannelID: formatUint64(uint64(stream.ChannelID))})
 	}
 	return ClientViewDTO{
+		UserID:           strconv.FormatInt(view.UserID, 10),
+		ChatRevision:     formatUint64(view.ChatRevision),
 		ConnectionStatus: connectionStatus(view.ConnectionStatus),
 		LastError:        lastError,
 		Server:           ServerDTO{Name: view.ServerInfo.Name},

@@ -75,7 +75,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 3 {
+	if version < 0 || version > 4 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -170,6 +170,11 @@ func (s *Store) initialize() error {
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 3`); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		if err := migrateChat(ctx, tx); err != nil {
 			return err
 		}
 	}

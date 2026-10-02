@@ -272,6 +272,7 @@ func (h *Hub) SetAudioState(id uint64, muted, deafened bool) error {
 func participantFromSession(session *Session) domain.Participant {
 	return domain.Participant{
 		SessionID:   session.ID,
+		UserID:      session.UserID,
 		DisplayName: session.Name,
 		ChannelID:   session.ChannelID,
 		Muted:       session.Muted,
@@ -643,7 +644,7 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 	session := &Session{ID: id, UserID: userID, JoinLevel: level, Permissions: permissions, Owner: owner, Name: name, Addr: cloneUDPAddr(addr), LastSeen: time.Now()}
 	h.sessions[id] = session
 	h.revision++
-	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, DisplayName: name}})
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, UserID: userID, DisplayName: name}})
 	return *cloneSession(session), replaced, nil
 }
 

@@ -98,6 +98,7 @@ type Channel struct {
 
 type Participant struct {
 	SessionID   uint64
+	UserID      int64
 	DisplayName string
 	ChannelID   ChannelID
 	Muted       bool

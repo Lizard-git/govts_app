@@ -18,6 +18,8 @@ type ClientViewState struct {
 	Participants       []domain.Participant
 	ScreenStreams      []domain.ScreenStream
 	SessionID          uint64
+	UserID             int64
+	ChatRevision       uint64
 	JoinLevel          uint16
 	Permissions        uint8
 	ChannelID          domain.ChannelID
@@ -107,6 +109,7 @@ func (s *State) SnapshotView() ClientViewState {
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
 		Channels: snapshot.Channels, Participants: snapshot.Participants, ScreenStreams: snapshot.ScreenStreams, SessionID: s.sessionID, ChannelID: s.channelID,
 		JoinLevel: s.joinLevel, Permissions: s.permissions,
+		ChatRevision:  s.chatRevision,
 		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, CaptureAvailable: captureAvailable, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
 		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool)}
@@ -117,6 +120,7 @@ func (s *State) SnapshotView() ClientViewState {
 		for _, p := range snapshot.Participants {
 			if p.SessionID == s.sessionID {
 				v.ChannelID = p.ChannelID
+				v.UserID = p.UserID
 				break
 			}
 		}

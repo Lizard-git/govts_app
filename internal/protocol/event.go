@@ -7,7 +7,7 @@ import (
 	"uniclog.io/govts/internal/domain"
 )
 
-const StateEventVersion = 1
+const StateEventVersion = 2
 
 func EncodeStateEvent(e domain.StateEvent) ([]byte, error) {
 	if err := e.Validate(); err != nil {

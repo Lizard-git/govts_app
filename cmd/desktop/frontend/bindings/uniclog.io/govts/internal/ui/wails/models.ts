@@ -53,6 +53,47 @@ export interface ChannelDTO {
     "audio": AudioProfileDTO;
 }
 
+export interface ChatDialogDTO {
+    "userId": string;
+    "displayName": string;
+    "latestId": string;
+    "readId": string;
+    "unread": number;
+}
+
+export interface ChatMessageDTO {
+    "id": string;
+    "senderId": string;
+    "recipientId": string;
+    "channelId": string;
+    "clientId": string;
+    "senderName": string;
+    "text": string;
+    "sentAtMs": number;
+}
+
+export interface ChatPageDTO {
+    "unread": number;
+    "userId": string;
+    "latestId": string;
+    "readId": string;
+    "cursor": string;
+    "hasMore": boolean;
+    "messages": ChatMessageDTO[] | null;
+    "dialogs": ChatDialogDTO[] | null;
+}
+
+export interface ChatRequestDTO {
+    "context": string;
+    "operation": string;
+    "kind": string;
+    "targetId": string;
+    "cursor": string;
+    "forward": boolean;
+    "clientId": string;
+    "text": string;
+}
+
 export interface ClientEventDTO {
     "sequence": string;
     "time": string;
@@ -62,6 +103,9 @@ export interface ClientEventDTO {
 }
 
 export interface ClientViewDTO {
+    "chatContext": string;
+    "userId": string;
+    "chatRevision": string;
     "connectionStatus": string;
     "lastError"?: string;
     "server": ServerDTO;
@@ -108,6 +152,7 @@ export interface MediaTrustDTO {
 
 export interface ParticipantDTO {
     "sessionId": string;
+    "userId"?: string;
     "displayName": string;
     "channelId": string;
     "speaking": boolean;

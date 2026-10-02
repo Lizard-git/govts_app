@@ -79,14 +79,16 @@ type App struct {
 	captureDeviceID     string
 	playbackDeviceID    string
 
-	mu             sync.Mutex
-	closed         bool
-	active         bool
-	runCancel      context.CancelFunc
-	runDone        chan struct{}
-	currentConn    *udp.ClientPacketConn
-	serverEndpoint netip.AddrPort
-	lastError      string
+	mu                 sync.Mutex
+	closed             bool
+	active             bool
+	runCancel          context.CancelFunc
+	runDone            chan struct{}
+	currentConn        *udp.ClientPacketConn
+	serverEndpoint     netip.AddrPort
+	chatServerIdentity string
+	chatClientIdentity string
+	lastError          string
 }
 
 func New(options Options) *App {
@@ -123,7 +125,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	}
 	if options.MinServerVersion == "" {
 		if a.secure {
-			options.MinServerVersion = "0.2.5"
+			options.MinServerVersion = "0.2.9"
 		} else {
 			options.MinServerVersion = voiceclient.MinimumServerVersion
 		}
@@ -195,6 +197,9 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if err != nil {
 			return fmt.Errorf("load client identity: %w", err)
 		}
+		a.mu.Lock()
+		a.chatClientIdentity = fmt.Sprintf("%x", private.Public())
+		a.mu.Unlock()
 		if a.pinsPath == "" {
 			a.pinsPath = filepath.Join(configDir, "Govts", "voice-pins.json")
 		}
@@ -233,10 +238,12 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s secure=%t", attempt, endpoint, conn.LocalAddr(), a.secure)
 		var joinLevel uint16
 		var permissions uint8
+		var serverIdentity string
 		if a.secure {
 			var result voiceclient.SecureHandshakeResult
 			result, err = voiceclient.PerformSecureHandshakeAttempts(ctx, conn, secureCodec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
 			sessionID, joinLevel, permissions = result.SessionID, result.JoinLevel, result.Permissions
+			serverIdentity = result.ServerIdentity
 		} else {
 			sessionID, err = voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
 		}
@@ -281,6 +288,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.state.SetAccountPrivileges(joinLevel, permissions)
 		a.mu.Lock()
 		a.currentConn = conn
+		a.chatServerIdentity = serverIdentity
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
 		sessionStarted := time.Now()

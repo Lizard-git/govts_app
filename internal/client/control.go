@@ -44,6 +44,10 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketChatChanged:
+				if packet.RequestID == 0 && len(packet.Payload) == 0 {
+					state.ChatChanged()
+				}
 			case protocol.PacketAccountPrivileges:
 				if packet.RequestID != 0 || len(packet.Payload) != 3 {
 					continue
@@ -62,7 +66,7 @@ func ControlLoop(
 				state.ApplyEvent(generation, event)
 			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck, protocol.PacketModerationAck,
 				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid, protocol.PacketMediaCredentialAck,
-				protocol.PacketAudioStateAck:
+				protocol.PacketAudioStateAck, protocol.PacketChatAck:
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,

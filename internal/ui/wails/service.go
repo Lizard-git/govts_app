@@ -287,7 +287,9 @@ func (s *Service) Drag(sessionID, channelID string) error {
 }
 
 func (s *Service) Snapshot() ClientViewDTO {
-	return viewDTO(s.client.Snapshot(), s.client.LastError())
+	dto := viewDTO(s.client.Snapshot(), s.client.LastError())
+	dto.ChatContext = s.client.ChatContext() + "|" + dto.UserID
+	return dto
 }
 
 func (s *Service) ConnectionStats() ConnectionStatsDTO {

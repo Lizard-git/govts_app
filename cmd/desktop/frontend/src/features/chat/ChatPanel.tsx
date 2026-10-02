@@ -1,13 +1,112 @@
+import {useEffect, useLayoutEffect, useReducer, useRef, useState} from "react";
 import {Icon} from "../../components/Icon";
+import {ChatStore, type ChatTarget} from "./chatStore";
 
-export function ChatPanel({channelName, recipientName}: {channelName?: string; recipientName?: string}) {
-    return <section className="chat-panel" aria-label={recipientName ? `Личные сообщения: ${recipientName}` : `Чат канала ${channelName}`}>
-        <div className="chat-history" aria-label="История сообщений">
-            <div className="chat-placeholder"><Icon name="chat"/><h3>{recipientName ? `Личные сообщения: ${recipientName}` : "Чат канала"}</h3><p>{recipientName ? "Отправка личных сообщений будет добавлена позже." : "Обмен сообщениями будет добавлен позже."}</p></div>
+const messageDate = (at: number) => new Date(at).toLocaleString("ru", {day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"});
+const resizeComposer = (input: HTMLTextAreaElement) => {
+    input.style.height = "0px";
+    const contentHeight = input.scrollHeight + 2;
+    input.style.height = `${Math.max(32, Math.min(68, contentHeight))}px`;
+    input.style.overflowY = contentHeight > 68 ? "auto" : "hidden";
+};
+
+export function ChatPanel({store, target, title, active, connected, online, localName}: {
+    store: ChatStore; target: ChatTarget; title: string; active: boolean; connected: boolean; online?: boolean; localName: string;
+}) {
+    const [, refresh] = useReducer((n: number) => n + 1, 0);
+    const history = useRef<HTMLDivElement>(null);
+    const composer = useRef<HTMLTextAreaElement>(null);
+    const atBottom = useRef(true);
+    const previousHeight = useRef<number | null>(null);
+    const [newMessages, setNewMessages] = useState(false);
+    const [visible, setVisible] = useState(document.visibilityState === "visible");
+    useEffect(() => store.subscribe(refresh), [store]);
+    useEffect(() => {
+        const changed = () => setVisible(document.visibilityState === "visible");
+        document.addEventListener("visibilitychange", changed);
+        return () => document.removeEventListener("visibilitychange", changed);
+    }, []);
+    const c = store.conversation(target);
+    useLayoutEffect(() => {
+        if (!active || !composer.current) return;
+        const input = composer.current;
+        const resize = () => {
+            resizeComposer(input);
+            if (atBottom.current && history.current) history.current.scrollTop = history.current.scrollHeight;
+        };
+        resize();
+        let width = input.clientWidth;
+        const observer = new ResizeObserver(() => {
+            if (input.clientWidth === width) return;
+            width = input.clientWidth;
+            resize();
+        });
+        observer.observe(input);
+        return () => observer.disconnect();
+    }, [c.draft, active]);
+    const lastID = c.messages[c.messages.length - 1]?.id;
+    useEffect(() => {
+        if (!active || !connected || !visible) return;
+        void store.sync(target);
+        const timer = window.setInterval(() => void store.sync(target), 5000);
+        return () => window.clearInterval(timer);
+    }, [store, target.kind, target.id, active, connected, visible]);
+    useLayoutEffect(() => {
+        if (!active || !history.current) return;
+        if (previousHeight.current !== null) {
+            history.current.scrollTop += history.current.scrollHeight - previousHeight.current;
+            previousHeight.current = null;
+        } else if (atBottom.current) history.current.scrollTop = history.current.scrollHeight;
+        else setNewMessages(true);
+    }, [lastID, c.messages.length, c.pending.length, active]);
+    useEffect(() => {
+        if (active && connected && visible && atBottom.current) void store.markRead(target);
+    }, [lastID, c.loading, active, connected, visible, store, target.id, target.kind]);
+    const bytes = new TextEncoder().encode(c.draft).length;
+    const valid = c.draft.trim().length > 0 && bytes <= 1000 && !c.draft.includes("\0");
+    const send = () => { if (connected && valid) void store.send(target, c.draft); };
+    const older = async () => {
+        if (c.loading) return;
+        previousHeight.current = history.current?.scrollHeight ?? null;
+        await store.sync(target, true);
+        refresh();
+    };
+    return <section className="chat-panel" aria-label={title}>
+        {target.kind === "direct" && <header className="chat-heading"><strong>{title}</strong><span>{online ? "В сети" : "Не в сети"}</span></header>}
+        {c.error && <div className="chat-error" role="alert">{c.error}<button onClick={() => void store.sync(target)} disabled={!connected || c.loading}>Повторить</button></div>}
+        <div ref={history} className="chat-history" aria-label="История сообщений" onScroll={() => {
+            const node = history.current;
+            if (!node) return;
+            atBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
+            if (atBottom.current) {
+                setNewMessages(false);
+                if (active && connected && visible) void store.markRead(target);
+            }
+            if (active && connected && node.scrollTop < 20 && node.scrollHeight > node.clientHeight && c.hasOlder && !c.loading) void older();
+        }}>
+            {c.hasOlder && <button className="chat-older" disabled={!connected || c.loading} onClick={() => void older()}>Более ранние сообщения</button>}
+            {!c.loaded && <div className="chat-placeholder"><Icon name="chat"/><p>{c.loading ? "Загрузка сообщений…" : connected ? "Откройте чат для загрузки" : "Ожидание подключения"}</p></div>}
+            {c.loaded && !c.messages.length && !c.pending.length && <div className="chat-placeholder">Сообщений пока нет</div>}
+            {c.messages.map((m) => <article key={m.id} className={`chat-message ${m.senderId === store.userId ? "own" : ""}`}>
+                <time dateTime={new Date(m.sentAtMs).toISOString()}>{messageDate(m.sentAtMs)}</time>{" "}<strong>{m.senderName}</strong>{": "}<span>{m.text}</span>
+            </article>)}
+            {c.pending.map((p) => <article key={p.clientId} className="chat-message own pending">
+                <time dateTime={new Date(p.sentAtMS).toISOString()}>{messageDate(p.sentAtMS)}</time>{" "}<strong>{localName}</strong>{": "}<span>{p.text}</span>{" "}
+                {p.state === "sending" ? <span className="chat-send-status" role="status" aria-label="Отправляется" title="Отправляется">…</span> : <button disabled={!connected} title={p.error} aria-label={`Повторить отправку: ${p.error ?? "ошибка"}`} onClick={() => void store.send(target, p.text, p)}>Повторить</button>}
+            </article>)}
         </div>
-        <div className="chat-composer" aria-label="Ввод сообщения">
-            <input disabled aria-label="Сообщение" placeholder="Чат пока недоступен"/>
-            <button disabled type="button">Отправить</button>
+        {(newMessages || c.olderWindow) && <button className="chat-new" disabled={!connected || c.loading} onClick={() => {
+            if (c.olderWindow) void store.latest(target);
+            if (history.current) history.current.scrollTop = history.current.scrollHeight;
+            atBottom.current = true; setNewMessages(false);
+            if (active && connected && visible) void store.markRead(target);
+        }}>К новым сообщениям ↓</button>}
+        <div className="chat-composer">
+            <textarea ref={composer} rows={1} maxLength={1000} aria-label="Сообщение" title="Enter — отправить, Shift+Enter — новая строка" placeholder={connected ? "Написать сообщение…" : "Черновик — ожидание подключения"} value={c.draft}
+                onChange={(event) => store.setDraft(target, event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }}/>
+            <small title="Размер сообщения в байтах UTF-8">{bytes}/1000</small>
+            <button disabled={!connected || !valid} type="button" onClick={send}>Отправить</button>
         </div>
     </section>;
 }

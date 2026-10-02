@@ -42,6 +42,9 @@ const (
 	PacketAccountPrivileges
 	PacketAudioState
 	PacketAudioStateAck
+	PacketChatRequest
+	PacketChatAck
+	PacketChatChanged
 
 	PacketEnd
 )

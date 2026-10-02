@@ -63,6 +63,14 @@ func ServeUDP(
 	defer stopWakeup()
 	rejected := logging.NewFailures("server_udp_decode")
 	defer rejected.Close()
+	var chat *chatWorker
+	if len(authenticators) > 0 && authenticators[0] != nil {
+		chat = newChatWorker(authenticators[0], conn, hub)
+		chatCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); chat.run(chatCtx) }()
+		defer func() { cancel(); <-done }()
+	}
 
 	for {
 		packet, addr, err := conn.ReadPacket()
@@ -80,6 +88,12 @@ func ServeUDP(
 			return fmt.Errorf("read UDP packet: %w", err)
 		}
 
+		if packet.Type == protocol.PacketChatRequest && chat != nil {
+			if err := chat.enqueue(packet, addr); err != nil {
+				log.Printf("chat request rejected: session_id=%d request_id=%d error=%v", packet.SessionID, packet.RequestID, err)
+			}
+			continue
+		}
 		var handleErr error
 		if len(authenticators) > 0 && authenticators[0] != nil && authenticators[0].policyGate != nil {
 			authenticators[0].policyGate.Lock()
