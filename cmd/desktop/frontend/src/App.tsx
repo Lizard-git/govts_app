@@ -183,12 +183,12 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
 
     return <div className="app-shell">
         <main className="main-area">
-            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>}/>
+            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} invoke={invoke}
                                 sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
-                : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div></>}
+                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
         </main>
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>

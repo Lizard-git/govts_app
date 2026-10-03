@@ -31,9 +31,11 @@
 .status-bar .header-nav-button { min-height: 28px; padding: 4px 8px; }
 .status-pill, .sync-pill { padding: 5px 8px; color: var(--muted); border-color: var(--line); background: var(--card); font-size: 10px; }
 .status-bar .status-pill { height: 27px; }
-.settings-pill { flex-shrink: 0; cursor: pointer; white-space: nowrap; }
+.settings-pill { width: 96px; justify-content: center; flex-shrink: 0; cursor: pointer; white-space: nowrap; }
 .settings-pill:hover { border-color: var(--accent-blue); }
 .settings-pill svg { width: 14px; height: 14px; }
+.status-bar .disconnect-button { color: var(--danger); }
+.status-bar .disconnect-button:hover { border-color: var(--danger); }
 .error-banner { position: absolute; top: 50px; left: 12px; right: 12px; z-index: 10; margin: 0; background: var(--card); }
 .channels-page { grid-template-rows: minmax(0, 1fr); }
 .channels-layout { grid-template-columns: var(--channel-browser-width, 210px) 6px minmax(0, 1fr) 6px var(--channel-info-width, 245px); gap: 0; }
@@ -95,7 +97,7 @@
 .stage-participant { z-index: 1; display: flex; width: 80px; flex: 0 0 80px; flex-direction: column; align-items: center; gap: 7px; }
 .stage-participant-group { display: flex; flex: 0 0 auto; align-items: flex-start; gap: 14px; }
 .stage-screen { z-index: 1; display: flex; flex: 0 0 110px; width: 110px; flex-direction: column; align-items: center; gap: 7px; }
-.stage-screen-icon { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--accent-blue); border-radius: 12px; color: var(--accent-blue); background: var(--card-strong); }
+.stage-screen-icon { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--accent-blue); border-radius: 50%; color: var(--accent-blue); background: var(--card-strong); }
 .stage-screen-icon svg { width: 25px; height: 25px; }
 .stage-screen-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 10px; }
 .stage-screen button { padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--card-strong); font-size: 10px; cursor: pointer; }
@@ -152,15 +154,14 @@
 .screen-card-preview span { max-width: 100%; overflow-wrap: anywhere; color: var(--text); font-size: 12px; }
 .channel-stage .screen-card > div strong { color: var(--text); font-weight: 500; }
 .screen-card small, .screen-empty, .screen-profile > span { color: var(--muted); }
-.channel-audio-dock { grid-row: 4; display: flex; justify-content: center; min-width: 0; padding-top: 18px; }
+.channel-audio-dock { grid-row: 4; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .channel-stage > .empty-state { grid-row: 1 / 4; align-self: center; }
-.audio-control-island { display: flex; gap: 6px; max-width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 99px; background: var(--card); box-shadow: none; }
-.audio-control-island .voice-control { display: flex; align-items: center; justify-content: center; gap: 6px; width: 90px; flex: 1 1 90px; height: 36px; padding: 0 5px; border: 1px solid var(--line); border-radius: 99px; color: var(--text); background: var(--card-strong); font-size: 10px; }
+.audio-control-island { display: flex; gap: 6px; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.audio-control-island .voice-control { display: flex; align-items: center; justify-content: center; gap: 6px; width: 120px; flex: 0 0 120px; height: 36px; padding: 0 5px; border: 1px solid var(--line); border-radius: 99px; color: var(--text); background: var(--card-strong); font-size: 10px; }
 .audio-control-island .voice-control:first-child:not(.active) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .audio-control-island .voice-control.active { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--card)); }
 .audio-control-island .voice-control:hover { background: var(--card); }
-.audio-control-island .disconnect-button { color: var(--danger); }
-.audio-control-island .screen-share-button { width: 160px; flex-basis: 160px; white-space: normal; line-height: 1.2; }
+.audio-control-island .screen-share-button { white-space: normal; line-height: 1.2; }
 .audio-control-island .screen-share-button.sharing { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .screen-share-dialog { width: min(430px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 24px; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--card); box-shadow: 0 20px 70px #0006; overflow-y: auto; }
 .screen-share-dialog::backdrop { background: #0008; }
@@ -220,7 +221,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .chat-older { display: block; margin: 0 auto 10px; }
 .chat-new { align-self: center; margin-bottom: 6px; }
 .settings-page { margin: 0; padding: 24px 28px 100px; }
-.settings-audio-dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); }
 .connection-card { color: var(--text); background: var(--card); border-color: var(--line); }
 .connection-card input { color: var(--text); background: var(--window); }
 @media (max-width: 1100px) {

@@ -80,7 +80,8 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     </section></main>;
 }
 
-export function StatusBar({view, page, onPageChange, sharing, screenMedia, updateAction}: {
+export function StatusBar({view, page, onPageChange, sharing, screenMedia, updateAction, invoke}: {
+    invoke: (operation: () => Promise<unknown>) => Promise<void>;
     updateAction?: ReactNode;
     view: ClientViewDTO;
     page: Page;
@@ -95,6 +96,8 @@ export function StatusBar({view, page, onPageChange, sharing, screenMedia, updat
         <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
             <Icon name={page === "settings" ? "channels" : "settings"}/><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
         </button>
+        <button className="status-pill settings-pill disconnect-button" type="button" title="Отключиться от сервера"
+            onClick={() => void invoke(() => desktopAPI.disconnect())}><Icon name="hangup"/><span>Выйти</span></button>
     </header>;
 }
 
@@ -115,8 +118,5 @@ export function AudioControls({view, invoke, sharing}: {
             title={sharing.active ? "Завершить демонстрацию" : "Демонстрация экрана"} aria-pressed={sharing.active}
             aria-haspopup={sharing.active ? undefined : "dialog"} disabled={sharing.pending || !sharing.available}
             onClick={() => void sharing.toggle()}><Icon name="screen"/>{sharing.active ? "Завершить демонстрацию" : "Демонстрация"}</button>
-        <button className="voice-control disconnect-button" title="Отключиться от сервера" onClick={() => void invoke(() => desktopAPI.disconnect())}>
-            <Icon name="hangup"/>Выйти
-        </button>
     </div>;
 }
