@@ -7,7 +7,7 @@ import (
 	"errors"
 )
 
-const Filename = "Govts-windows-amd64.exe"
+const Filename = "GTS64.exe"
 const AssetName = "signature"
 const MaxSize int64 = 512 << 20
 
