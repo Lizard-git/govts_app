@@ -57,7 +57,12 @@ jobs:
 
       - name: Build Windows desktop client
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
+          New-Item -ItemType Directory -Force dist, build/windows | Out-Null
+          go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 generate icons -input cmd/desktop/frontend/src/components/logo.png -windowsfilename build/windows/icon.ico -macfilename build/windows/icon.icns
+          if ($LASTEXITCODE -ne 0) { throw 'icon generation failed' }
+          Remove-Item -Force build/windows/icon.icns -ErrorAction SilentlyContinue
+          go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26 generate syso -arch amd64 -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -out cmd/desktop/rsrc_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { throw 'windows resource generation failed' }
           go build -tags production -trimpath -ldflags="-w -s -H windowsgui" -o dist/GTS64.exe ./cmd/desktop
           if ($LASTEXITCODE -ne 0) { throw 'desktop build failed' }
 

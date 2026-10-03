@@ -42,6 +42,7 @@ type Service struct {
 	serverAddress    string
 	trustedMediaKeys map[string]string
 	theme            string
+	closeToTray      bool
 	connectionMu     sync.Mutex
 	recentServers    []clientsettings.RecentServer
 	recordedVisit    string
@@ -235,6 +236,19 @@ func (s *Service) SetTheme(value string) error {
 	}
 	s.settingsMu.Lock()
 	s.theme = normalized
+	s.settingsMu.Unlock()
+	return s.saveSettings()
+}
+
+func (s *Service) CloseToTray() bool {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.closeToTray
+}
+
+func (s *Service) SetCloseToTray(value bool) error {
+	s.settingsMu.Lock()
+	s.closeToTray = value
 	s.settingsMu.Unlock()
 	return s.saveSettings()
 }

@@ -233,7 +233,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .chat-error button { margin-left: 8px; }
 .chat-older { display: block; margin: 0 auto 10px; }
 .chat-new { align-self: center; margin-bottom: 6px; }
-.settings-page { margin: 0; padding: 24px 28px 100px; }
+.settings-page { margin: 0; padding: 24px 28px 22px; }
 .connection-card { color: var(--text); background: var(--card); border-color: var(--line); }
 .connection-page { height: 100%; overflow-y: auto; }
 .connection-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; width: min(1000px, 100%); }

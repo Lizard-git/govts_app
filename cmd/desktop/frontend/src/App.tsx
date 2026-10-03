@@ -460,6 +460,17 @@ function SettingsPage({view, invoke, theme, setTheme}: {
     const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
     const [devicesError, setDevicesError] = useState("");
     const [devicePending, setDevicePending] = useState(false);
+    const [section, setSection] = useState<"sound" | "interface">("sound");
+    const [closeToTray, setCloseToTrayState] = useState(false);
+    useEffect(() => {
+        let active = true;
+        void desktopAPI.closeToTray().then((value) => {
+            if (active) setCloseToTrayState(value);
+        }).catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, []);
     const loadDevices = useCallback(async () => {
         try {
             const next = await desktopAPI.audioDevices();
@@ -490,56 +501,79 @@ function SettingsPage({view, invoke, theme, setTheme}: {
     };
     return <section className="settings-page">
         <div className="settings-heading"><p className="eyebrow">ПАРАМЕТРЫ КЛИЕНТА</p><h2>Настройки</h2></div>
-        {devicesError && <div className="device-error" role="alert">Не удалось получить аудиоустройства: {devicesError}
-            <button className="text-button" onClick={() => void loadDevices()}>Повторить</button>
-        </div>}
-        <section className="settings-card"><h3>Микрофон</h3><DeviceSelect id="capture-device"
-                                                                          label="Устройство захвата звука"
-                                                                          devices={devices?.capture ?? []}
-                                                                          value={devices?.selectedCapture ?? ""}
-                                                                          disabled={!devices || devicePending}
-                                                                          onChange={(id) => selectDevice("capture", id)}/>
-            {!view.audio.captureAvailable && <p className="device-hint">Микрофон не найден. Выберите устройство, когда оно появится. Пока его нет, вы остаётесь в канале без передачи голоса.</p>}
-            <SettingToggle title="Шумоподавление"
-                           description="Убирает постоянный фоновый шум до анализа голосовой активности."
-                           checked={view.audio.rnnoiseEnabled}
-                           onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
-            <SensitivitySlider label="Интенсивность шумоподавления"
-                               description="Чем выше значение, тем сильнее подавляется фоновый шум."
-                               value={rnnoiseSensitivity} disabled={!view.audio.rnnoiseEnabled}
-                               onChange={setRNNoiseSensitivity}
-                               onCommit={(value) => invoke(() => desktopAPI.setRNNoiseSensitivity(value))}/>
-            <SettingToggle title="Обнаружение голоса (VAD)"
-                           description="Микрофон передаёт звук, когда обнаружена речь."
-                           checked={view.audio.vadEnabled}
-                           onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
-            <ModeSelect value={view.audio.vadMode} disabled={!view.audio.vadEnabled}
-                        open={view.audio.vadOpen}
-                        onChange={(value) => invoke(() => desktopAPI.setVADMode(value))}/>
-            <div className="sensitivity-setting">
-                <div><span className="setting-label">Порог передачи звука</span>
-                    <output>{Math.round((1 - sensitivity) * 100)}%</output>
-                </div>
-                <p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
-            <AudioWaveform sensitivity={sensitivity} disabled={!view.audio.vadEnabled}
-                           onSensitivityChange={setSensitivity}
-                           onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
-        </section>
-        <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device"
-                                                                                              label="Устройство вывода звука"
-                                                                                              devices={devices?.playback ?? []}
-                                                                                              value={devices?.selectedPlayback ?? ""}
-                                                                                              disabled={!devices || devicePending}
-                                                                                              onChange={(id) => selectDevice("playback", id)}/><SettingToggle
-            title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
-            checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
-        <section className="settings-card compact-card"><h3>Интерфейс</h3>
-            <label className="theme-setting"><span className="setting-label">Тема оформления</span>
-                <select value={theme} onChange={(event) => void invoke(() => setTheme(event.target.value))}>
-                    <option value="system">Системная</option><option value="dark">Тёмная</option><option value="light">Светлая</option>
-                </select><small>Системная тема следует настройкам Windows.</small>
-            </label>
-        </section>
+        <div className="settings-layout">
+            <nav className="settings-nav" aria-label="Разделы настроек">
+                <button type="button" aria-current={section === "sound" ? "page" : undefined} onClick={() => setSection("sound")}>Звук</button>
+                <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>Интерфейс</button>
+            </nav>
+            <div className="settings-content">
+                {section === "sound" && <>
+                    {devicesError && <div className="device-error" role="alert">Не удалось получить аудиоустройства: {devicesError}
+                        <button className="text-button" onClick={() => void loadDevices()}>Повторить</button>
+                    </div>}
+                    <section className="settings-card"><h3>Микрофон</h3><DeviceSelect id="capture-device"
+                                                                                      label="Устройство захвата звука"
+                                                                                      devices={devices?.capture ?? []}
+                                                                                      value={devices?.selectedCapture ?? ""}
+                                                                                      disabled={!devices || devicePending}
+                                                                                      onChange={(id) => selectDevice("capture", id)}/>
+                        {!view.audio.captureAvailable && <p className="device-hint">Микрофон не найден. Выберите устройство, когда оно появится. Пока его нет, вы остаётесь в канале без передачи голоса.</p>}
+                        <SettingToggle title="Шумоподавление"
+                                       description="Убирает постоянный фоновый шум до анализа голосовой активности."
+                                       checked={view.audio.rnnoiseEnabled}
+                                       onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
+                        <SensitivitySlider label="Интенсивность шумоподавления"
+                                           description="Чем выше значение, тем сильнее подавляется фоновый шум."
+                                           value={rnnoiseSensitivity} disabled={!view.audio.rnnoiseEnabled}
+                                           onChange={setRNNoiseSensitivity}
+                                           onCommit={(value) => invoke(() => desktopAPI.setRNNoiseSensitivity(value))}/>
+                        <SettingToggle title="Обнаружение голоса (VAD)"
+                                       description="Микрофон передаёт звук, когда обнаружена речь."
+                                       checked={view.audio.vadEnabled}
+                                       onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
+                        <ModeSelect value={view.audio.vadMode} disabled={!view.audio.vadEnabled}
+                                    open={view.audio.vadOpen}
+                                    onChange={(value) => invoke(() => desktopAPI.setVADMode(value))}/>
+                        <div className="sensitivity-setting">
+                            <div><span className="setting-label">Порог передачи звука</span>
+                                <output>{Math.round((1 - sensitivity) * 100)}%</output>
+                            </div>
+                            <p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
+                        <AudioWaveform sensitivity={sensitivity} disabled={!view.audio.vadEnabled}
+                                       onSensitivityChange={setSensitivity}
+                                       onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
+                    </section>
+                    <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device"
+                                                                                                          label="Устройство вывода звука"
+                                                                                                          devices={devices?.playback ?? []}
+                                                                                                          value={devices?.selectedPlayback ?? ""}
+                                                                                                          disabled={!devices || devicePending}
+                                                                                                          onChange={(id) => selectDevice("playback", id)}/><SettingToggle
+                        title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
+                        checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
+                </>}
+                {section === "interface" && <section className="settings-card"><h3>Интерфейс</h3>
+                    <label className="theme-setting"><span className="setting-label">Тема оформления</span>
+                        <select value={theme} onChange={(event) => void invoke(() => setTheme(event.target.value))}>
+                            <option value="system">Системная</option><option value="dark">Тёмная</option><option value="light">Светлая</option>
+                        </select><small>Системная тема следует настройкам Windows.</small>
+                    </label>
+                    <SettingToggle title="Сворачивать в трей при закрытии"
+                                   description="Крестик прячет окно в трей, приложение и голос продолжают работать. Без этой настройки крестик завершает Govts."
+                                   checked={closeToTray}
+                                   onChange={(value) => invoke(async () => {
+                                       const previous = closeToTray;
+                                       setCloseToTrayState(value);
+                                       try {
+                                           await desktopAPI.setCloseToTray(value);
+                                       } catch (error) {
+                                           setCloseToTrayState(previous);
+                                           throw error;
+                                       }
+                                   })}/>
+                </section>}
+            </div>
+        </div>
     </section>;
 }
 

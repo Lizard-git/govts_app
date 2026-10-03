@@ -7,6 +7,9 @@
 *.exe
 *.test
 *.out
+*.syso
+build/windows/icon.ico
+build/windows/icon.icns
 bin/
 dist/
 coverage/
