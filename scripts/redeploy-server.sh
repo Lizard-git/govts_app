@@ -17,6 +17,7 @@ STOP_TIMEOUT="${STOP_TIMEOUT:-15}"
 START_TIMEOUT="${START_TIMEOUT:-10}"
 TMUX_SESSION="${TMUX_SESSION:-govts-server}"
 TMUX_PANE="=$TMUX_SESSION:0.0"
+VOICE_REDUNDANCY="${VOICE_REDUNDANCY:-0}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -95,11 +96,28 @@ stop_server() {
   rm -f "$PID_FILE"
 }
 
+binary_supports_flag() {
+  # Go's flag package prints the usage, including every flag name, for -h.
+  local usage
+  usage="$("$LIVE_BIN" -h 2>&1 || true)"
+  [[ "$usage" == *"-$1"* ]]
+}
+
 start_server() {
   local pid deadline
+  local -a extra_args=()
   if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
     echo "tmux session $TMUX_SESSION already exists" >&2
     return 1
+  fi
+  if [[ "$VOICE_REDUNDANCY" == "1" ]]; then
+    # A rollback binary may predate the flag; start it without redundancy.
+    if binary_supports_flag voice-redundancy; then
+      extra_args+=(-voice-redundancy)
+      echo "Voice redundancy: enabled"
+    else
+      echo "WARNING: $LIVE_BIN does not support -voice-redundancy; starting without it" >&2
+    fi
   fi
   : >>"$LOG_FILE"
   tmux new-session -d -s "$TMUX_SESSION" -c "$APP_DIR" \
@@ -110,7 +128,8 @@ start_server() {
     -media-port "$MEDIA_PORT" \
     -media-min-port "$MEDIA_MIN_PORT" \
     -media-max-port "$MEDIA_MAX_PORT" \
-    -media-advertised-ip "$PUBLIC_IP"
+    -media-advertised-ip "$PUBLIC_IP" \
+    ${extra_args[@]+"${extra_args[@]}"}
   pid="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null || true)"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$pid" >"$PID_FILE"
@@ -150,6 +169,8 @@ is_positive_integer "$MEDIA_MAX_PORT" && (( MEDIA_MAX_PORT <= 65535 )) \
   || fail "MEDIA_MIN_PORT must not exceed MEDIA_MAX_PORT"
 (( VOICE_PORT != MEDIA_PORT )) \
   || fail "VOICE_PORT and MEDIA_PORT must be different"
+[[ "$VOICE_REDUNDANCY" == "0" || "$VOICE_REDUNDANCY" == "1" ]] \
+  || fail "VOICE_REDUNDANCY must be 0 or 1"
 is_positive_integer "$STOP_TIMEOUT" || fail "STOP_TIMEOUT must be positive"
 is_positive_integer "$START_TIMEOUT" || fail "START_TIMEOUT must be positive"
 [[ -d "$APP_DIR" ]] || fail "directory not found: $APP_DIR"

@@ -25,7 +25,10 @@ param(
     [int]$MediaMaxPort = 20100,
 
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
-    [string]$TmuxSession = 'govts-server'
+    [string]$TmuxSession = 'govts-server',
+
+    # Repeat the previous voice frame in each server -> client datagram.
+    [switch]$VoiceRedundancy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,7 +64,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "redeploy script upload failed with exit code $LASTEXITCODE"
 }
 
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' '$remoteScript' '$remoteBinary'"
+$voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' '$remoteScript' '$remoteBinary'"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {
     throw "remote redeploy failed with exit code $LASTEXITCODE"
