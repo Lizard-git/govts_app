@@ -11,7 +11,8 @@ import (
 )
 
 type ServerDTO struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 type AudioProfileDTO struct {
@@ -170,7 +171,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		ChatRevision:     formatUint64(view.ChatRevision),
 		ConnectionStatus: connectionStatus(view.ConnectionStatus),
 		LastError:        lastError,
-		Server:           ServerDTO{Name: view.ServerInfo.Name},
+		Server:           ServerDTO{Name: view.ServerInfo.Name, Version: view.ServerInfo.Version},
 		Revision:         formatUint64(uint64(view.Revision)),
 		SessionID:        formatUint64(view.SessionID),
 		ChannelID:        formatUint64(uint64(view.ChannelID)),

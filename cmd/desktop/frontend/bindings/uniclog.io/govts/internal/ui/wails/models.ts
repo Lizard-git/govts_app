@@ -169,4 +169,5 @@ export interface ScreenStreamDTO {
 
 export interface ServerDTO {
     "name": string;
+    "version"?: string;
 }

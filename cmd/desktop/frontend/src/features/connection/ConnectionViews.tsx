@@ -81,7 +81,7 @@ export function StatusBar({view, page, onPageChange}: {
     onPageChange: (page: Page) => void;
 }) {
     return <header className="status-bar">
-        <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong></div>
+        <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong>{view.server.version && <span className="server-version" aria-label={`Версия сервера: ${view.server.version}`}>{view.server.version}</span>}</div>
         <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>Синхронизация…</div>
         <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus}/>
         <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>

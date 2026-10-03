@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"uniclog.io/govts/internal/appversion"
 	"uniclog.io/govts/internal/domain"
 	"uniclog.io/govts/internal/protocol"
 	"uniclog.io/govts/internal/transport/udp"
@@ -114,6 +115,10 @@ func requestSnapshot(ctx context.Context, conn *udp.ClientPacketConn, state *Sta
 	decoded, err := protocol.DecodeSnapshotResponse(response.Payload)
 	if err != nil {
 		return protocol.SnapshotResponse{}, fmt.Errorf("decode snapshot response: %w", err)
+	}
+	// Older servers leave Sequence at zero; their version stays unknown.
+	if decoded.Kind == protocol.SnapshotKindMetadata && response.Sequence != 0 {
+		decoded.ServerInfo.Version = appversion.Number(response.Sequence).String()
 	}
 	return decoded, nil
 }

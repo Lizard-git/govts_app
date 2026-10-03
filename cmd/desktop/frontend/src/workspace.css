@@ -23,6 +23,7 @@
 .sync-pill.synced { visibility: hidden; }
 .app-brand { display: flex; gap: 10px; align-items: center; min-width: 0; margin-right: auto; flex: 1; font-size: 14px; }
 .app-brand strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-version { flex-shrink: 0; color: #8a8a8a; font-size: 12px; white-space: nowrap; }
 .brand-mark { display: grid; width: 27px; height: 27px; flex-shrink: 0; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--card); }
 .brand-mark svg { width: 16px; height: 16px; }
 .header-nav-button { color: var(--text); border-color: var(--line); background: var(--card-strong); }

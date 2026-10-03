@@ -34,6 +34,11 @@ func HandleStateSnapshotPacket(conn *udp.ServerPacketConn, hub *Hub, cache *Requ
 		return fmt.Errorf("encode snapshot response: %w", err)
 	}
 	ack := protocol.VoicePacket{Type: protocol.PacketStateSnapshotAck, SessionID: packet.SessionID, RequestID: packet.RequestID, Payload: payload}
+	// Metadata ACKs carry the server version in the otherwise unused Sequence
+	// field, keeping the snapshot payload compatible with existing clients.
+	if request.Kind == protocol.SnapshotKindMetadata {
+		ack.Sequence = uint32(hub.ServerVersion())
+	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	session, ok := hub.Get(packet.SessionID)
 	if !ok {

@@ -107,6 +107,7 @@ type Participant struct {
 
 type ServerInfo struct {
 	Name             string
+	Version          string
 	MediaPort        uint16
 	DefaultChannelID ChannelID
 }
