@@ -16,6 +16,7 @@ import (
 
 	"uniclog.io/govts/internal/appversion"
 	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
 )
 
 var (
@@ -51,6 +52,7 @@ type Hub struct {
 	revision      domain.StateRevision
 	serverInfo    domain.ServerInfo
 	serverVersion appversion.Number
+	voiceBundles  bool
 	outbox        []domain.StateEvent
 	eventReady    chan struct{}
 }
@@ -185,6 +187,53 @@ func (h *Hub) Get(id uint64) (Session, bool) {
 		return Session{}, false
 	}
 	return *cloneSession(s), true
+}
+
+// SetVoiceBundles enables server → client voice redundancy for sessions that
+// support PacketVoiceBundle.
+func (h *Hub) SetVoiceBundles(enabled bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.voiceBundles = enabled
+	if !enabled {
+		for _, session := range h.sessions {
+			session.lastVoice = protocol.VoiceBundleFrame{}
+		}
+	}
+}
+
+// SetSessionVoiceBundles records whether the session's client accepts
+// PacketVoiceBundle.
+func (h *Hub) SetSessionVoiceBundles(id uint64, supported bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if s := h.sessions[id]; s != nil {
+		s.VoiceBundles = supported
+	}
+}
+
+// SwapLastVoiceFrame stores frame as the sender's latest voice frame and
+// returns the previous one when it directly precedes frame. Redundancy is
+// disabled, duplicate, reordered and discontinuous frames return false.
+func (h *Hub) SwapLastVoiceFrame(id uint64, frame protocol.VoiceBundleFrame) (protocol.VoiceBundleFrame, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[id]
+	if !h.voiceBundles || s == nil || frame.Sequence == 0 {
+		return protocol.VoiceBundleFrame{}, false
+	}
+	previous := s.lastVoice
+	if previous.Sequence != 0 && int32(frame.Sequence-previous.Sequence) <= 0 {
+		return protocol.VoiceBundleFrame{}, false
+	}
+	s.lastVoice = protocol.VoiceBundleFrame{
+		Sequence: frame.Sequence,
+		Payload:  append([]byte(nil), frame.Payload...),
+	}
+	if previous.Sequence == 0 || frame.Sequence-previous.Sequence != 1 {
+		return protocol.VoiceBundleFrame{}, false
+	}
+	return previous, true
 }
 
 func (h *Hub) RecordVoicePacket(id uint64, sequence uint32) {
@@ -943,6 +992,7 @@ func cloneSession(session *Session) *Session {
 	// Transport statistics are private to the hub and not part of session snapshots.
 	clone.voiceArrivals = nil
 	clone.voiceSeen = nil
+	clone.lastVoice = protocol.VoiceBundleFrame{}
 	return &clone
 }
 

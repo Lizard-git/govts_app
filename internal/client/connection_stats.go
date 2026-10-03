@@ -23,6 +23,9 @@ type ConnectionStats struct {
 	OutgoingLoss           float64
 	OutgoingKnown          bool
 	// ConcealedLoss is the share of expected incoming frames replaced by PLC.
+	// RecoveredLoss is the share of expected incoming frames restored from a
+	// redundant copy in PacketVoiceBundle.
+	RecoveredLoss    float64
 	ConcealedLoss    float64
 	LossBurstsSingle int
 	LossBurstsDouble int
@@ -58,6 +61,7 @@ type connectionMeasurements struct {
 	outgoingKnown    bool
 	sentVoiceAt      []time.Time
 	lastSentSequence uint32
+	recoveredAt      []time.Time
 	concealedAt      []time.Time
 	lossBursts       []lossBurst
 }
@@ -74,6 +78,7 @@ func (m *connectionMeasurements) reset() {
 	m.outgoingKnown = false
 	m.sentVoiceAt = nil
 	m.lastSentSequence = 0
+	m.recoveredAt = nil
 	m.concealedAt = nil
 	m.lossBursts = nil
 }
@@ -84,6 +89,7 @@ func (m *connectionMeasurements) resetIncoming() {
 	m.arrivals = nil
 	m.senders = nil
 	m.voiceAt = time.Time{}
+	m.recoveredAt = nil
 	m.concealedAt = nil
 	m.lossBursts = nil
 }
@@ -194,6 +200,25 @@ func (m *connectionMeasurements) recordVoice(sender uint64, sequence uint32, at 
 	m.arrivals = append(m.arrivals, voiceArrival{at: at})
 }
 
+// recordRedundant counts a redundant copy that fills a frame the primary
+// datagrams lost. Raw loss keeps the frame as lost.
+func (m *connectionMeasurements) recordRedundant(sender uint64, sequence uint32, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trim(at)
+	stream := m.senders[sender]
+	if stream == nil {
+		return
+	}
+	if _, lost := stream.missing[sequence]; !lost {
+		return
+	}
+	m.recoveredAt = append(m.recoveredAt, at)
+	if len(m.recoveredAt) > maxStatsPackets {
+		m.recoveredAt = m.recoveredAt[len(m.recoveredAt)-maxStatsPackets:]
+	}
+}
+
 func (m *connectionMeasurements) recordConcealed(at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -224,6 +249,11 @@ func (m *connectionMeasurements) trim(now time.Time) {
 		i++
 	}
 	m.arrivals = m.arrivals[i:]
+	i = 0
+	for i < len(m.recoveredAt) && m.recoveredAt[i].Before(cutoff) {
+		i++
+	}
+	m.recoveredAt = m.recoveredAt[i:]
 	i = 0
 	for i < len(m.concealedAt) && m.concealedAt[i].Before(cutoff) {
 		i++
@@ -280,6 +310,7 @@ func (m *connectionMeasurements) snapshot(now time.Time) ConnectionStats {
 		}
 		result.IncomingKnown = true
 		result.IncomingLoss = float64(lost) * 100 / float64(len(m.arrivals))
+		result.RecoveredLoss = min(float64(len(m.recoveredAt))*100/float64(len(m.arrivals)), 100)
 		result.ConcealedLoss = min(float64(len(m.concealedAt))*100/float64(len(m.arrivals)), 100)
 	}
 	for _, burst := range m.lossBursts {
@@ -313,6 +344,11 @@ func (s *State) ConnectionStats() ConnectionStats {
 
 func (s *State) RecordVoiceArrival(sender uint64, sequence uint32) {
 	s.measurements.recordVoice(sender, sequence, time.Now())
+}
+
+// RecordVoiceRedundant observes a redundant frame copy from PacketVoiceBundle.
+func (s *State) RecordVoiceRedundant(sender uint64, sequence uint32) {
+	s.measurements.recordRedundant(sender, sequence, time.Now())
 }
 
 // RecordVoiceConcealed counts one incoming frame synthesized by PLC.

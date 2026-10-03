@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"uniclog.io/govts/internal/domain"
+	"uniclog.io/govts/internal/protocol"
 )
 
 type Session struct {
@@ -20,8 +21,13 @@ type Session struct {
 	Addr            *net.UDPAddr
 	LastSeen        time.Time
 	MediaCredential [32]byte
-	voiceSeen       map[uint32]struct{}
-	voiceArrivals   []voiceSample
+	// VoiceBundles reports that the client accepts PacketVoiceBundle.
+	VoiceBundles  bool
+	voiceSeen     map[uint32]struct{}
+	voiceArrivals []voiceSample
+	// lastVoice is the sender's previous frame kept for server → client
+	// redundancy; it lives and dies with the session.
+	lastVoice protocol.VoiceBundleFrame
 }
 
 type voiceSample struct {

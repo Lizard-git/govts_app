@@ -45,6 +45,9 @@ const (
 	PacketChatRequest
 	PacketChatAck
 	PacketChatChanged
+	// PacketVoiceBundle carries the current and the previous voice frames of
+	// one sender; server → client only, for clients that support it.
+	PacketVoiceBundle
 
 	PacketEnd
 )
