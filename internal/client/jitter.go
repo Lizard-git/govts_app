@@ -10,6 +10,11 @@ import (
 
 const DefaultJitterDepth = 3
 
+// maxConcealedFrames bounds how many lost frames in one gap are replaced with
+// Missing placeholders. Longer gaps end playout until the next real frame
+// instead of synthesizing speech indefinitely.
+const maxConcealedFrames = 3
+
 const (
 	DefaultStreamIdleTimeout = 30 * time.Second
 	streamCleanupInterval    = 5 * time.Second
@@ -17,6 +22,7 @@ const (
 
 type jitterBufferStats struct {
 	Lost       uint64
+	Concealed  uint64
 	Duplicates uint64
 	TooOld     uint64
 }
@@ -29,6 +35,8 @@ type jitterBuffer struct {
 	next        uint32
 	pending     map[uint32]audio.MediaFrame
 	stats       jitterBufferStats
+	// onGap, when set, observes the length of every confirmed gap.
+	onGap func(length uint32)
 }
 
 func newJitterBuffer(depth int) *jitterBuffer {
@@ -117,8 +125,32 @@ func (b *jitterBuffer) release(flush bool) []audio.MediaFrame {
 
 		sequence, distance := b.nearestPending()
 		b.stats.Lost += uint64(distance)
+		if b.onGap != nil {
+			b.onGap(distance)
+		}
+		ready = b.appendMissing(ready, b.pending[sequence], distance)
 		b.next = sequence
 	}
+	return ready
+}
+
+// appendMissing emits placeholders for the first frames of a confirmed gap so
+// the decoder can conceal them and the stream keeps one frame per interval.
+func (b *jitterBuffer) appendMissing(
+	ready []audio.MediaFrame,
+	following audio.MediaFrame,
+	distance uint32,
+) []audio.MediaFrame {
+	count := min(distance, maxConcealedFrames)
+	for i := uint32(0); i < count; i++ {
+		ready = append(ready, audio.MediaFrame{
+			SenderID: following.SenderID,
+			Sequence: b.next + i,
+			Duration: following.Duration,
+			Missing:  true,
+		})
+	}
+	b.stats.Concealed += uint64(count)
 	return ready
 }
 
@@ -144,6 +176,7 @@ func sequenceBefore(left uint32, right uint32) bool {
 type streamJitterBuffers struct {
 	depth    int
 	bySender map[uint64]jitterStream
+	onGap    func(length uint32)
 }
 
 type jitterStream struct {
@@ -169,6 +202,7 @@ func (b *streamJitterBuffers) PushAt(
 	stream, ok := b.bySender[frame.SenderID]
 	if !ok {
 		stream.buffer = newJitterBuffer(b.depth)
+		stream.buffer.onGap = b.onGap
 	}
 	stream.lastSeen = now
 	b.bySender[frame.SenderID] = stream
@@ -208,9 +242,13 @@ func JitterLoop(
 	mediaCh <-chan audio.MediaFrame,
 	orderedCh chan<- audio.MediaFrame,
 	depth int,
+	states ...*State,
 ) error {
 	defer close(orderedCh)
 	buffers := newStreamJitterBuffers(depth)
+	if len(states) > 0 {
+		buffers.onGap = states[0].RecordVoiceLossBurst
+	}
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 

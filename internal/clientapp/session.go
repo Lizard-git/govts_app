@@ -93,7 +93,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return voiceclient.DecodeLoop(ctx, func() (audio.Decoder, error) { return audio.NewOpusDecoder(codecConfig) }, orderedInCh, decodedCh, state)
 	})
 	supervisor.GoNamed("jitter", func(ctx context.Context) error {
-		return voiceclient.JitterLoop(ctx, encodedInCh, orderedInCh, voiceclient.DefaultJitterDepth)
+		return voiceclient.JitterLoop(ctx, encodedInCh, orderedInCh, voiceclient.DefaultJitterDepth, state)
 	})
 	supervisor.GoNamed("heartbeat", func(ctx context.Context) error {
 		return networkLoop("heartbeat", func() error { return voiceclient.HeartbeatLoop(ctx, conn, state) })

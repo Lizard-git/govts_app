@@ -15,11 +15,13 @@ type Frame struct {
 
 // MediaFrame is an encoded frame received from a remote audio stream.
 // SenderID and Sequence identify the stream and the frame order within it.
+// Missing marks a placeholder for a frame lost in transit; it has no Data.
 type MediaFrame struct {
 	SenderID uint64
 	Sequence uint32
 	Data     []byte
 	Duration time.Duration
+	Missing  bool
 }
 
 type PCMFrame struct {
@@ -44,6 +46,12 @@ type Encoder interface {
 
 type Decoder interface {
 	Decode(data []byte) ([]int16, error)
+}
+
+// LossConcealer is implemented by decoders that can synthesize one frame in
+// place of a lost packet from their current state.
+type LossConcealer interface {
+	ConcealLoss() ([]int16, error)
 }
 
 type CodecConfig struct {

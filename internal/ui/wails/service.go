@@ -336,6 +336,10 @@ func (s *Service) ConnectionStats() ConnectionStatsDTO {
 		IncomingSampleAtMS:     stats.IncomingSampleAtMS,
 		OutgoingLoss:           stats.OutgoingLoss,
 		OutgoingKnown:          stats.OutgoingKnown,
+		ConcealedLoss:          stats.ConcealedLoss,
+		LossBurstsSingle:       stats.LossBurstsSingle,
+		LossBurstsDouble:       stats.LossBurstsDouble,
+		LossBurstsLong:         stats.LossBurstsLong,
 	}
 }
 

@@ -98,6 +98,10 @@ type ConnectionStatsDTO struct {
 	IncomingSampleAtMS     int64   `json:"incomingSampleAtMs"`
 	OutgoingLoss           float64 `json:"outgoingLoss"`
 	OutgoingKnown          bool    `json:"outgoingKnown"`
+	ConcealedLoss          float64 `json:"concealedLoss"`
+	LossBurstsSingle       int     `json:"lossBurstsSingle"`
+	LossBurstsDouble       int     `json:"lossBurstsDouble"`
+	LossBurstsLong         int     `json:"lossBurstsLong"`
 }
 
 type ClientViewDTO struct {

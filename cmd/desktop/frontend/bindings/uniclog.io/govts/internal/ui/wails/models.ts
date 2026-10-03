@@ -142,6 +142,10 @@ export interface ConnectionStatsDTO {
     "incomingSampleAtMs": number;
     "outgoingLoss": number;
     "outgoingKnown": boolean;
+    "concealedLoss": number;
+    "lossBurstsSingle": number;
+    "lossBurstsDouble": number;
+    "lossBurstsLong": number;
 }
 
 export interface MediaTrustDTO {
