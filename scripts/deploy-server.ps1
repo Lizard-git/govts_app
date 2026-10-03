@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$')]
-    [string]$Target = 'admin@193.187.92.89',
+    [string]$Target = 'admin@82.25.190.126',
 
     [ValidatePattern('^/[A-Za-z0-9._/-]+$')]
     [string]$RemoteDir = '/opt/govts',
@@ -10,7 +10,7 @@ param(
     [string]$ConfigPath = '',
 
     [ValidatePattern('^[0-9A-Fa-f:.]+$')]
-    [string]$PublicIp = '193.187.92.89',
+    [string]$PublicIp = '82.25.190.126',
 
     [ValidateRange(1, 65535)]
     [int]$VoicePort = 9000,
