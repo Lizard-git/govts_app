@@ -219,17 +219,7 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
         return chatStore.watch({kind: "channel", id: view.channelId});
     }, [chatStore, view.connectionStatus, view.channelId]);
     const screenOwners = useMemo(() => new Set((view.screenStreams ?? []).map((stream) => stream.ownerSessionId)), [view.screenStreams]);
-    const [selectedID, setSelectedID] = useState(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
-    const previousChannelID = useRef(view.channelId);
-    useEffect(() => {
-        if (previousChannelID.current !== view.channelId) {
-            previousChannelID.current = view.channelId;
-            setSelectedID(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
-            return;
-        }
-        if (selectedID && channels.some((channel) => channel.id === selectedID)) return;
-        setSelectedID(view.channelId !== "0" ? view.channelId : channels[0]?.id ?? "");
-    }, [channels, selectedID, view.channelId]);
+    const selectedID = view.channelId;
     const selected = channels.find((channel) => channel.id === selectedID);
     const [showInfo, setShowInfo] = useState(false);
     const [usersExpanded, setUsersExpanded] = useState(false);
@@ -271,8 +261,8 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants} screenOwners={screenOwners}
                                                              canKick={view.canKick} canBan={view.canBan}
                                                              canDrag={view.canDrag && view.connectionStatus === "connected"}
-                                                             selectedID={selectedID} currentID={view.channelId}
-                                                             onError={onError} onMessage={openMessage} onSelect={setSelectedID} onJoin={(id) => {
+                                                             currentID={view.channelId}
+                                                             onError={onError} onMessage={openMessage} onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }} onMoveParticipant={(sessionID, channelID) => {
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
@@ -290,7 +280,6 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
             <section className="channel-stage">{selected ? <>
                 <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || "Голосовой канал"}>{selected.topic || "Голосовой канал"}</p></div>
-                    {selected.id !== view.channelId && <button className="header-nav-button" disabled={!selected.canJoin || view.connectionStatus !== "connected"} onClick={() => void invoke(() => desktopAPI.joinChannel(selected.id))}>Войти</button>}
                     <button className="info-toggle" aria-label="Информация о канале" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
                 <div className="participants-stage" role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><div className="stage-landscape" aria-hidden="true"/><div className="participants-strip">
@@ -328,7 +317,7 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                         {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={`Личные сообщения: ${participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName}`} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
                     </div>)}
                 </section>
-            </> : <div className="empty-state">Выберите канал</div>}
+            </> : <div className="empty-state">Ожидание подключения к каналу</div>}
                 <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke}/></div>
             </section>
             {infoVisible && <div className="workspace-divider info-divider" {...workspaceResize.separatorProps("info")}/>}
@@ -349,16 +338,14 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     </section>;
 }
 
-function ChannelTree({channels, participants, screenOwners, canKick, canBan, canDrag, selectedID, currentID, onSelect, onJoin, onMoveParticipant, onError, onMessage}: {
+function ChannelTree({channels, participants, screenOwners, canKick, canBan, canDrag, currentID, onJoin, onMoveParticipant, onError, onMessage}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
     screenOwners: Set<string>;
     canKick: boolean;
     canBan: boolean;
     canDrag: boolean;
-    selectedID: string;
     currentID: string;
-    onSelect: (id: string) => void;
     onJoin: (id: string) => void
     onMoveParticipant: (sessionID: string, channelID: string) => void;
     onError: (message: string) => void;
@@ -375,8 +362,8 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
         const canDrop = canMoveParticipant(draggingParticipant, channel.id, canDrag);
         return <div key={channel.id}>
             <button
-                className={`channel-row ${selectedID === channel.id ? "selected" : ""} ${currentID === channel.id ? "current" : ""} ${canDrop && dropTargetID === channel.id ? "drop-target" : ""}`}
-                style={{paddingLeft: 14 + depth * 18}} onClick={() => onSelect(channel.id)}
+                className={`channel-row ${currentID === channel.id ? "selected current" : ""} ${canDrop && dropTargetID === channel.id ? "drop-target" : ""}`}
+                style={{paddingLeft: 14 + depth * 18}}
                 title={canDrop ? "Переместить участника в этот канал" : !channel.canJoin ? "Нет доступа к каналу" : undefined}
                 onDragOver={(event) => {
                     if (!canDrop) return;
