@@ -43,6 +43,9 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "Govts",
 		Description: "Голосовой клиент Govts",
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "app.govts.desktop",
+		},
 		Services: []application.Service{
 			application.NewService(service),
 		},
