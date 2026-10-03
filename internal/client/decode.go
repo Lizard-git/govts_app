@@ -13,7 +13,12 @@ import (
 
 type DecoderFactory func() (audio.Decoder, error)
 
-var errInvalidAudioFrame = errors.New("invalid audio frame")
+var (
+	errInvalidAudioFrame = errors.New("invalid audio frame")
+	// errLossNotConcealed means a Missing frame has no decoder state to
+	// extrapolate from and is skipped.
+	errLossNotConcealed = errors.New("lost audio frame not concealed")
+)
 
 type streamDecoder struct {
 	decoder  audio.Decoder
@@ -40,6 +45,10 @@ func (d *streamDecoders) decodeAt(
 	frame audio.MediaFrame,
 	now time.Time,
 ) (audio.MediaPCMFrame, error) {
+	if frame.Missing {
+		return d.concealAt(frame, now)
+	}
+
 	stream, ok := d.bySender[frame.SenderID]
 	if !ok {
 		decoder, err := d.newDecoder()
@@ -62,6 +71,42 @@ func (d *streamDecoders) decodeAt(
 		delete(d.bySender, frame.SenderID)
 		return audio.MediaPCMFrame{}, fmt.Errorf(
 			"%w: decode frame from sender %d: %w",
+			errInvalidAudioFrame,
+			frame.SenderID,
+			err,
+		)
+	}
+
+	return audio.MediaPCMFrame{
+		SenderID: frame.SenderID,
+		Sequence: frame.Sequence,
+		Samples:  samples,
+		Duration: frame.Duration,
+	}, nil
+}
+
+// concealAt synthesizes a lost frame with the sender's existing decoder so the
+// next real frame continues from the concealed codec state.
+func (d *streamDecoders) concealAt(
+	frame audio.MediaFrame,
+	now time.Time,
+) (audio.MediaPCMFrame, error) {
+	stream, ok := d.bySender[frame.SenderID]
+	if !ok {
+		return audio.MediaPCMFrame{}, errLossNotConcealed
+	}
+	concealer, ok := stream.decoder.(audio.LossConcealer)
+	if !ok {
+		return audio.MediaPCMFrame{}, errLossNotConcealed
+	}
+	stream.lastSeen = now
+	d.bySender[frame.SenderID] = stream
+
+	samples, err := concealer.ConcealLoss()
+	if err != nil {
+		delete(d.bySender, frame.SenderID)
+		return audio.MediaPCMFrame{}, fmt.Errorf(
+			"%w: conceal frame from sender %d: %w",
 			errInvalidAudioFrame,
 			frame.SenderID,
 			err,
@@ -115,12 +160,18 @@ func DecodeLoop(
 			}
 
 			pcmFrame, err := decoders.decode(frame)
+			if errors.Is(err, errLossNotConcealed) {
+				continue
+			}
 			if errors.Is(err, errInvalidAudioFrame) {
 				invalid.Record(err, frame.SenderID)
 				continue
 			}
 			if err != nil {
 				return err
+			}
+			if frame.Missing && len(states) > 0 {
+				states[0].RecordVoiceConcealed()
 			}
 			if len(states) > 0 && !states[0].ObserveSpeaking(frame.SenderID, pcmFrame.Samples, time.Now()) {
 				continue

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
@@ -60,10 +61,36 @@ func ReceiveLoop(
 				Data:     packet.Payload,
 				Duration: frameDuration,
 			}
-			select {
-			case encodedCh <- frame:
-			case <-ctx.Done():
-				return ctx.Err()
+			if err := sendMediaFrame(ctx, encodedCh, frame); err != nil {
+				return err
+			}
+		case protocol.PacketVoiceBundle:
+			frames, err := protocol.DecodeVoiceBundle(packet.Payload)
+			if err == nil && frames[len(frames)-1].Sequence != packet.Sequence {
+				err = fmt.Errorf("%w: current frame %d does not match header %d", protocol.ErrInvalidVoiceBundle, frames[len(frames)-1].Sequence, packet.Sequence)
+			}
+			if err != nil {
+				rejected.RecordKind("malformed_packet", err, conn.LocalAddr())
+				continue
+			}
+			if len(states) > 0 && states[0] != nil {
+				// Raw loss counts datagrams, so only the current frame is an
+				// arrival; earlier frames are redundant copies.
+				states[0].RecordVoiceArrival(packet.SessionID, packet.Sequence)
+				for _, redundant := range frames[:len(frames)-1] {
+					states[0].RecordVoiceRedundant(packet.SessionID, redundant.Sequence)
+				}
+			}
+			for _, bundled := range frames {
+				frame := audio.MediaFrame{
+					SenderID: packet.SessionID,
+					Sequence: bundled.Sequence,
+					Data:     bundled.Payload,
+					Duration: frameDuration,
+				}
+				if err := sendMediaFrame(ctx, encodedCh, frame); err != nil {
+					return err
+				}
 			}
 		default:
 			select {
@@ -72,5 +99,18 @@ func ReceiveLoop(
 				return ctx.Err()
 			}
 		}
+	}
+}
+
+func sendMediaFrame(
+	ctx context.Context,
+	encodedCh chan<- audio.MediaFrame,
+	frame audio.MediaFrame,
+) error {
+	select {
+	case encodedCh <- frame:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

@@ -31,11 +31,15 @@ func TestJitterBufferSkipsLostFrameAfterWindowFills(t *testing.T) {
 	if got := buffer.Push(mediaFrame(4)); len(got) != 0 {
 		t.Fatalf("Push(4) released sequences %v, want none", sequences(got))
 	}
-	if got := sequences(buffer.Push(mediaFrame(5))); !reflect.DeepEqual(got, []uint32{4, 5}) {
-		t.Fatalf("Push(5) released sequences %v, want [4 5]", got)
+	released := buffer.Push(mediaFrame(5))
+	if got := sequences(released); !reflect.DeepEqual(got, []uint32{3, 4, 5}) {
+		t.Fatalf("Push(5) released sequences %v, want [3 4 5]", got)
 	}
-	if stats := buffer.Stats(); stats.Lost != 1 {
-		t.Fatalf("lost frames = %d, want 1", stats.Lost)
+	if !released[0].Missing || released[1].Missing || released[2].Missing {
+		t.Fatalf("missing flags = %v %v %v, want only the lost frame marked", released[0].Missing, released[1].Missing, released[2].Missing)
+	}
+	if stats := buffer.Stats(); stats.Lost != 1 || stats.Concealed != 1 {
+		t.Fatalf("lost/concealed frames = %d/%d, want 1/1", stats.Lost, stats.Concealed)
 	}
 }
 

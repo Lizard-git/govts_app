@@ -22,11 +22,25 @@ type ConnectionStats struct {
 	IncomingSampleAtMS     int64
 	OutgoingLoss           float64
 	OutgoingKnown          bool
+	// ConcealedLoss is the share of expected incoming frames replaced by PLC.
+	// RecoveredLoss is the share of expected incoming frames restored from a
+	// redundant copy in PacketVoiceBundle.
+	RecoveredLoss    float64
+	ConcealedLoss    float64
+	LossBurstsSingle int
+	LossBurstsDouble int
+	LossBurstsLong   int
 }
 
 type voiceArrival struct {
 	at   time.Time
 	lost bool
+}
+
+// lossBurst is a run of consecutive frames the jitter buffer confirmed lost.
+type lossBurst struct {
+	at     time.Time
+	length uint32
 }
 
 type voiceSequence struct {
@@ -47,6 +61,9 @@ type connectionMeasurements struct {
 	outgoingKnown    bool
 	sentVoiceAt      []time.Time
 	lastSentSequence uint32
+	recoveredAt      []time.Time
+	concealedAt      []time.Time
+	lossBursts       []lossBurst
 }
 
 func (m *connectionMeasurements) reset() {
@@ -61,6 +78,9 @@ func (m *connectionMeasurements) reset() {
 	m.outgoingKnown = false
 	m.sentVoiceAt = nil
 	m.lastSentSequence = 0
+	m.recoveredAt = nil
+	m.concealedAt = nil
+	m.lossBursts = nil
 }
 
 func (m *connectionMeasurements) resetIncoming() {
@@ -69,6 +89,9 @@ func (m *connectionMeasurements) resetIncoming() {
 	m.arrivals = nil
 	m.senders = nil
 	m.voiceAt = time.Time{}
+	m.recoveredAt = nil
+	m.concealedAt = nil
+	m.lossBursts = nil
 }
 
 func (m *connectionMeasurements) resetSender(sender uint64) {
@@ -177,6 +200,48 @@ func (m *connectionMeasurements) recordVoice(sender uint64, sequence uint32, at 
 	m.arrivals = append(m.arrivals, voiceArrival{at: at})
 }
 
+// recordRedundant counts a redundant copy that fills a frame the primary
+// datagrams lost. Raw loss keeps the frame as lost.
+func (m *connectionMeasurements) recordRedundant(sender uint64, sequence uint32, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trim(at)
+	stream := m.senders[sender]
+	if stream == nil {
+		return
+	}
+	if _, lost := stream.missing[sequence]; !lost {
+		return
+	}
+	m.recoveredAt = append(m.recoveredAt, at)
+	if len(m.recoveredAt) > maxStatsPackets {
+		m.recoveredAt = m.recoveredAt[len(m.recoveredAt)-maxStatsPackets:]
+	}
+}
+
+func (m *connectionMeasurements) recordConcealed(at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trim(at)
+	m.concealedAt = append(m.concealedAt, at)
+	if len(m.concealedAt) > maxStatsPackets {
+		m.concealedAt = m.concealedAt[len(m.concealedAt)-maxStatsPackets:]
+	}
+}
+
+func (m *connectionMeasurements) recordLossBurst(length uint32, at time.Time) {
+	if length == 0 || length > 1024 { // discontinuity, as in recordVoice
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trim(at)
+	m.lossBursts = append(m.lossBursts, lossBurst{at: at, length: length})
+	if len(m.lossBursts) > maxStatsPackets {
+		m.lossBursts = m.lossBursts[len(m.lossBursts)-maxStatsPackets:]
+	}
+}
+
 func (m *connectionMeasurements) trim(now time.Time) {
 	cutoff := now.Add(-statsWindow)
 	i := 0
@@ -184,6 +249,21 @@ func (m *connectionMeasurements) trim(now time.Time) {
 		i++
 	}
 	m.arrivals = m.arrivals[i:]
+	i = 0
+	for i < len(m.recoveredAt) && m.recoveredAt[i].Before(cutoff) {
+		i++
+	}
+	m.recoveredAt = m.recoveredAt[i:]
+	i = 0
+	for i < len(m.concealedAt) && m.concealedAt[i].Before(cutoff) {
+		i++
+	}
+	m.concealedAt = m.concealedAt[i:]
+	i = 0
+	for i < len(m.lossBursts) && m.lossBursts[i].at.Before(cutoff) {
+		i++
+	}
+	m.lossBursts = m.lossBursts[i:]
 	for id, stream := range m.senders {
 		for sequence, at := range stream.missing {
 			if at.Before(cutoff) {
@@ -230,6 +310,18 @@ func (m *connectionMeasurements) snapshot(now time.Time) ConnectionStats {
 		}
 		result.IncomingKnown = true
 		result.IncomingLoss = float64(lost) * 100 / float64(len(m.arrivals))
+		result.RecoveredLoss = min(float64(len(m.recoveredAt))*100/float64(len(m.arrivals)), 100)
+		result.ConcealedLoss = min(float64(len(m.concealedAt))*100/float64(len(m.arrivals)), 100)
+	}
+	for _, burst := range m.lossBursts {
+		switch {
+		case burst.length == 1:
+			result.LossBurstsSingle++
+		case burst.length == 2:
+			result.LossBurstsDouble++
+		default:
+			result.LossBurstsLong++
+		}
 	}
 	return result
 }
@@ -252,6 +344,21 @@ func (s *State) ConnectionStats() ConnectionStats {
 
 func (s *State) RecordVoiceArrival(sender uint64, sequence uint32) {
 	s.measurements.recordVoice(sender, sequence, time.Now())
+}
+
+// RecordVoiceRedundant observes a redundant frame copy from PacketVoiceBundle.
+func (s *State) RecordVoiceRedundant(sender uint64, sequence uint32) {
+	s.measurements.recordRedundant(sender, sequence, time.Now())
+}
+
+// RecordVoiceConcealed counts one incoming frame synthesized by PLC.
+func (s *State) RecordVoiceConcealed() {
+	s.measurements.recordConcealed(time.Now())
+}
+
+// RecordVoiceLossBurst counts a gap the jitter buffer confirmed as lost.
+func (s *State) RecordVoiceLossBurst(length uint32) {
+	s.measurements.recordLossBurst(length, time.Now())
 }
 
 func (s *State) RecordVoiceSent(sequence uint32) {

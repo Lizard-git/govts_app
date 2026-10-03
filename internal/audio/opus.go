@@ -124,3 +124,16 @@ func (d *OpusDecoder) Decode(data []byte) ([]int16, error) {
 
 	return samples[:n*d.config.Channels], nil
 }
+
+func (d *OpusDecoder) ConcealLoss() ([]int16, error) {
+	samples := make(
+		[]int16,
+		d.config.SamplesPerFrame*d.config.Channels,
+	)
+
+	if err := d.decoder.DecodePLC(samples); err != nil {
+		return nil, err
+	}
+
+	return samples, nil
+}
