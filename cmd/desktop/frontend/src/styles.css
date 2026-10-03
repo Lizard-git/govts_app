@@ -13,6 +13,7 @@
   --accent-blue: #21a5f6;
   --purple: #6e3d8e;
   --danger: #ff6c7a;
+  --participant-volume: 50%;
 }
 
 :root[data-theme="light"] {
@@ -86,7 +87,7 @@ h2 { margin: 0; font-size: 20px; }
 .header-nav-button > span:first-child { color: #8194b7; font-size: 15px; }
 .status-bar > .header-nav-button:first-child { margin-right: auto; }
 .disconnect-button:hover { color: #ffd2d6; border-color: rgba(255, 108, 122, .5); background: rgba(255, 108, 122, .08); }
-.server-summary { position: absolute; left: 0; width: 62.2%; min-width: 0; padding-inline: 0px 24px; text-align: center; pointer-events: none; }
+.server-summary { position: absolute; left: 0; width: 62.2%; min-width: 0; padding-inline: 0 24px; text-align: center; pointer-events: none; }
 .server-summary .eyebrow { text-align: center; }
 .status-bar h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill, .sync-pill { display: flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid #30405e; border-radius: 99px; color: #a8b5ce; background: #182338; font-size: 12px; }
@@ -223,7 +224,13 @@ h2 { margin: 0; font-size: 20px; }
 .kind-connection .event-marker { background: var(--accent); }.kind-error .event-marker { background: var(--danger); }.kind-reconnect .event-marker { background: #f6bb5b; }.kind-channel .event-marker { background: var(--accent-blue); }
 .empty-event { min-height: 90px; }
 
-.settings-page { min-height: 0; grid-row: 3; margin-right: -24px; padding: 0 24px 22px 0; overflow: auto; }
+.settings-page { display: grid; min-height: 0; grid-row: 3; grid-template-rows: auto minmax(0, 1fr); margin-right: -24px; padding: 0 24px 22px 0; overflow: hidden; }
+.settings-layout { display: grid; min-height: 0; grid-template-columns: 196px minmax(0, 1fr); gap: 16px; }
+.settings-nav { display: flex; flex-direction: column; align-content: start; gap: 4px; height: fit-content; padding: 8px; border: 1px solid rgba(108, 132, 177, .13); border-radius: 17px; background: var(--card); box-shadow: 0 12px 35px rgba(3, 8, 19, .12); }
+.settings-nav button { display: block; width: 100%; min-height: 40px; padding: 0 12px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 650; text-align: left; }
+.settings-nav button:hover { color: var(--text); background: var(--card-strong); }
+.settings-nav button[aria-current="page"] { color: var(--text); background: #263750; }
+.settings-content { min-height: 0; padding-right: 4px; overflow: auto; }
 .settings-heading { margin: 4px 2px 17px; }
 .settings-heading h2 { font-size: 25px; }
 .settings-card { width: 100%; margin-bottom: 13px; padding: 21px; }
@@ -306,6 +313,9 @@ h2 { margin: 0; font-size: 20px; }
   .server-summary .eyebrow { text-align: left; }
   .channels-layout { grid-template-columns: 1fr; }.channel-detail { display: none; }
   .settings-page { margin-right: -14px; padding-right: 14px; }
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; }
+  .settings-nav button { width: auto; }
 }
 
 :root[data-theme="light"] .connection-page,
@@ -324,6 +334,7 @@ h2 { margin: 0; font-size: 20px; }
 :root[data-theme="light"] .event-list,
 :root[data-theme="light"] .device-select-trigger,
 :root[data-theme="light"] .audio-waveform canvas { background: var(--card-strong); color: var(--text); }
+:root[data-theme="light"] .settings-nav button[aria-current="page"] { color: var(--text); background: #dce6f3; }
 :root[data-theme="light"] .channel-row { color: #3c4c65; }
 :root[data-theme="light"] .channel-row:hover,
 :root[data-theme="light"] .channel-row.selected,
@@ -349,6 +360,7 @@ h2 { margin: 0; font-size: 20px; }
   :root[data-theme="system"] .event-list,
   :root[data-theme="system"] .device-select-trigger,
   :root[data-theme="system"] .audio-waveform canvas { background: var(--card-strong); color: var(--text); }
+  :root[data-theme="system"] .settings-nav button[aria-current="page"] { color: var(--text); background: #dce6f3; }
   :root[data-theme="system"] .channel-row { color: #3c4c65; }
   :root[data-theme="system"] .channel-row:hover,
   :root[data-theme="system"] .channel-row.selected,

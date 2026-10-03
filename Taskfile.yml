@@ -42,9 +42,18 @@ tasks:
     cmds:
       - npm run dev -- --port {{.VITE_PORT}} --strictPort
 
+  windows:resources:
+    internal: true
+    platforms: [windows]
+    cmds:
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path build/windows | Out-Null"
+      - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} generate icons -input cmd/desktop/frontend/src/components/logo.png -windowsfilename build/windows/icon.ico -macfilename build/windows/icon.icns
+      - cmd: powershell -NoProfile -Command "Remove-Item -Force build/windows/icon.icns -ErrorAction SilentlyContinue"
+      - cmd: go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} generate syso -arch {{ARCH}} -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -out cmd/desktop/rsrc_windows_{{ARCH}}.syso
+
   build:dev:
     desc: Build the desktop backend for Wails development mode
-    deps: [bindings, version:bump]
+    deps: [bindings, version:bump, windows:resources]
     cmds:
       # Keep the Vite-backed development executable separate from the
       # standalone application. It only contains the fallback page and must
@@ -56,7 +65,7 @@ tasks:
 
   build:
     desc: Build the Wails desktop client
-    deps: [frontend:build, version:bump]
+    deps: [frontend:build, version:bump, windows:resources]
     cmds:
       - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s -H windowsgui"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.BINARY_NAME}}.exe ./cmd/desktop
         platforms: [windows]

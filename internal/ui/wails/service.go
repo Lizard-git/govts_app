@@ -3,7 +3,6 @@ package wailsui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/url"
 	"strconv"
@@ -42,6 +41,7 @@ type Service struct {
 	serverAddress    string
 	trustedMediaKeys map[string]string
 	theme            string
+	closeToTray      bool
 	connectionMu     sync.Mutex
 	recentServers    []clientsettings.RecentServer
 	recordedVisit    string
@@ -239,6 +239,19 @@ func (s *Service) SetTheme(value string) error {
 	return s.saveSettings()
 }
 
+func (s *Service) CloseToTray() bool {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.closeToTray
+}
+
+func (s *Service) SetCloseToTray(value bool) error {
+	s.settingsMu.Lock()
+	s.closeToTray = value
+	s.settingsMu.Unlock()
+	return s.saveSettings()
+}
+
 func (s *Service) ParticipantVolume(sessionID string) (float32, error) {
 	id, err := parseUint64(sessionID, "sessionId", false)
 	if err != nil {
@@ -355,15 +368,4 @@ func (s *Service) EventsAfter(sequence string) ([]ClientEventDTO, error) {
 		result = append(result, eventDTO(event))
 	}
 	return result, nil
-}
-
-func UserMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	var validation *validationError
-	if errors.As(err, &validation) {
-		return validation.Message
-	}
-	return fmt.Sprintf("%v", err)
 }

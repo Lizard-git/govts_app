@@ -28,6 +28,10 @@ export function Chat(request: $models.ChatRequestDTO): $CancellablePromise<$mode
     return $Call.ByID(1571062045, request);
 }
 
+export function CloseToTray(): $CancellablePromise<boolean> {
+    return $Call.ByID(846043856);
+}
+
 export function Connect(request: $models.ConnectRequest): $CancellablePromise<void> {
     return $Call.ByID(1135091607, request);
 }
@@ -98,6 +102,10 @@ export function SavedDisplayName(): $CancellablePromise<string> {
 
 export function SetCaptureDevice(id: string): $CancellablePromise<void> {
     return $Call.ByID(3622601723, id);
+}
+
+export function SetCloseToTray(value: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2664460774, value);
 }
 
 export function SetDeafened(value: boolean): $CancellablePromise<void> {

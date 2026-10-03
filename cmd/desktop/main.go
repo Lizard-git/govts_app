@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -45,11 +46,19 @@ func main() {
 	if err := wailsui.EnableDefaultSettings(service); err != nil {
 		log.Printf("load settings: %v", err)
 	}
+	var mainWindow *application.WebviewWindow
+	var quitting atomic.Bool
 	app := application.New(application.Options{
 		Name:        "Govts",
 		Description: "Голосовой клиент Govts",
+		Icon:        applicationIcon,
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "app.govts.desktop",
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				if mainWindow != nil {
+					showMainWindow(mainWindow)
+				}
+			},
 		},
 		Services: []application.Service{
 			application.NewService(service),
@@ -87,7 +96,7 @@ func main() {
 	}
 	app.OnShutdown(shutdown)
 
-	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            fmt.Sprintf("Govts %s", applicationVersion()),
 		Width:            1180,
 		Height:           760,
@@ -96,9 +105,26 @@ func main() {
 		BackgroundColour: application.NewRGB(28, 37, 57),
 		URL:              "/",
 	})
-	mainWindow.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
+	// Cancelling the close keeps the process alive. The default listener otherwise
+	// destroys the window and quits the client.
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if quitting.Load() {
+			return
+		}
+		if service.CloseToTray() {
+			event.Cancel()
+			mainWindow.Hide()
+			return
+		}
+		quitting.Store(true)
 		app.Quit()
 	})
+	mainWindow.OnWindowEvent(events.Common.WindowMinimise, func(*application.WindowEvent) {
+		if !quitting.Load() {
+			mainWindow.Hide()
+		}
+	})
+	installTray(app, mainWindow, &quitting)
 
 	if err := app.Run(); err != nil {
 		shutdown()
@@ -107,4 +133,28 @@ func main() {
 		os.Exit(1)
 	}
 	shutdown()
+}
+
+func showMainWindow(window *application.WebviewWindow) {
+	window.UnMinimise()
+	window.Show()
+	window.Focus()
+}
+
+func installTray(app *application.App, window *application.WebviewWindow, quitting *atomic.Bool) {
+	menu := app.NewMenu()
+	menu.Add("Открыть").OnClick(func(*application.Context) {
+		showMainWindow(window)
+	})
+	menu.AddSeparator()
+	menu.Add("Выход").OnClick(func(*application.Context) {
+		quitting.Store(true)
+		app.Quit()
+	})
+
+	tray := app.SystemTray.New()
+	tray.SetIcon(applicationIcon)
+	tray.SetTooltip("Govts")
+	tray.SetMenu(menu)
+	tray.OnClick(func() { showMainWindow(window) })
 }
