@@ -64,8 +64,8 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
         }
     };
     return <main className="connection-page"><section className="connection-card">
-        <div className="connection-logo">G</div>
-        <div className="connection-app-heading"><p className="eyebrow">GOVTS DESKTOP{currentVersion && <> <span className="server-version">{currentVersion}</span></>}</p>{updateAction}</div><h1>Подключение к серверу</h1>
+        <div className="connection-logo">GTS</div>
+        <div className="connection-app-heading"><p className="eyebrow">Govts{currentVersion && <> <span className="server-version">{currentVersion}</span></>}</p>{updateAction}</div><h1>Подключение к серверу</h1>
         <p className="lead">Введите адрес голосового сервера и имя, под которым вас увидят другие участники.</p>
         <form onSubmit={submit}>
             <label><span>Адрес сервера</span><input autoFocus value={server} onChange={(event) => {

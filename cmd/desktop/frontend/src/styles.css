@@ -63,7 +63,7 @@ h2 { margin: 0; font-size: 20px; }
 .connection-page { display: grid; min-height: 100%; place-items: center; padding: 32px; background: radial-gradient(circle at 50% 10%, #243553 0, var(--window) 48%); }
 .connection-card { width: min(470px, 100%); padding: 38px; border: 1px solid rgba(122, 148, 196, .17); border-radius: 24px; background: rgba(25, 36, 57, .94); box-shadow: 0 30px 80px rgba(0, 0, 0, .35); }
 .connection-logo { display: grid; place-items: center; color: #0e1826; font-weight: 900; background: linear-gradient(135deg, var(--accent), var(--accent-blue)); box-shadow: 0 9px 30px rgba(19, 231, 176, .17); }
-.connection-logo { width: 54px; height: 54px; margin-bottom: 27px; border-radius: 18px; font-size: 27px; }
+.connection-logo { width: 54px; height: 54px; margin-bottom: 27px; border-radius: 18px; font-size: 20px; letter-spacing: -1px; }
 .connection-card h1 { margin-bottom: 12px; font-size: 30px; }
 .lead { margin-bottom: 28px; color: var(--muted); line-height: 1.55; }
 .connection-card form { display: grid; gap: 18px; }
