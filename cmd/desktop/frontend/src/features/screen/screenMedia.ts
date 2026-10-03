@@ -84,11 +84,30 @@ export class ScreenMediaController {
     private viewer?: {streamID: string; subscriberID: string; pc: RTCPeerConnection};
     private publisherStats = new ScreenStatsCollector();
     private viewerStats = new ScreenStatsCollector();
+    private publishGeneration = 0;
+    private picking = false;
 
-    async publish(onEnded: () => void, profile: ScreenProfile = defaultScreenProfile): Promise<string> {
+    async publish(onEnded: () => void, profile: ScreenProfile = defaultScreenProfile, isCurrent: () => boolean = () => true): Promise<string> {
         if (this.publisher) return this.publisher.streamID;
+        if (this.picking || this.pendingPublisher) throw new Error("Демонстрация уже запускается");
+        const generation = ++this.publishGeneration;
+        const checkCurrent = () => {
+            if (generation !== this.publishGeneration || !isCurrent()) throw new DOMException("Операция отменена", "AbortError");
+        };
         // Keep the picker in the direct click call chain: some WebViews require user activation.
-        const capture = await navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
+        this.picking = true;
+        let capture: MediaStream;
+        try {
+            logDiagnostic("screen_picker_open", `generation=${generation}`);
+            capture = await navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
+            logDiagnostic("screen_picker_selected", `generation=${generation}`);
+        } catch (error) {
+            logDiagnostic("screen_picker_closed", error);
+            throw error;
+        }
+        finally { this.picking = false; }
+        try { checkCurrent(); }
+        catch (error) { capture.getTracks().forEach((track) => track.stop()); throw error; }
         const pc = new RTCPeerConnection({iceServers: []});
         const pending = {pc, capture};
         this.pendingPublisher = pending;
@@ -96,6 +115,9 @@ export class ScreenMediaController {
         try {
             const captureTrack = capture.getVideoTracks()[0];
             if (!captureTrack) throw new Error("Источник не предоставил видеотрек");
+            const checkCapture = () => {
+                if (captureTrack.readyState === "ended") throw new DOMException("Захват завершён", "AbortError");
+            };
             captureTrack.onended = () => pc.close();
             captureTrack.contentHint = profile.contentHint;
             try {
@@ -114,6 +136,7 @@ export class ScreenMediaController {
                     frameRate: {ideal: profile.frameRate, max: profile.frameRate},
                 }).catch((error) => { logDiagnostic("screen_capture_constraints", error); });
             }
+            checkCurrent();
             const transceiver = pc.addTransceiver(captureTrack, {
                 direction: "sendonly",
                 streams: [capture],
@@ -123,10 +146,17 @@ export class ScreenMediaController {
             senderParameters.degradationPreference = profile.degradationPreference;
             await transceiver.sender.setParameters(senderParameters).catch((error) => { logDiagnostic("screen_sender_parameters", error); });
             await ensureTrusted();
-            const result = await desktopAPI.publishScreen(await localOffer(pc));
-            await pc.setRemoteDescription({type: "answer", sdp: result.answer.sdp});
+            checkCurrent();
+            const offer = await localOffer(pc);
+            checkCurrent();
+            checkCapture();
+            const result = await desktopAPI.publishScreen(offer);
             streamID = result.streamId;
+            checkCurrent();
+            await pc.setRemoteDescription({type: "answer", sdp: result.answer.sdp});
             await waitForConnected(pc);
+            checkCurrent();
+            checkCapture();
             if (this.pendingPublisher !== pending) throw new DOMException("Операция отменена", "AbortError");
             this.pendingPublisher = undefined;
             const active = {streamID, pc, capture};
@@ -158,7 +188,7 @@ export class ScreenMediaController {
                 onEnded();
             };
             pc.addEventListener("connectionstatechange", connectionChanged);
-            captureTrack.onended = () => void this.stopPublishing().finally(onEnded);
+            captureTrack.onended = () => void this.stopPublishing().catch((error) => logDiagnostic("screen_stop_cleanup", error)).finally(onEnded);
             return result.streamId;
         } catch (error) {
             logDiagnostic("screen_publish_failed", error);
@@ -166,11 +196,13 @@ export class ScreenMediaController {
             capture.getTracks().forEach((track) => track.stop());
             pc.close();
             if (streamID) await desktopAPI.stopScreen(streamID).catch((error) => { logDiagnostic("screen_publish_cleanup", error); });
+            checkCurrent();
             throw error;
         }
     }
 
     async stopPublishing(): Promise<void> {
+        ++this.publishGeneration;
         const active = this.publisher;
         const pending = this.pendingPublisher;
         this.publisher = undefined;
@@ -228,6 +260,7 @@ export class ScreenMediaController {
     }
 
     dispose(): void {
+        ++this.publishGeneration;
         const pending = this.pendingPublisher;
         const publisher = this.publisher;
         const viewer = this.viewer;
