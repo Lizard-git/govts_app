@@ -23,6 +23,7 @@ type Settings struct {
 	VADSensitivity     float32           `json:"vadSensitivity"`
 	TrustedMediaKeys   map[string]string `json:"trustedMediaKeys,omitempty"`
 	Theme              string            `json:"theme,omitempty"`
+	CloseToTray        bool              `json:"closeToTray"`
 	RecentServers      []RecentServer    `json:"recentServers,omitempty"`
 }
 
