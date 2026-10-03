@@ -8,7 +8,7 @@ import (
 )
 
 const Filename = "Govts-windows-amd64.exe"
-const AssetName = "govts-update.json"
+const AssetName = "signature"
 const MaxSize int64 = 512 << 20
 
 type Manifest struct {

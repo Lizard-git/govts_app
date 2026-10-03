@@ -189,7 +189,7 @@ WebRTC требуется корректный `-media-advertised-ip`.
   `.github/workflows/release.yml` срабатывает на тег `vX.Y.Z`, сверяет
   его с `cmd/desktop/version.txt`, собирает Windows desktop и Linux
   server, подписывает desktop через secret `UPDATE_SIGNING_KEY`, загружает
-  бинарники, `govts-update.json` и `SHA256SUMS` в draft и затем публикует релиз.
+  бинарники, `signature` и `SHA256SUMS` в draft и затем публикует релиз.
   Уже опубликованный релиз под тем же тегом не заменяется.
 - `internal/appversion/` разбирает и сравнивает версии. На стороне клиента
   минимальная версия сервера передаётся при подключении; серверная версия
