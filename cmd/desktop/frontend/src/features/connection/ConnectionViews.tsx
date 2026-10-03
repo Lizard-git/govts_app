@@ -1,4 +1,5 @@
 import {useEffect, useState} from "react";
+import type {ReactNode} from "react";
 import type {ClientViewDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {ConnectionStatsPopup} from "./ConnectionStatsPopup";
@@ -23,7 +24,9 @@ function errorText(error: unknown): string {
     return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
 }
 
-export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConnected}: {
+export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConnected, updateAction, currentVersion}: {
+    updateAction?: ReactNode;
+    currentVersion?: string;
     view: ClientViewDTO;
     error: string;
     onError: (value: string) => void;
@@ -62,7 +65,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     };
     return <main className="connection-page"><section className="connection-card">
         <div className="connection-logo">G</div>
-        <p className="eyebrow">GOVTS DESKTOP</p><h1>Подключение к серверу</h1>
+        <div className="connection-app-heading"><p className="eyebrow">GOVTS DESKTOP{currentVersion && <> <span className="server-version">{currentVersion}</span></>}</p>{updateAction}</div><h1>Подключение к серверу</h1>
         <p className="lead">Введите адрес голосового сервера и имя, под которым вас увидят другие участники.</p>
         <form onSubmit={submit}>
             <label><span>Адрес сервера</span><input autoFocus value={server} onChange={(event) => {
@@ -77,7 +80,8 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     </section></main>;
 }
 
-export function StatusBar({view, page, onPageChange, sharing, screenMedia}: {
+export function StatusBar({view, page, onPageChange, sharing, screenMedia, updateAction}: {
+    updateAction?: ReactNode;
     view: ClientViewDTO;
     page: Page;
     onPageChange: (page: Page) => void;
@@ -85,7 +89,7 @@ export function StatusBar({view, page, onPageChange, sharing, screenMedia}: {
     screenMedia: ScreenMediaController;
 }) {
     return <header className="status-bar">
-        <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong>{view.server.version && <span className="server-version" aria-label={`Версия сервера: ${view.server.version}`}>{view.server.version}</span>}</div>
+        <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong>{view.server.version && <span className="server-version" aria-label={`Версия сервера: ${view.server.version}`}>{view.server.version}</span>}{updateAction}</div>
         <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>Синхронизация…</div>
         <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus} channelId={view.channelId} sharing={sharing} screenMedia={screenMedia}/>
         <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>

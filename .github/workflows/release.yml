@@ -70,6 +70,16 @@ jobs:
           go build -trimpath -ldflags="-w -s" -o dist/govts-server-linux-amd64 ./cmd/server
           if ($LASTEXITCODE -ne 0) { throw 'server build failed' }
 
+      - name: Sign desktop update
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          $version = (Get-Content cmd/desktop/version.txt -Raw).Trim()
+          go run ./cmd/update-sign -binary dist/Govts-windows-amd64.exe -version $version -public-key cmd/desktop/update-public-key.txt -out dist/govts-update.json
+          if ($LASTEXITCODE -ne 0) { throw 'update signing failed' }
+          $hash = (Get-FileHash -Algorithm SHA256 dist/Govts-windows-amd64.exe).Hash.ToLowerInvariant()
+          "$hash  Govts-windows-amd64.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,7 +92,7 @@ jobs:
             gh release create $tag --draft --generate-notes --verify-tag
             if ($LASTEXITCODE -ne 0) { throw 'release creation failed' }
           }
-          gh release upload $tag dist/Govts-windows-amd64.exe dist/govts-server-linux-amd64 --clobber
+          gh release upload $tag dist/Govts-windows-amd64.exe dist/govts-server-linux-amd64 dist/govts-update.json dist/SHA256SUMS --clobber
           if ($LASTEXITCODE -ne 0) { throw 'release asset upload failed' }
           gh release edit $tag --draft=false
           if ($LASTEXITCODE -ne 0) { throw 'release publication failed' }

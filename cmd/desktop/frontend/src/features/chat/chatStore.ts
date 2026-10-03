@@ -47,12 +47,26 @@ export class ChatStore {
     private readQueue = new Map<string, {target: ChatTarget; id: string}>();
     private dismissedDialogs = new Map<string, string>();
     private timer: number;
+    private restoredDrafts: Record<string, string> = {};
 
     constructor(context: string, userId: string) {
         this.context = context; this.userId = userId;
+        try {
+            const saved = JSON.parse(localStorage.getItem(`govts.updateDrafts:${context}`) ?? "{}");
+            if (saved && typeof saved === "object") for (const [key,text] of Object.entries(saved).slice(0,32)) {
+                if (typeof text === "string") this.restoredDrafts[key] = limitDraft(text);
+            }
+            localStorage.removeItem(`govts.updateDrafts:${context}`);
+        } catch { /* A corrupt backup does not block chat startup. */ }
         this.timer = window.setInterval(() => void this.reconcile(), 1000);
     }
     dispose() { this.disposed = true; this.lifecycle.abort(); window.clearInterval(this.timer); this.listeners.clear(); }
+    prepareUpdate() {
+        if ([...this.conversations.values()].some((c) => c.pending.length > 0)) throw new Error("В чате есть неподтверждённые сообщения. Отправьте или удалите их перед обновлением.");
+        const drafts: Record<string,string> = {...this.restoredDrafts};
+        for (const [key,c] of this.conversations) { if (c.draft) drafts[key]=c.draft; else delete drafts[key]; }
+        localStorage.setItem(`govts.updateDrafts:${this.context}`, JSON.stringify(drafts));
+    }
     setConnected(connected: boolean) {
         if (connected === this.connected) return;
         this.connected = connected; this.epoch++; this.lifecycle.abort(); this.lifecycle = new AbortController();
@@ -103,6 +117,8 @@ export class ChatStore {
             }
             c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
             this.conversations.set(key, c);
+            c.draft = this.restoredDrafts[key] ?? "";
+            delete this.restoredDrafts[key];
         }
         // Touch entries so old channel histories are evicted before visible tabs.
         this.conversations.delete(key); this.conversations.set(key, c);

@@ -13,6 +13,7 @@ import {Icon} from "./components/Icon";
 import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
+import {UpdateButton, UpdateDialog, useUpdates} from "./features/updates/Updates";
 
 const contentTabs = ["chat", "screens", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
@@ -94,6 +95,10 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     const screenMedia = useRef<ScreenMediaController | null>(null);
     if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
     const sharing = useScreenSharing(view, screenMedia.current, setActionError);
+    const updates = useUpdates(() => {
+        if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед обновлением");
+        chatStore?.prepareUpdate();
+    });
 
     const refresh = useCallback(async () => {
         try {
@@ -163,20 +168,22 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
 
     if (view.connectionStatus === "disconnected") {
         return (
-            <ConnectionPage
+            <><ConnectionPage
+                updateAction={<UpdateButton updates={updates}/>}
+                currentVersion={updates.view?.current}
                 view={view}
                 error={actionError}
                 onError={setActionError}
                 onRefresh={refresh}
                 onClearEvents={clearEvents}
                 onConnected={() => setPage("channels")}
-            />
+            /><UpdateDialog updates={updates}/></>
         );
     }
 
     return <div className="app-shell">
         <main className="main-area">
-            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current}/>
+            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} invoke={invoke}
@@ -184,6 +191,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
                 : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div></>}
         </main>
         <ScreenShareDialog sharing={sharing}/>
+        <UpdateDialog updates={updates}/>
     </div>;
 }
 

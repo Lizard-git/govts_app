@@ -11,7 +11,9 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/updater"
 	"uniclog.io/govts/internal/clientapp"
+	"uniclog.io/govts/internal/clientupdate"
 	"uniclog.io/govts/internal/logging"
 	wailsui "uniclog.io/govts/internal/ui/wails"
 )
@@ -23,6 +25,8 @@ func init() {
 }
 
 func main() {
+	clientupdate.HandleRecoveryMode()
+	updater.HandleHelperMode()
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatalf("resolve application data directory: %v", err)
@@ -37,6 +41,7 @@ func main() {
 
 	client := clientapp.New(clientapp.Options{Logger: log.Default(), Secure: true})
 	service := wailsui.NewService(client)
+	updates := clientupdate.New(filepath.Join(configDir, "Govts"), func() bool { return string(client.Snapshot().ConnectionStatus) == "connected" })
 	if err := wailsui.EnableDefaultSettings(service); err != nil {
 		log.Printf("load settings: %v", err)
 	}
@@ -48,6 +53,7 @@ func main() {
 		},
 		Services: []application.Service{
 			application.NewService(service),
+			application.NewService(updates),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -59,12 +65,17 @@ func main() {
 			WebviewUserDataPath: webviewDataPath,
 		},
 	})
+	clientupdate.RecordRecoveryStartup(applicationVersion())
+	if err := clientupdate.Initialize(updates, app, applicationVersion(), rawUpdatePublicKey); err != nil {
+		log.Printf("initialize updater: %v", err)
+	}
 
 	bridgeCtx, cancelBridge := context.WithCancel(context.Background())
 	stopBridge := wailsui.StartEventBridge(bridgeCtx, app, client)
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
+			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

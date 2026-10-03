@@ -103,6 +103,16 @@
 .stage-screen-own { color: var(--muted); font-size: 10px; }
 .connection-screen-stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .connection-stats-popup { max-height: calc(100vh - 80px); overflow-y: auto; }
+.header-update-button { flex-shrink: 0; padding: 4px 8px; border: 1px solid var(--accent-blue); border-radius: 7px; color: var(--accent-blue); background: var(--card-strong); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.header-update-button:hover { background: var(--card); }
+.connection-app-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.update-actions button, .update-dialog > button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--card-strong); cursor: pointer; }
+.update-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.update-actions a { color: var(--accent-blue); }
+.update-preference { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 12px; }
+.updates-panel progress { width: 100%; accent-color: var(--accent); }
+.update-dialog { width: min(560px, calc(100vw - 32px)); }
+.update-dialog .settings-card { margin: 0 0 14px; }
 .stage-avatar { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--muted); border-radius: 50%; color: var(--text); background: var(--card-strong); font-size: 18px; }
 .stage-participant.speaking .stage-avatar { border: 2px solid var(--accent); box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 15%, transparent); }
 .stage-participant.muted .stage-avatar { border-color: var(--danger); }
