@@ -40,6 +40,7 @@ type Service struct {
 	root     context.Context
 	stop     context.CancelFunc
 	unlisten func()
+	startup  sync.Once
 }
 
 func New(profile string, busy func() bool) *Service {
@@ -117,7 +118,14 @@ func (s *Service) loop() {
 
 func (s *Service) Snapshot() Snapshot { s.mu.Lock(); defer s.mu.Unlock(); return s.view }
 
-func (s *Service) ConfirmStartup() { ConfirmRecoveryStartup(s.Snapshot().Current) }
+func (s *Service) ConfirmStartup() {
+	s.startup.Do(func() {
+		ConfirmRecoveryStartup(s.Snapshot().Current)
+		if s.root != nil {
+			go cleanupReplacedExecutables(s.root)
+		}
+	})
+}
 
 func (s *Service) begin(status string, timeout time.Duration) (context.Context, error) {
 	s.mu.Lock()
