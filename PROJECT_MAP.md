@@ -1,8 +1,10 @@
 # Карта проекта Govts
 
 Карта описывает текущую рабочую копию проекта. Go-модуль — `uniclog.io/govts`.
-Сценарии запуска и пользовательские ограничения приведены в [README](README.md).
-Локальные заметки `readme_docs/` не входят в Git и здесь не перечисляются.
+Описание продукта приведено в [README](README.md). Сценарии запуска,
+ограничения и протокол перенесены в локальное
+[техническое руководство](readme_docs/technical-guide.md).
+Документы `readme_docs/` не входят в Git.
 
 ## Состав системы
 
@@ -14,6 +16,7 @@
 | Звук | `internal/audio/` | Устройства malgo, PCM, Opus, RNNoise, VAD, voice gate и воспроизведение |
 | Экран | `internal/media/`, `internal/mediasignal/`, `internal/clientapp/media.go` | HTTPS signaling, WebRTC/SFU, учет потоков и подписок |
 | Desktop UI | `cmd/desktop/`, `internal/ui/wails/`, `cmd/desktop/frontend/` | Wails 3, сервис для React/TypeScript, настройки и окна |
+| Обновления клиента | `internal/clientupdate/`, `internal/updatemanifest/`, `cmd/update-sign/` | Подписанные GitHub Releases, загрузка, перезапуск и восстановление EXE |
 | Общий контракт | `internal/domain/`, `internal/protocol/`, `internal/transport/udp/` | Модели состояния, бинарный UDP-протокол, граница сокета и кодека |
 
 Пакеты `internal/` доступны только коду этого Go-модуля: публичного Go API
@@ -28,6 +31,9 @@
   `assets_development.go` и `assets_production.go` выбирают способ
   доставки frontend; production-сборка встраивает собранные ресурсы.
   Desktop-версия также хранится в `cmd/desktop/version.txt`.
+- `cmd/update-sign/` подписывает desktop EXE и манифест релиза. Закрытый seed
+  получает из `UPDATE_SIGNING_KEY`; ключ не хранится в Git. Открытый ключ
+  `cmd/desktop/update-public-key.txt` встроен через `update_key.go`.
 - `cmd/versionbump/` обновляет patch-версию для локальных сборок через
   `Taskfile.yml`. Поэтому локальная сборка может изменить файл версии и
   `build/config.yml`.
@@ -148,6 +154,8 @@ WebRTC требуется корректный `-media-advertised-ip`.
   `features/participants/` — строка участника;
   `features/screen/` — демонстрация и просмотр экрана. Стили — в
   `src/*.css`.
+- `features/updates/` — кнопка доступного обновления в шапке и модальное окно
+  загрузки/установки. Раздела обновлений на странице настроек нет.
 - Сгенерированные Wails bindings находятся в
   `cmd/desktop/frontend/bindings/uniclog.io/govts/`. Их следует
   пересоздавать после изменения публичных методов или DTO Wails-сервиса,
@@ -158,6 +166,18 @@ WebRTC требуется корректный `-media-advertised-ip`.
   media-ключи. Адрес сервера UI хранит в browser localStorage. Отдельный
   `Govts/client.seed` хранит приватный seed пользователя, а
   `Govts/voice-pins.json` — доверенные голосовые серверы (TOFU).
+- `internal/clientupdate/service.go` связывает UI с Wails updater, планирует
+  проверки и сохраняет автоскачивание в `Govts/updates.json`. `provider.go`
+  выбирает стабильный Windows amd64 asset и обязательно проверяет подписанный
+  манифест; `internal/updatemanifest/` задаёт формат и Ed25519-проверку.
+- `internal/clientupdate/recovery.go` сохраняет прежний EXE и следит за
+  подтверждением запуска нового интерфейса с пределом 90 секунд. Windows API
+  запуска и проверки процессов — в `process_windows.go`. Helper и watcher
+  обрабатываются до логирования и SingleInstance; PID нового обычного клиента
+  записывается после SingleInstance. Профиль при откате EXE не откатывается.
+- `Govts/pending-update.json` и `Govts/update-recovery/` — план и копии
+  восстановления; `Govts/update-recovery-result.txt` — результат отката.
+  Черновики чата перед обновлением сохраняются в frontend `localStorage`.
 
 ## Проверки, версии и релизы
 
@@ -168,7 +188,9 @@ WebRTC требуется корректный `-media-advertised-ip`.
 - `.github/workflows/test.yml` запускает проверки Go в CI.
   `.github/workflows/release.yml` срабатывает на тег `vX.Y.Z`, сверяет
   его с `cmd/desktop/version.txt`, собирает Windows desktop и Linux
-  server, затем публикует GitHub Release с обоими файлами.
+  server, подписывает desktop через secret `UPDATE_SIGNING_KEY`, загружает
+  бинарники, `govts-update.json` и `SHA256SUMS` в draft и затем публикует релиз.
+  Уже опубликованный релиз под тем же тегом не заменяется.
 - `internal/appversion/` разбирает и сравнивает версии. На стороне клиента
   минимальная версия сервера передаётся при подключении; серверная версия
   встраивается из `cmd/server/version.txt`.
@@ -178,5 +200,5 @@ WebRTC требуется корректный `-media-advertised-ip`.
 
 При поиске конкретного изменения сначала выбирайте тракт — голос/состояние,
 экран или UI — и меняйте контракт на его границе вместе с соответствующими
-тестами. Ограничения проекта и команды запуска поддерживаются в README,
+тестами. Ограничения проекта и команды запуска поддерживаются в техническом руководстве,
 чтобы эта карта оставалась навигацией по коду, а не дублировала руководство.
