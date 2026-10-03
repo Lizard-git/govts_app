@@ -3,6 +3,8 @@ import type {ClientViewDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {ConnectionStatsPopup} from "./ConnectionStatsPopup";
 import {Icon} from "../../components/Icon";
+import type {ScreenSharingState} from "../screen/ScreenShareDialog";
+import type {ScreenMediaController} from "../screen/screenMedia";
 
 export type Page = "channels" | "settings";
 const serverAddressStorageKey = "govts.serverAddress";
@@ -75,24 +77,27 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     </section></main>;
 }
 
-export function StatusBar({view, page, onPageChange}: {
+export function StatusBar({view, page, onPageChange, sharing, screenMedia}: {
     view: ClientViewDTO;
     page: Page;
     onPageChange: (page: Page) => void;
+    sharing: ScreenSharingState;
+    screenMedia: ScreenMediaController;
 }) {
     return <header className="status-bar">
         <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong>{view.server.version && <span className="server-version" aria-label={`Версия сервера: ${view.server.version}`}>{view.server.version}</span>}</div>
         <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>Синхронизация…</div>
-        <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus}/>
+        <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus} channelId={view.channelId} sharing={sharing} screenMedia={screenMedia}/>
         <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
             <Icon name={page === "settings" ? "channels" : "settings"}/><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
         </button>
     </header>;
 }
 
-export function AudioControls({view, invoke}: {
+export function AudioControls({view, invoke, sharing}: {
     view: ClientViewDTO;
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
+    sharing: ScreenSharingState;
 }) {
     return <div className="audio-control-island" role="group" aria-label="Управление звуком">
             <button className={`voice-control ${view.audio.muted || !view.audio.captureAvailable ? "active" : ""}`}
@@ -102,6 +107,10 @@ export function AudioControls({view, invoke}: {
             <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
                 title={view.audio.deafened ? "Включить звук" : "Выключить звук"}
                 onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}><Icon name="sound"/>Аудио</button>
+        <button ref={sharing.buttonRef} className={`voice-control screen-share-button ${sharing.active ? "sharing" : ""}`}
+            title={sharing.active ? "Завершить демонстрацию" : "Демонстрация экрана"} aria-pressed={sharing.active}
+            aria-haspopup={sharing.active ? undefined : "dialog"} disabled={sharing.pending || !sharing.available}
+            onClick={() => void sharing.toggle()}><Icon name="screen"/>{sharing.active ? "Завершить демонстрацию" : "Демонстрация"}</button>
         <button className="voice-control disconnect-button" title="Отключиться от сервера" onClick={() => void invoke(() => desktopAPI.disconnect())}>
             <Icon name="hangup"/>Выйти
         </button>

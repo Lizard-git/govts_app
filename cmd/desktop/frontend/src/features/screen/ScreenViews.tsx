@@ -1,19 +1,13 @@
 import {useEffect, useRef, useState} from "react";
 import {Window as WailsWindow} from "@wailsio/runtime";
-import type {ClientViewDTO, ParticipantDTO} from "../../api";
+import type {ClientViewDTO, ParticipantDTO, ScreenStreamDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {ScreenMediaController} from "./screenMedia";
-import {defaultScreenProfile, screenProfiles, type ScreenProfileID} from "./screenProfiles";
 import type {ScreenStats} from "./screenStats";
 import {Icon} from "../../components/Icon";
 
 function errorText(error: unknown): string {
     return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
-}
-
-function screenPickerCancelled(error: unknown): boolean {
-    if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError")) return true;
-    return /permission denied by user|user cancelled|user canceled/i.test(errorText(error));
 }
 
 function bitrateText(value: number): string {
@@ -97,49 +91,32 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
     </main>;
 }
 
-export function ScreenSharing({view, channelID, participants, controller}: {
+export function ScreenStageTile({stream, ownerName, local, connected, onError}: {
+    stream: ScreenStreamDTO; ownerName: string; local: boolean; connected: boolean; onError: (message: string) => void;
+}) {
+    const [pending, setPending] = useState(false);
+    const watch = async () => {
+        if (pending) return;
+        setPending(true);
+        try { await desktopAPI.openScreenWindow(stream.id, ownerName); }
+        catch (reason) { onError(errorText(reason)); }
+        finally { setPending(false); }
+    };
+    return <div className="stage-screen" aria-label={`Демонстрация: ${ownerName}`}>
+        <span className="stage-screen-icon"><Icon name="screen"/></span>
+        <span className="stage-screen-name" title={`Экран — ${ownerName}`}>Экран — {ownerName}</span>
+        {local ? <span className="stage-screen-own">Вы</span> : <button type="button" disabled={pending || !connected} onClick={() => void watch()}>Смотреть</button>}
+    </div>;
+}
+
+export function ScreenSharing({view, channelID, participants}: {
     view: ClientViewDTO;
     channelID: string;
     participants: ParticipantDTO[];
-    controller: ScreenMediaController;
 }) {
-    const [publishing, setPublishing] = useState(false);
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");
-    const [profileID, setProfileID] = useState<ScreenProfileID>(() => {
-        const saved = localStorage.getItem("govts.screenProfile");
-        return screenProfiles.some((item) => item.id === saved) ? saved as ScreenProfileID : defaultScreenProfile.id;
-    });
-    const [publisherStats, setPublisherStats] = useState<ScreenStats | null>(null);
     const streams = (view.screenStreams ?? []).filter((stream) => stream.channelId === channelID);
-    const own = (view.screenStreams ?? []).find((stream) => stream.ownerSessionId === view.sessionId);
-    const profile = screenProfiles.find((item) => item.id === profileID) ?? defaultScreenProfile;
-
-    useEffect(() => {
-        setPublishing(false);
-        setPublisherStats(null);
-    }, [view.channelId]);
-
-    useEffect(() => {
-        if (!publishing && !own) { setPublisherStats(null); return; }
-        const timer = window.setInterval(() => void controller.getPublisherStats().then(setPublisherStats).catch(() => undefined), 1000);
-        return () => window.clearInterval(timer);
-    }, [controller, own, publishing]);
-
-    const start = async () => {
-        setPending(true); setError("");
-        try {
-            await controller.publish(() => setPublishing(false), profile);
-            setPublishing(true);
-        } catch (reason) { if (!screenPickerCancelled(reason)) setError(errorText(reason)); }
-        finally { setPending(false); }
-    };
-    const stop = async () => {
-        setPending(true); setError("");
-        try { await controller.stopPublishing(); setPublishing(false); }
-        catch (reason) { setError(errorText(reason)); }
-        finally { setPending(false); }
-    };
     const watch = async (streamID: string, ownerName: string) => {
         setPending(true); setError("");
         try { await desktopAPI.openScreenWindow(streamID, ownerName); }
@@ -147,20 +124,10 @@ export function ScreenSharing({view, channelID, participants, controller}: {
         finally { setPending(false); }
     };
 
-    const screenControl = <button className="screen-start" disabled={pending || view.connectionStatus !== "connected" || view.channelId === "0"}
-        onClick={() => void (publishing || own ? stop() : start())}><Icon name="screen"/>{publishing || own ? "Завершить" : "Демонстрация"}</button>;
     return <section className="screen-sharing">
-        <div className="screen-heading"><div><span>Демонстрации экрана</span></div>
-            <label className="screen-profile"><span>Качество</span><select value={profileID}
-                disabled={pending || publishing || Boolean(own)} onChange={(event) => {
-                    const value = event.target.value as ScreenProfileID;
-                    setProfileID(value);
-                    localStorage.setItem("govts.screenProfile", value);
-                }}>{screenProfiles.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-            {screenControl}</div>
+        <div className="screen-heading"><div><span>Демонстрации экрана</span></div></div>
         <div className="screen-list">
         {error && <div className="screen-error" role="alert">{error}</div>}
-        {publisherStats && <div className="screen-publisher-stats">Отправка: {publisherStats.width || profile.width}×{publisherStats.height || profile.height} · {publisherStats.fps.toFixed(0)} FPS · {bitrateText(publisherStats.bitrate)} · кадры {publisherStats.frames}, ключевые {publisherStats.keyFrames}{publisherStats.qualityLimitation ? ` · limit: ${publisherStats.qualityLimitation}` : ""}</div>}
         {streams.length ? <div className="screen-cards">{streams.map((stream) => {
             const owner = participants.find((item) => item.sessionId === stream.ownerSessionId);
             const ownerName = owner?.displayName ?? "Участник";

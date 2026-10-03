@@ -5,7 +5,8 @@ import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, Client
 import {desktopAPI} from "./api";
 import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
-import {ScreenSharing, ScreenViewerWindow} from "./features/screen/ScreenViews";
+import {ScreenSharing, ScreenStageTile, ScreenViewerWindow} from "./features/screen/ScreenViews";
+import {ScreenShareDialog, useScreenSharing, type ScreenSharingState} from "./features/screen/ScreenShareDialog";
 import {AudioControls, ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
 import {Icon} from "./components/Icon";
@@ -92,6 +93,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     const lastSequence = useRef("0");
     const screenMedia = useRef<ScreenMediaController | null>(null);
     if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
+    const sharing = useScreenSharing(view, screenMedia.current, setActionError);
 
     const refresh = useCallback(async () => {
         try {
@@ -174,21 +176,22 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
 
     return <div className="app-shell">
         <main className="main-area">
-            <StatusBar view={view} page={page} onPageChange={setPage}/>
+            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
-                ? <ChannelsPage view={view} events={events} invoke={invoke} screenMedia={screenMedia.current}
-                                onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
-                : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke}/></div></>}
+                ? <ChannelsPage view={view} events={events} invoke={invoke}
+                                sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
+                : <><SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/><div className="settings-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div></>}
         </main>
+        <ScreenShareDialog sharing={sharing}/>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
+function ChannelsPage({view, events, invoke, sharing, onError, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
     view: ClientViewDTO;
     events: ClientEventDTO[];
     invoke: (operation: () => Promise<unknown>) => Promise<void>
-    screenMedia: ScreenMediaController;
+    sharing: ScreenSharingState;
     onError: (message: string) => void;
     contentTab: ContentTab;
     setContentTab: Dispatch<SetStateAction<ContentTab>>;
@@ -223,7 +226,16 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
     const selected = channels.find((channel) => channel.id === selectedID);
     const [showInfo, setShowInfo] = useState(false);
     const [usersExpanded, setUsersExpanded] = useState(false);
-    const allTabs: ContentTab[] = [...contentTabs, ...directChats.map((chat): ContentTab => `direct:${chat.userId}`)];
+    const channelStreams = (view.screenStreams ?? []).filter((stream) => stream.channelId === view.channelId);
+    const hasScreens = channelStreams.length > 0;
+    const allTabs: ContentTab[] = [...contentTabs.filter((tab) => tab !== "screens" || hasScreens), ...directChats.map((chat): ContentTab => `direct:${chat.userId}`)];
+    useEffect(() => {
+        if (!hasScreens && contentTab === "screens") {
+            const focused = document.activeElement?.id === "screens-tab";
+            setContentTab("chat");
+            if (focused) requestAnimationFrame(() => document.getElementById("chat-tab")?.focus());
+        }
+    }, [hasScreens, contentTab, setContentTab]);
     const openDirect = (userId: string, displayName: string) => {
         if (!chatStore || userId === "0" || userId === chatStore.userId) return;
         if (directChats.length >= 16 && !directChats.some((chat) => chat.userId === userId)) { onError("Закройте одну из личных вкладок перед открытием новой"); return; }
@@ -283,9 +295,10 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                     <button className="info-toggle" aria-label="Информация о канале" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
                 <div className="participants-stage" role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><div className="stage-landscape" aria-hidden="true"/><div className="participants-strip">
-                    {members.length ? members.map((participant) => <ParticipantRow key={participant.sessionId}
+                    {members.length ? members.map((participant) => <div className="stage-participant-group" key={participant.sessionId}><ParticipantRow
                         participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
-                        depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>) : <div className="stage-empty">В канале пока никого нет</div>}
+                        depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>
+                        {channelStreams.filter((stream) => stream.ownerSessionId === participant.sessionId).map((stream) => <ScreenStageTile key={stream.id} stream={stream} ownerName={participant.displayName} local={participant.local} connected={view.connectionStatus === "connected"} onError={onError}/>)}</div>) : <div className="stage-empty">В канале пока никого нет</div>}
                 </div></div>
                 <section className="channel-content">
                     <div className="channel-tabs" role="tablist" aria-label="Содержимое канала" onKeyDown={(event) => {
@@ -298,7 +311,7 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                         document.getElementById(`${next}-tab`)?.focus();
                     }}>
                         <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>Чат{chatStore && chatChannelID !== "0" && chatStore.conversation({kind: "channel", id: chatChannelID}).unread > 0 && <span className="count-badge">{chatStore.conversation({kind: "channel", id: chatChannelID}).unread}</span>}</button>
-                        <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>Демонстрации</button>
+                        {hasScreens && <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>Демонстрации<span className="count-badge">{channelStreams.length}</span></button>}
                         <button id="events-tab" role="tab" tabIndex={contentTab === "events" ? 0 : -1} aria-selected={contentTab === "events"} aria-controls="events-panel" onClick={() => setContentTab("events")}>События</button>
                         {directChats.map((chat) => {
                             const tab: ContentTab = `direct:${chat.userId}`;
@@ -311,14 +324,14 @@ function ChannelsPage({view, events, invoke, screenMedia, onError, contentTab, s
                         })}
                     </div>
                     <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}>{chatStore && chatChannelID !== "0" ? <ChatPanel key={chatChannelID} store={chatStore} localName={localChatName} target={{kind: "channel", id: chatChannelID}} title={`Чат канала: ${channels.find((c) => c.id === chatChannelID)?.name ?? ""}`} active={contentTab === "chat"} connected={view.connectionStatus === "connected" && view.channelId === chatChannelID}/> : <div className="chat-placeholder">Ожидание подключения к каналу</div>}</div>
-                    <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants} controller={screenMedia}/></div>
+                    {hasScreens && <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants}/></div>}
                     <div id="events-panel" role="tabpanel" aria-labelledby="events-tab" hidden={contentTab !== "events"}><EventPanel events={events} active={contentTab === "events"}/></div>
                     {directChats.map((chat) => <div key={chat.userId} id={`direct:${chat.userId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.userId}-tab`} hidden={contentTab !== `direct:${chat.userId}`}>
                         {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={`Личные сообщения: ${participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName}`} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
                     </div>)}
                 </section>
             </> : <div className="empty-state">Ожидание подключения к каналу</div>}
-                <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke}/></div>
+                <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div>
             </section>
             {infoVisible && <div className="workspace-divider info-divider" {...workspaceResize.separatorProps("info")}/>}
             {showInfo && selected && <section id="channel-info-pane" className="panel channel-detail">{selected ? <><div className="channel-info-heading"><span>Информация о канале</span><button aria-label="Закрыть информацию о канале" onClick={() => setShowInfo(false)}>×</button></div>
