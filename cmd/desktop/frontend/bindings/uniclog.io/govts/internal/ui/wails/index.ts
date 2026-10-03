@@ -23,6 +23,7 @@ export type {
     ConnectionStatsDTO,
     MediaTrustDTO,
     ParticipantDTO,
+    RecentServerDTO,
     ScreenStreamDTO,
     ServerDTO
 } from "./models.js";

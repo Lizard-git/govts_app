@@ -1,8 +1,9 @@
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import type {ReactNode} from "react";
 import type {ClientViewDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {ConnectionStatsPopup} from "./ConnectionStatsPopup";
+import {RecentServers} from "./RecentServers";
 import {Icon} from "../../components/Icon";
 import type {ScreenSharingState} from "../screen/ScreenShareDialog";
 import type {ScreenMediaController} from "../screen/screenMedia";
@@ -15,7 +16,7 @@ function savedServerAddress(): string {
     catch { return "127.0.0.1:9000"; }
 }
 
-function rememberServerAddress(value: string) {
+export function rememberServerAddress(value: string) {
     try { localStorage.setItem(serverAddressStorageKey, value); }
     catch { /* Keep the controlled input value for this session. */ }
 }
@@ -37,6 +38,8 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     const [server, setServer] = useState(savedServerAddress);
     const [name, setName] = useState("");
     const [pending, setPending] = useState(false);
+    const [serverCount, setServerCount] = useState(0);
+    const connecting = useRef(false);
     useEffect(() => {
         let active = true;
         void desktopAPI.savedDisplayName()
@@ -44,13 +47,14 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
             .catch((loadError) => { if (active) onError(errorText(loadError)); });
         return () => { active = false; };
     }, [onError]);
-    const submit = async (event: React.FormEvent) => {
-        event.preventDefault();
-        if (pending) return;
-        const address = server.trim();
+    const connect = async (value: string) => {
+        if (connecting.current) return;
+        const address = value.trim();
         setServer(address);
         rememberServerAddress(address);
         onError("");
+        if (!name.trim()) { onError("Введите отображаемое имя"); return; }
+        connecting.current = true;
         setPending(true);
         try {
             onClearEvents();
@@ -60,14 +64,21 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
         } catch (connectError) {
             onError(errorText(connectError));
         } finally {
+            connecting.current = false;
             setPending(false);
         }
     };
-    return <main className="connection-page"><section className="connection-card">
+    const selectServer = (address: string) => { setServer(address); rememberServerAddress(address); };
+    return <main className="connection-page"><div className={`connection-layout ${serverCount === 0 ? "connection-layout-empty" : ""}`}>
+        <section className="connection-card connection-server-card" hidden={serverCount === 0}>
+            <RecentServers view={view} expanded={true} onToggle={() => {}} standalone disabled={pending}
+                onSelect={selectServer} onReconnect={connect} onError={onError} onCountChange={setServerCount}/>
+        </section>
+        <section className="connection-card">
         <div className="connection-logo">GTS</div>
         <div className="connection-app-heading"><p className="eyebrow">Govts{currentVersion && <> <span className="server-version">{currentVersion}</span></>}</p>{updateAction}</div><h1>Подключение к серверу</h1>
         <p className="lead">Введите адрес голосового сервера и имя, под которым вас увидят другие участники.</p>
-        <form onSubmit={submit}>
+        <form onSubmit={(event) => { event.preventDefault(); void connect(server); }}>
             <label><span>Адрес сервера</span><input autoFocus value={server} onChange={(event) => {
                 setServer(event.target.value); rememberServerAddress(event.target.value);
             }} placeholder="192.0.2.1:9000" spellCheck={false}/></label>
@@ -77,7 +88,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
             <button className="primary-button" disabled={pending || !server.trim() || !name.trim()}
                 type="submit">{pending ? "Подключаемся…" : "Подключиться"}</button>
         </form><p></p>
-    </section></main>;
+    </section></div></main>;
 }
 
 export function StatusBar({view, page, onPageChange, sharing, screenMedia, updateAction, invoke}: {

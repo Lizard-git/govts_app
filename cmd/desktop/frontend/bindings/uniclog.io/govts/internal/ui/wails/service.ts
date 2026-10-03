@@ -36,6 +36,10 @@ export function ConnectionStats(): $CancellablePromise<$models.ConnectionStatsDT
     return $Call.ByID(166964494);
 }
 
+export function DeleteRecentServer(address: string): $CancellablePromise<void> {
+    return $Call.ByID(1322328776, address);
+}
+
 export function Disconnect(): $CancellablePromise<void> {
     return $Call.ByID(2989955305);
 }
@@ -80,6 +84,14 @@ export function PublishScreen(offer: mediasignal$0.SessionDescription): $Cancell
     return $Call.ByID(1165940958, offer);
 }
 
+export function RecentServers(): $CancellablePromise<$models.RecentServerDTO[] | null> {
+    return $Call.ByID(3357885992);
+}
+
+export function ReconnectServer(address: string): $CancellablePromise<void> {
+    return $Call.ByID(1012485691, address);
+}
+
 export function SavedDisplayName(): $CancellablePromise<string> {
     return $Call.ByID(1402910199);
 }
@@ -110,6 +122,14 @@ export function SetRNNoiseEnabled(value: boolean): $CancellablePromise<void> {
 
 export function SetRNNoiseSensitivity(value: number): $CancellablePromise<void> {
     return $Call.ByID(2007323576, value);
+}
+
+export function SetServerAlias(address: string, alias: string): $CancellablePromise<void> {
+    return $Call.ByID(259081090, address, alias);
+}
+
+export function SetServerFavorite(address: string, favorite: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1793569962, address, favorite);
 }
 
 export function SetTheme(value: string): $CancellablePromise<void> {

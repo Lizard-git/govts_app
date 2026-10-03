@@ -9,6 +9,8 @@ import {ScreenSharing, ScreenStageTile, ScreenViewerWindow} from "./features/scr
 import {ScreenShareDialog, useScreenSharing, type ScreenSharingState} from "./features/screen/ScreenShareDialog";
 import {AudioControls, ConnectionPage, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
+import {RecentServers} from "./features/connection/RecentServers";
+import {rememberServerAddress} from "./features/connection/ConnectionViews";
 import {Icon} from "./components/Icon";
 import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
@@ -187,6 +189,13 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
                 ? <ChannelsPage view={view} events={events} invoke={invoke}
+                                onReconnect={(address) => invoke(async () => {
+                                    if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
+                                    await screenMedia.current?.close();
+                                    clearEvents();
+                                    await desktopAPI.reconnectServer(address);
+                                    rememberServerAddress(address);
+                                })}
                                 sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
                 : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
         </main>
@@ -195,7 +204,8 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
+function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
+    onReconnect: (address: string) => Promise<void>;
     view: ClientViewDTO;
     events: ClientEventDTO[];
     invoke: (operation: () => Promise<unknown>) => Promise<void>
@@ -233,7 +243,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, contentTab, setCo
     const selectedID = view.channelId;
     const selected = channels.find((channel) => channel.id === selectedID);
     const [showInfo, setShowInfo] = useState(false);
-    const [usersExpanded, setUsersExpanded] = useState(false);
+    const [serversExpanded, setServersExpanded] = useState(false);
     const channelStreams = (view.screenStreams ?? []).filter((stream) => stream.channelId === view.channelId);
     const hasScreens = channelStreams.length > 0;
     const allTabs: ContentTab[] = [...contentTabs.filter((tab) => tab !== "screens" || hasScreens), ...directChats.map((chat): ContentTab => `direct:${chat.userId}`)];
@@ -266,14 +276,12 @@ function ChannelsPage({view, events, invoke, sharing, onError, contentTab, setCo
         setContentTab(next);
         requestAnimationFrame(() => document.getElementById(`${next}-tab`)?.focus());
     };
-    const serverUsers = useMemo(() => [...participants].sort((left, right) =>
-        left.displayName.localeCompare(right.displayName, "ru") || left.sessionId.localeCompare(right.sessionId)), [participants]);
     const infoVisible = showInfo && Boolean(selected);
     const workspaceResize = useWorkspaceResize(infoVisible);
     const members = participants.filter((item) => item.channelId === selectedID);
     return <section className="channels-page">
         <div ref={workspaceResize.layoutRef} style={workspaceResize.style} className={`channels-layout ${infoVisible ? "" : "info-hidden"} ${workspaceResize.resizing ? "is-resizing" : ""}`}>
-            <section id="channel-browser-pane" className={`panel channel-browser ${usersExpanded ? "users-expanded" : ""}`}>
+            <section id="channel-browser-pane" className={`panel channel-browser ${serversExpanded ? "servers-expanded" : ""}`}>
                 <section className="sidebar-section" aria-label="Каналы сервера">
                 <div className="panel-heading">
                     <div><h2>Каналы</h2></div>
@@ -288,14 +296,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, contentTab, setCo
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
                 }}/></div>
                 </section>
-                <section className="sidebar-section server-users" aria-label="Пользователи сервера">
-                    <button className="users-toggle" type="button" aria-expanded={usersExpanded} aria-controls="server-users-list" onClick={() => setUsersExpanded((current) => !current)}>
-                        <span className="users-chevron" aria-hidden="true">{usersExpanded ? "▾" : "▸"}</span><span>Пользователи</span><span className="count-badge">{serverUsers.length}</span>
-                    </button>
-                    <div id="server-users-list" className="users-scroll" hidden={!usersExpanded}>{serverUsers.map((participant) => <ParticipantRow key={participant.sessionId}
-                        participant={participant} variant="list" canKick={view.canKick} canBan={view.canBan} canDrag={false}
-                        depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>)}</div>
-                </section>
+                <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError}/>
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
             <section className="channel-stage">{selected ? <>

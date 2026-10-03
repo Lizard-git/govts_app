@@ -23,6 +23,14 @@ type Settings struct {
 	VADSensitivity     float32           `json:"vadSensitivity"`
 	TrustedMediaKeys   map[string]string `json:"trustedMediaKeys,omitempty"`
 	Theme              string            `json:"theme,omitempty"`
+	RecentServers      []RecentServer    `json:"recentServers,omitempty"`
+}
+
+type RecentServer struct {
+	Address     string `json:"address"`
+	Alias       string `json:"alias,omitempty"`
+	Favorite    bool   `json:"favorite"`
+	LastVisited int64  `json:"lastVisited"`
 }
 
 const (

@@ -42,6 +42,9 @@ type Service struct {
 	serverAddress    string
 	trustedMediaKeys map[string]string
 	theme            string
+	connectionMu     sync.Mutex
+	recentServers    []clientsettings.RecentServer
+	recordedVisit    string
 }
 
 func NewService(client *clientapp.App) *Service { return &Service{client: client} }
@@ -59,6 +62,12 @@ func (s *Service) LogDiagnostic(operation, message string) {
 }
 
 func (s *Service) Connect(request ConnectRequest) error {
+	s.connectionMu.Lock()
+	defer s.connectionMu.Unlock()
+	return s.connect(request)
+}
+
+func (s *Service) connect(request ConnectRequest) error {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Server = strings.TrimSpace(request.Server)
 	if request.Name == "" {
@@ -67,17 +76,27 @@ func (s *Service) Connect(request ConnectRequest) error {
 	if request.Server == "" {
 		return &validationError{Field: "server", Message: "введите адрес сервера"}
 	}
+	if _, err := clientapp.ParseServerEndpoint(request.Server); err != nil {
+		return err
+	}
+	if connectionStatus(s.client.Snapshot().ConnectionStatus) != "disconnected" {
+		return clientapp.ErrAlreadyConnected
+	}
 	if err := s.setDisplayName(request.Name); err != nil {
+		return err
+	}
+	if err := s.client.Connect(clientapp.ConnectOptions{
+		Name:             request.Name,
+		Server:           request.Server,
+		MinServerVersion: strings.TrimSpace(request.MinServerVersion),
+	}); err != nil {
 		return err
 	}
 	s.settingsMu.Lock()
 	s.serverAddress = request.Server
+	s.recordedVisit = ""
 	s.settingsMu.Unlock()
-	return s.client.Connect(clientapp.ConnectOptions{
-		Name:             request.Name,
-		Server:           request.Server,
-		MinServerVersion: strings.TrimSpace(request.MinServerVersion),
-	})
+	return nil
 }
 
 type MediaTrustDTO struct {
@@ -237,6 +256,12 @@ func (s *Service) SetParticipantVolume(sessionID string, value float32) error {
 }
 
 func (s *Service) Disconnect() error {
+	s.connectionMu.Lock()
+	defer s.connectionMu.Unlock()
+	return s.disconnect()
+}
+
+func (s *Service) disconnect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
 	return s.client.Disconnect(ctx)
@@ -287,8 +312,11 @@ func (s *Service) Drag(sessionID, channelID string) error {
 }
 
 func (s *Service) Snapshot() ClientViewDTO {
+	s.connectionMu.Lock()
+	defer s.connectionMu.Unlock()
 	dto := viewDTO(s.client.Snapshot(), s.client.LastError())
 	dto.ChatContext = s.client.ChatContext() + "|" + dto.UserID
+	s.recordServerVisit(dto)
 	return dto
 }
 

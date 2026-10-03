@@ -161,6 +161,14 @@ export interface ParticipantDTO {
     "local": boolean;
 }
 
+export interface RecentServerDTO {
+    "address": string;
+    "alias"?: string;
+    "favorite": boolean;
+    "lastVisited": number;
+    "current": boolean;
+}
+
 export interface ScreenStreamDTO {
     "id": string;
     "ownerSessionId": string;
