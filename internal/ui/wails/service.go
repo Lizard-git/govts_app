@@ -3,7 +3,6 @@ package wailsui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/url"
 	"strconv"
@@ -364,15 +363,4 @@ func (s *Service) EventsAfter(sequence string) ([]ClientEventDTO, error) {
 		result = append(result, eventDTO(event))
 	}
 	return result, nil
-}
-
-func UserMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	var validation *validationError
-	if errors.As(err, &validation) {
-		return validation.Message
-	}
-	return fmt.Sprintf("%v", err)
 }

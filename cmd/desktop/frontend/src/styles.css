@@ -13,6 +13,7 @@
   --accent-blue: #21a5f6;
   --purple: #6e3d8e;
   --danger: #ff6c7a;
+  --participant-volume: 50%;
 }
 
 :root[data-theme="light"] {
@@ -86,7 +87,7 @@ h2 { margin: 0; font-size: 20px; }
 .header-nav-button > span:first-child { color: #8194b7; font-size: 15px; }
 .status-bar > .header-nav-button:first-child { margin-right: auto; }
 .disconnect-button:hover { color: #ffd2d6; border-color: rgba(255, 108, 122, .5); background: rgba(255, 108, 122, .08); }
-.server-summary { position: absolute; left: 0; width: 62.2%; min-width: 0; padding-inline: 0px 24px; text-align: center; pointer-events: none; }
+.server-summary { position: absolute; left: 0; width: 62.2%; min-width: 0; padding-inline: 0 24px; text-align: center; pointer-events: none; }
 .server-summary .eyebrow { text-align: center; }
 .status-bar h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill, .sync-pill { display: flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid #30405e; border-radius: 99px; color: #a8b5ce; background: #182338; font-size: 12px; }

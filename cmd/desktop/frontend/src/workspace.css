@@ -9,6 +9,8 @@
   --text: #dce7f3;
   --accent: #16ddb0;
   --accent-blue: #48c7eb;
+  --channel-browser-width: 210px;
+  --channel-info-width: 245px;
 }
 :root[data-theme="light"] { color-scheme: light; --window: #eef3fa; --card: #ffffff; --card-strong: #e7eef8; --line: #c9d4e5; --muted: #5d6d86; --text: #172033; --accent: #087f69; --accent-blue: #0878bd; }
 @media (prefers-color-scheme: light) {
