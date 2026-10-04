@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import type {Dispatch, SetStateAction} from "react";
+import type {Dispatch, ReactNode, SetStateAction} from "react";
 import {useReducer} from "react";
 import type {AudioDeviceDTO, AudioDevicesDTO, ChannelDTO, ClientEventDTO, ClientViewDTO, ParticipantDTO} from "./api";
 import {desktopAPI} from "./api";
@@ -171,6 +171,18 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
         }
     }, [refresh]);
 
+    const mainRef = useRef<HTMLElement>(null);
+    const settingsWasOpen = useRef(false);
+    useEffect(() => {
+        if (mainRef.current) mainRef.current.inert = page === "settings";
+        if (page === "settings") settingsWasOpen.current = true;
+        else if (settingsWasOpen.current) {
+            settingsWasOpen.current = false;
+            document.getElementById("open-settings")?.focus();
+        }
+    }, [page]);
+    const closeSettings = () => setPage("channels");
+
     if (view.connectionStatus === "disconnected") {
         return (
             <><ConnectionPage
@@ -187,21 +199,22 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     }
 
     return <div className="app-shell">
-        <main className="main-area">
-            <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
+        <main className="main-area" ref={mainRef}>
+            <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
-            {page === "channels"
-                ? <ChannelsPage view={view} events={events} invoke={invoke}
-                                onReconnect={(address) => invoke(async () => {
-                                    if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
-                                    await screenMedia.current?.close();
-                                    clearEvents();
-                                    await desktopAPI.reconnectServer(address);
-                                    rememberServerAddress(address);
-                                })}
-                                sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
-                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
+            <ChannelsPage view={view} events={events} invoke={invoke}
+                          onReconnect={(address) => invoke(async () => {
+                              if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
+                              await screenMedia.current?.close();
+                              clearEvents();
+                              await desktopAPI.reconnectServer(address);
+                              rememberServerAddress(address);
+                          })}
+                          sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
         </main>
+        {page === "settings" && <SettingsOverlay onClose={closeSettings}>
+            <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>
+        </SettingsOverlay>}
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
     </div>;
@@ -448,6 +461,27 @@ function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean
                 <span className="event-marker"/><span>{item.message}</span>
             </div>)}</div>
     </section>;
+}
+
+function SettingsOverlay({onClose, children}: {onClose: () => void; children: ReactNode}) {
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            const target = event.target;
+            if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+            onClose();
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [onClose]);
+    return <div className="settings-overlay" onMouseDown={(event) => {
+        if (event.button === 0 && event.target === event.currentTarget) onClose();
+    }}>
+        <div className="settings-window" role="dialog" aria-modal="true" aria-label="Настройки">
+            <button type="button" className="settings-close" title="Закрыть" aria-label="Закрыть" autoFocus onClick={onClose}><Icon name="close"/></button>
+            {children}
+        </div>
+    </div>;
 }
 
 function SettingsPage({view, invoke, theme, setTheme}: {
@@ -754,11 +788,14 @@ function DeviceSelect({id, label, devices, value, disabled, onChange}: {
     useEffect(() => {
         if (!open) return;
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape") setOpen(false);
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
         };
-        window.addEventListener("keydown", closeOnEscape);
+        window.addEventListener("keydown", closeOnEscape, true);
         return () => {
-            window.removeEventListener("keydown", closeOnEscape);
+            window.removeEventListener("keydown", closeOnEscape, true);
         };
     }, [open]);
     const choose = (deviceID: string) => {
@@ -799,10 +836,13 @@ function ModeSelect({value, disabled, open, onChange}: {
     useEffect(() => {
         if (!optionsOpen) return;
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape") setOptionsOpen(false);
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setOptionsOpen(false);
         };
-        window.addEventListener("keydown", closeOnEscape);
-        return () => window.removeEventListener("keydown", closeOnEscape);
+        window.addEventListener("keydown", closeOnEscape, true);
+        return () => window.removeEventListener("keydown", closeOnEscape, true);
     }, [optionsOpen]);
     const choose = (nextValue: string) => {
         setOptionsOpen(false);

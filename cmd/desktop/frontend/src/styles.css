@@ -77,7 +77,7 @@ h2 { margin: 0; font-size: 20px; }
 .form-error, .error-banner { color: #ffd5da; border: 1px solid rgba(255, 108, 122, .35); background: rgba(255, 108, 122, .1); }
 .form-error { padding: 11px 13px; border-radius: 9px; font-size: 13px; }
 
-.app-shell { --main-gutter: 16px; height: 100%; background: var(--window); }
+.app-shell { --main-gutter: 16px; position: relative; height: 100%; background: var(--window); }
 .text-button, .voice-control { border: 0; cursor: pointer; }
 
 .main-area { position: relative; display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); padding: 14px var(--main-gutter) 0; overflow: hidden; }
@@ -224,6 +224,13 @@ h2 { margin: 0; font-size: 20px; }
 .kind-connection .event-marker { background: var(--accent); }.kind-error .event-marker { background: var(--danger); }.kind-reconnect .event-marker { background: #f6bb5b; }.kind-channel .event-marker { background: var(--accent-blue); }
 .empty-event { min-height: 90px; }
 
+.settings-overlay { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; padding: 28px 24px; background: rgba(7, 12, 22, .62); }
+.settings-window { position: relative; display: grid; width: min(1080px, 100%); height: min(780px, 100%); min-height: 0; overflow: hidden; border: 1px solid rgba(108, 132, 177, .28); border-radius: 18px; background: var(--window); box-shadow: 0 28px 80px rgba(0, 0, 0, .48); }
+.settings-window .settings-page { grid-row: auto; height: 100%; margin: 0; padding: 20px 22px 16px; }
+.settings-window .settings-heading { padding-right: 44px; }
+.settings-close { position: absolute; z-index: 1; top: 16px; right: 16px; display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: var(--card); cursor: pointer; }
+.settings-close:hover { color: var(--text); background: var(--card-strong); }
+.settings-close svg { width: 16px; height: 16px; }
 .settings-page { display: grid; min-height: 0; grid-row: 3; grid-template-rows: auto minmax(0, 1fr); margin-right: -24px; padding: 0 24px 22px 0; overflow: hidden; }
 .settings-layout { display: grid; min-height: 0; grid-template-columns: 196px minmax(0, 1fr); gap: 16px; }
 .settings-nav { display: flex; flex-direction: column; align-content: start; gap: 4px; height: fit-content; padding: 8px; border: 1px solid rgba(108, 132, 177, .13); border-radius: 17px; background: var(--card); box-shadow: 0 12px 35px rgba(3, 8, 19, .12); }

@@ -91,11 +91,10 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     </section></div></main>;
 }
 
-export function StatusBar({view, page, onPageChange, sharing, screenMedia, updateAction, invoke}: {
+export function StatusBar({view, onPageChange, sharing, screenMedia, updateAction, invoke}: {
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
     updateAction?: ReactNode;
     view: ClientViewDTO;
-    page: Page;
     onPageChange: (page: Page) => void;
     sharing: ScreenSharingState;
     screenMedia: ScreenMediaController;
@@ -104,8 +103,8 @@ export function StatusBar({view, page, onPageChange, sharing, screenMedia, updat
         <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || "Сервер"}</strong>{view.server.version && <span className="server-version" aria-label={`Версия сервера: ${view.server.version}`}>{view.server.version}</span>}{updateAction}</div>
         <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>Синхронизация…</div>
         <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus} channelId={view.channelId} sharing={sharing} screenMedia={screenMedia}/>
-        <button className="status-pill settings-pill" type="button" onClick={() => onPageChange(page === "settings" ? "channels" : "settings")}>
-            <Icon name={page === "settings" ? "channels" : "settings"}/><span>{page === "settings" ? "К каналам" : "Настройки"}</span>
+        <button id="open-settings" className="status-pill settings-pill" type="button" onClick={() => onPageChange("settings")}>
+            <Icon name="settings"/><span>Настройки</span>
         </button>
         <button className="status-pill settings-pill disconnect-button" type="button" title="Отключиться от сервера"
             onClick={() => void invoke(() => desktopAPI.disconnect())}><Icon name="hangup"/><span>Выйти</span></button>
