@@ -63,6 +63,7 @@ func ServeUDP(
 	defer stopWakeup()
 	rejected := logging.NewFailures("server_udp_decode")
 	defer rejected.Close()
+	var statusLimit statusLimiter
 	var chat *chatWorker
 	if len(authenticators) > 0 && authenticators[0] != nil {
 		chat = newChatWorker(authenticators[0], conn, hub)
@@ -88,6 +89,10 @@ func ServeUDP(
 			return fmt.Errorf("read UDP packet: %w", err)
 		}
 
+		if protocol.IsServerStatusPacket(packet.Type) {
+			handleServerStatus(conn, hub, &statusLimit, packet, addr)
+			continue
+		}
 		if packet.Type == protocol.PacketChatRequest && chat != nil {
 			if err := chat.enqueue(packet, addr); err != nil {
 				log.Printf("chat request rejected: session_id=%d request_id=%d error=%v", packet.SessionID, packet.RequestID, err)

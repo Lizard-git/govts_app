@@ -40,7 +40,7 @@ type secureSession struct {
 	receiveMap uint64
 }
 
-// SecureDatagramCodec accepts only handshake packets in plaintext. All
+// SecureDatagramCodec accepts handshake and validated sessionless status in plaintext. All
 // session packets are AES-GCM protected and checked against a replay window.
 type SecureDatagramCodec struct {
 	mu       sync.Mutex
@@ -102,6 +102,16 @@ func isAuthPacket(packetType uint8) bool {
 }
 
 func (c *SecureDatagramCodec) Encode(ctx DatagramContext, packet VoicePacket) ([]byte, error) {
+	if IsServerStatusPacket(packet.Type) {
+		direction := DirectionClientToServer
+		if c.server {
+			direction = DirectionServerToClient
+		}
+		if !validPublicStatus(ctx, packet, direction) {
+			return nil, errors.New("invalid public status context")
+		}
+		return EncodePacket(packet)
+	}
 	if isAuthPacket(packet.Type) || (packet.Type == PacketError && packet.SessionID == 0) {
 		return EncodePacket(packet)
 	}
@@ -141,6 +151,16 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 		if err != nil {
 			return VoicePacket{}, err
 		}
+		if IsServerStatusPacket(packet.Type) {
+			direction := DirectionServerToClient
+			if c.server {
+				direction = DirectionClientToServer
+			}
+			if !validPublicStatus(ctx, packet, direction) {
+				return VoicePacket{}, rejectDatagram(errors.New("invalid public status context"))
+			}
+			return packet, nil
+		}
 		if !isAuthPacket(packet.Type) && !(packet.Type == PacketError && packet.SessionID == 0) && !(c.server && packet.Type == PacketHello) {
 			return VoicePacket{}, rejectDatagram(errors.New("unprotected session packet"))
 		}
@@ -173,7 +193,7 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: %w", ErrSecureAuthentication, err))
 	}
 	packet, err := DecodePacket(plain)
-	if err != nil || isAuthPacket(packet.Type) || (c.server && packet.SessionID != id) || (!c.server && packet.Type != PacketVoice && packet.Type != PacketVoiceBundle && packet.SessionID != id) {
+	if err != nil || isAuthPacket(packet.Type) || IsServerStatusPacket(packet.Type) || (c.server && packet.SessionID != id) || (!c.server && packet.Type != PacketVoice && packet.Type != PacketVoiceBundle && packet.SessionID != id) {
 		return VoicePacket{}, rejectDatagram(errors.New("invalid secure packet"))
 	}
 	session.markReceived(counter)

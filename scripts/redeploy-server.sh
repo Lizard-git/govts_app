@@ -18,6 +18,7 @@ START_TIMEOUT="${START_TIMEOUT:-10}"
 TMUX_SESSION="${TMUX_SESSION:-govts-server}"
 TMUX_PANE="=$TMUX_SESSION:0.0"
 VOICE_REDUNDANCY="${VOICE_REDUNDANCY:-0}"
+PUBLIC_STATUS="${PUBLIC_STATUS:-0}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -119,6 +120,14 @@ start_server() {
       echo "WARNING: $LIVE_BIN does not support -voice-redundancy; starting without it" >&2
     fi
   fi
+  if [[ "$PUBLIC_STATUS" == "1" ]]; then
+    if binary_supports_flag public-status; then
+      extra_args+=(-public-status)
+      echo "Public server status: enabled"
+    else
+      echo "WARNING: $LIVE_BIN does not support -public-status; starting without it" >&2
+    fi
+  fi
   : >>"$LOG_FILE"
   printf 'Starting server command:'
   printf ' %q' "$LIVE_BIN" \
@@ -181,6 +190,8 @@ is_positive_integer "$MEDIA_MAX_PORT" && (( MEDIA_MAX_PORT <= 65535 )) \
   || fail "VOICE_PORT and MEDIA_PORT must be different"
 [[ "$VOICE_REDUNDANCY" == "0" || "$VOICE_REDUNDANCY" == "1" ]] \
   || fail "VOICE_REDUNDANCY must be 0 or 1"
+[[ "$PUBLIC_STATUS" == "0" || "$PUBLIC_STATUS" == "1" ]] \
+  || fail "PUBLIC_STATUS must be 0 or 1"
 is_positive_integer "$STOP_TIMEOUT" || fail "STOP_TIMEOUT must be positive"
 is_positive_integer "$START_TIMEOUT" || fail "START_TIMEOUT must be positive"
 [[ -d "$APP_DIR" ]] || fail "directory not found: $APP_DIR"

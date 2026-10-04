@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$')]
-    [string]$Target = 'admin@82.25.190.126',
+    [string]$Target = 'admin@193.187.92.89',
 
     [ValidatePattern('^/[A-Za-z0-9._/-]+$')]
     [string]$RemoteDir = '/opt/govts',
@@ -10,7 +10,7 @@ param(
     [string]$ConfigPath = '',
 
     [ValidatePattern('^[0-9A-Fa-f:.]+$')]
-    [string]$PublicIp = '82.25.190.126',
+    [string]$PublicIp = '193.187.92.89',
 
     [ValidateRange(1, 65535)]
     [int]$VoicePort = 9000,
@@ -28,7 +28,10 @@ param(
     [string]$TmuxSession = 'govts-server',
 
     # Repeat the previous voice frame in each server -> client datagram.
-    [switch]$VoiceRedundancy = $true
+    [switch]$VoiceRedundancy = $true,
+
+    # Expose the connected session count without authentication.
+    [switch]$PublicStatus  = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +68,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' '$remoteScript' '$remoteBinary'"
+$publicStatusValue = if ($PublicStatus) { '1' } else { '0' }
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' PUBLIC_STATUS='$publicStatusValue' '$remoteScript' '$remoteBinary'"
 Write-Host "Remote command ($Target): $remoteCommand"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {
