@@ -37,26 +37,42 @@ export function useUpdates(prepareRestart: () => void) {
 
 export type UpdatesState = ReturnType<typeof useUpdates>;
 
+function currentClientLine(version: string, minServer: string) {
+    if (!version || !minServer) return "Получение версии клиента…";
+    return `Эта сборка клиента Govts ${version} подключается к серверу версии ${minServer} и новее.`;
+}
+
+function availableClientLine(version: string, minServer: string) {
+    if (!minServer) return `Доступна новая сборка клиента Govts ${version}. Минимальная версия сервера для неё в подписи релиза не указана.`;
+    return `Доступна новая сборка клиента Govts ${version}. Она подключается к серверу версии ${minServer} и новее.`;
+}
+
 export function UpdatesPanel({updates}: {updates: UpdatesState}) {
     const {view} = updates;
     const busy = updates.acting || ["checking", "downloading", "restarting"].includes(view?.status ?? "");
-    const labels: Record<string,string> = {idle:"Автоматическая проверка включена", checking:"Проверка обновлений…", "up-to-date":"Установлена актуальная версия", available:"Доступно обновление", downloading:"Загрузка и проверка обновления…", ready:"Обновление готово к установке", restarting:"Перезапуск…", error:"Не удалось завершить обновление"};
+    const detail = updates.error || view?.error || "";
     return <section className="settings-card updates-panel">
         <h3>Обновления</h3>
-        <p>Текущая версия: {view?.current || "—"}{view?.available ? ` · Новая: ${view.available}` : ""}</p>
-        <p role="status">{view ? labels[view.status] ?? view.status : "Получение состояния…"}</p>
+        {!view && <p role="status">Получение состояния…</p>}
+        {view && <p>{currentClientLine(view.current, view.minServer)}</p>}
+        {view?.status === "checking" && <p role="status">Проверка обновлений…</p>}
+        {view?.status === "up-to-date" && <p role="status">Установлена последняя версия.</p>}
+        {view?.available && <p>{availableClientLine(view.available, view.availableMinServer)}</p>}
+        {view?.status === "downloading" && <p role="status">Загрузка и проверка обновления…</p>}
         {view?.status === "downloading" && <><progress max={view.total || 1} value={view.written}/><small>{(view.written / 1048576).toFixed(1)} / {(view.total / 1048576).toFixed(1)} МБ</small></>}
-        <label className="update-preference"><input type="checkbox" checked={view?.autoDownload ?? false} disabled={!view || busy}
-            onChange={(event) => void updates.action("SetAutoDownload", event.target.checked)}/>Скачивать обновления автоматически, когда нет подключения к серверу</label>
-        <p>Установка выполняется по кнопке и завершает текущий разговор и демонстрацию.</p>
+        {view?.status === "ready" && <p>Обновление загружено и проверено. Установка перезапустит Govts и завершит текущий разговор и демонстрацию.</p>}
+        {view?.status === "restarting" && <p role="status">Перезапуск…</p>}
+        {view?.status === "error" && <p className="screen-error" role="alert">Не удалось завершить обновление.</p>}
+        {detail && <p className="screen-error" role="alert">{detail}</p>}
         <div className="update-actions">
             <button disabled={!view || busy || view.status === "ready"} onClick={() => void updates.action("Check")}>Проверить обновления</button>
-            {view?.available && ["available","error"].includes(view.status) && <button disabled={busy} onClick={() => void updates.action("Download")}>Скачать</button>}
+            {view?.available && ["available", "error"].includes(view.status) && <button disabled={busy} onClick={() => void updates.action("Download")}>Обновить</button>}
             {view?.status === "downloading" && <button onClick={() => void updates.action("Cancel")}>Отмена</button>}
             {view?.status === "ready" && <button disabled={busy} onClick={() => void updates.action("Restart")}>Обновить и перезапустить</button>}
-            {view?.releaseURL && <a href={view.releaseURL} target="_blank" rel="noreferrer">Релиз на GitHub</a>}
+            {view?.releaseURL && <a href={view.releaseURL} target="_blank" rel="noreferrer">Страница релиза</a>}
         </div>
-        {(updates.error || view?.error) && <p className="screen-error" role="alert">{updates.error || view?.error}</p>}
+        <label className="update-preference"><input type="checkbox" checked={view?.autoDownload ?? false} disabled={!view || busy}
+            onChange={(event) => void updates.action("SetAutoDownload", event.target.checked)}/>Скачивать обновления автоматически, когда нет подключения к серверу</label>
     </section>;
 }
 

@@ -3,6 +3,7 @@ package protocol
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -38,6 +39,14 @@ type secureSession struct {
 	sendCount  uint64
 	receiveMax uint64
 	receiveMap uint64
+	// Client-only diagnostics: fingerprints of authenticated records in the
+	// replay window. No payload, keys or fingerprints are written to logs.
+	records *[64]receivedRecord
+}
+
+type receivedRecord struct {
+	digest     [sha256.Size]byte
+	packetType uint8
 }
 
 // SecureDatagramCodec accepts handshake and validated sessionless status in plaintext. All
@@ -69,7 +78,11 @@ func (c *SecureDatagramCodec) Install(id uint64, clientToServer, serverToClient 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.sessions[id] = &secureSession{send: client, receive: server}
+	session := &secureSession{send: client, receive: server}
+	if !c.server {
+		session.records = new([64]receivedRecord)
+	}
+	c.sessions[id] = session
 	return nil
 }
 
@@ -184,7 +197,19 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: id=%d", ErrUnknownSecureSession, id))
 	}
 	if !session.canReceive(counter) {
-		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: id=%d counter=%d receive_max=%d", ErrReplayedSecureRecord, id, counter, session.receiveMax))
+		details := ""
+		if session.records != nil {
+			details = " replay_detail=outside_window"
+			if counter <= session.receiveMax && session.receiveMax-counter < 64 {
+				previous := session.records[counter%64]
+				kind := "different_record"
+				if previous.digest == sha256.Sum256(datagram) {
+					kind = "duplicate_record"
+				}
+				details = fmt.Sprintf(" replay_detail=%s accepted_type=%d", kind, previous.packetType)
+			}
+		}
+		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: id=%d counter=%d receive_max=%d%s", ErrReplayedSecureRecord, id, counter, session.receiveMax, details))
 	}
 	var nonce [12]byte
 	binary.BigEndian.PutUint64(nonce[4:], counter)
@@ -197,6 +222,9 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 		return VoicePacket{}, rejectDatagram(errors.New("invalid secure packet"))
 	}
 	session.markReceived(counter)
+	if session.records != nil {
+		session.records[counter%64] = receivedRecord{digest: sha256.Sum256(datagram), packetType: packet.Type}
+	}
 	return packet, nil
 }
 

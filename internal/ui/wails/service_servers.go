@@ -80,15 +80,24 @@ func (s *Service) RecentServers() []RecentServerDTO {
 	endpoint, _ := clientapp.ParseServerEndpoint(s.serverAddress)
 	result := make([]RecentServerDTO, 0, len(s.recentServers))
 	for _, server := range s.recentServers {
-		address, _ := clientapp.ParseServerEndpoint(server.Address)
-		status := serverstatus.Status{Status: "loading"}
+		address, err := clientapp.ParseServerEndpoint(server.Address)
+		status := serverstatus.Status{Status: "unknown"}
 		if s.serverStatus != nil {
 			status = s.serverStatus.Snapshot(address)
 		}
-		current := view.ConnectionStatus == "connected" && address == endpoint
+		if err != nil {
+			status = serverstatus.Status{Status: "unavailable"}
+		}
+		current := err == nil && view.ConnectionStatus == "connected" && address == endpoint
 		if current && view.SnapshotFresh {
 			count := uint32(len(view.Participants))
-			status = serverstatus.Status{OnlineCount: &count, Status: "fresh"}
+			status = serverstatus.Status{OnlineCount: &count, Status: "available"}
+		} else if current {
+			status = serverstatus.Status{Status: "unavailable"}
+			if len(view.Participants) > 0 {
+				count := uint32(len(view.Participants))
+				status.OnlineCount = &count
+			}
 		}
 		result = append(result, RecentServerDTO{RecentServer: server, Current: current, Status: status})
 	}

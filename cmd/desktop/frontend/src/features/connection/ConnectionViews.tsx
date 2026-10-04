@@ -25,7 +25,9 @@ function errorText(error: unknown): string {
     return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
 }
 
-export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConnected, updateAction, currentVersion}: {
+export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, onConnected, updateAction, currentVersion, refreshingServers, onRefreshServers}: {
+    refreshingServers: boolean;
+    onRefreshServers: () => void;
     updateAction?: ReactNode;
     currentVersion?: string;
     view: ClientViewDTO;
@@ -72,6 +74,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     return <main className="connection-page"><div className={`connection-layout ${serverCount === 0 ? "connection-layout-empty" : ""}`}>
         <section className="connection-card connection-server-card" hidden={serverCount === 0}>
             <RecentServers view={view} expanded={true} onToggle={() => {}} standalone disabled={pending}
+                refreshingServers={refreshingServers} onRefreshServers={onRefreshServers}
                 onSelect={selectServer} onReconnect={connect} onError={onError} onCountChange={setServerCount}/>
         </section>
         <section className="connection-card">

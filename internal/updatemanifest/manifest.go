@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+
+	"uniclog.io/govts/internal/appversion"
 )
 
 const Filename = "GTS64.exe"
@@ -12,11 +14,12 @@ const AssetName = "signature"
 const MaxSize int64 = 512 << 20
 
 type Manifest struct {
-	Version   string `json:"version"`
-	Filename  string `json:"filename"`
-	Size      int64  `json:"size"`
-	Digest    []byte `json:"sha256"`
-	Signature []byte `json:"signature"`
+	Version          string `json:"version"`
+	Filename         string `json:"filename"`
+	Size             int64  `json:"size"`
+	Digest           []byte `json:"sha256"`
+	Signature        []byte `json:"signature"`
+	MinServerVersion string `json:"minServerVersion,omitempty"`
 }
 
 type Envelope struct {
@@ -26,7 +29,14 @@ type Envelope struct {
 
 func Sign(version string, binary []byte, key ed25519.PrivateKey) ([]byte, error) {
 	digest := sha256.Sum256(binary)
-	m := Manifest{version, Filename, int64(len(binary)), digest[:], ed25519.Sign(key, digest[:])}
+	m := Manifest{
+		Version:          version,
+		Filename:         Filename,
+		Size:             int64(len(binary)),
+		Digest:           digest[:],
+		Signature:        ed25519.Sign(key, digest[:]),
+		MinServerVersion: appversion.SecureMinimumServerVersion,
+	}
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
@@ -48,6 +58,11 @@ func Verify(data []byte, key ed25519.PublicKey) (Manifest, error) {
 	}
 	if m.Filename != Filename || m.Size <= 0 || m.Size > MaxSize || len(m.Digest) != sha256.Size || !ed25519.Verify(key, m.Digest, m.Signature) {
 		return m, errors.New("неверные параметры подписанного обновления")
+	}
+	if m.MinServerVersion != "" {
+		if _, err := appversion.Parse(m.MinServerVersion); err != nil {
+			return m, errors.New("неверная минимальная версия сервера в подписи обновления")
+		}
 	}
 	return m, nil
 }

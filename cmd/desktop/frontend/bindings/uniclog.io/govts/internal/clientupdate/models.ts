@@ -4,6 +4,8 @@
 export interface Snapshot {
     "current": string;
     "available": string;
+    "minServer": string;
+    "availableMinServer": string;
     "status": string;
     "error": string;
     "written": number;

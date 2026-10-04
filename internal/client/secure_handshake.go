@@ -115,7 +115,7 @@ func exchangeAuth(ctx context.Context, conn *udp.ClientPacketConn, request proto
 			response, err := conn.ReceivePacket()
 			if err != nil {
 				if errors.Is(err, protocol.ErrRejectedDatagram) {
-					rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.LocalAddr())
+					rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.RemoteAddr())
 					continue
 				}
 				var netErr net.Error

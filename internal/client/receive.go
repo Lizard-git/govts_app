@@ -44,7 +44,7 @@ func ReceiveLoop(
 				}
 			}
 			if errors.Is(err, protocol.ErrRejectedDatagram) {
-				rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.LocalAddr())
+				rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.RemoteAddr())
 				continue
 			}
 			return err
@@ -70,7 +70,7 @@ func ReceiveLoop(
 				err = fmt.Errorf("%w: current frame %d does not match header %d", protocol.ErrInvalidVoiceBundle, frames[len(frames)-1].Sequence, packet.Sequence)
 			}
 			if err != nil {
-				rejected.RecordKind("malformed_packet", err, conn.LocalAddr())
+				rejected.RecordKind("malformed_packet", err, conn.RemoteAddr())
 				continue
 			}
 			if len(states) > 0 && states[0] != nil {

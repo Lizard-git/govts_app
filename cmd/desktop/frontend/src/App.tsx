@@ -15,7 +15,7 @@ import {Icon} from "./components/Icon";
 import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
-import {UpdateButton, UpdateDialog, useUpdates} from "./features/updates/Updates";
+import {UpdateButton, UpdateDialog, UpdatesPanel, useUpdates, type UpdatesState} from "./features/updates/Updates";
 
 const contentTabs = ["chat", "screens", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
@@ -93,6 +93,23 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     useEffect(() => { chatStore?.invalidate(); }, [chatStore, view.chatRevision]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
+    const [refreshingServers, setRefreshingServers] = useState(false);
+    const refreshingServersRef = useRef(false);
+    const refreshServers = useCallback(async () => {
+        if (refreshingServersRef.current) return;
+        refreshingServersRef.current = true;
+        setRefreshingServers(true);
+        setActionError("");
+        try { await desktopAPI.refreshServerStatuses(); }
+        catch (error) { setActionError(errorText(error)); }
+        finally { refreshingServersRef.current = false; setRefreshingServers(false); }
+    }, []);
+    const startupStatusesRequested = useRef(false);
+    useEffect(() => {
+        if (startupStatusesRequested.current) return;
+        startupStatusesRequested.current = true;
+        void refreshServers();
+    }, [refreshServers]);
     const lastSequence = useRef("0");
     const screenMedia = useRef<ScreenMediaController | null>(null);
     if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
@@ -192,6 +209,8 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
                 error={actionError}
                 onError={setActionError}
                 onRefresh={refresh}
+                refreshingServers={refreshingServers}
+                onRefreshServers={refreshServers}
                 onClearEvents={clearEvents}
                 onConnected={() => setPage("channels")}
             /><UpdateDialog updates={updates}/></>
@@ -202,7 +221,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
         <main className="main-area" ref={mainRef}>
             <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
-            <ChannelsPage view={view} events={events} invoke={invoke}
+            <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
                           onReconnect={(address) => invoke(async () => {
                               if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
                               await screenMedia.current?.close();
@@ -213,14 +232,16 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
                           sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
         </main>
         {page === "settings" && <SettingsOverlay onClose={closeSettings}>
-            <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>
+            <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme} updates={updates}/>
         </SettingsOverlay>}
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
+function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers}: {
+    refreshingServers: boolean;
+    onRefreshServers: () => void;
     onReconnect: (address: string) => Promise<void>;
     view: ClientViewDTO;
     events: ClientEventDTO[];
@@ -312,7 +333,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
                 }}/></div>
                 </section>
-                <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError}/>
+                <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError} refreshingServers={refreshingServers} onRefreshServers={onRefreshServers}/>
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
             <section className="channel-stage">{selected ? <>
@@ -484,11 +505,12 @@ function SettingsOverlay({onClose, children}: {onClose: () => void; children: Re
     </div>;
 }
 
-function SettingsPage({view, invoke, theme, setTheme}: {
+function SettingsPage({view, invoke, theme, setTheme, updates}: {
     view: ClientViewDTO;
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
     theme: string;
     setTheme: (value: string) => Promise<void>;
+    updates: UpdatesState;
 }) {
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
@@ -497,7 +519,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
     const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
     const [devicesError, setDevicesError] = useState("");
     const [devicePending, setDevicePending] = useState(false);
-    const [section, setSection] = useState<"sound" | "interface">("sound");
+    const [section, setSection] = useState<"sound" | "interface" | "updates">("sound");
     const [closeToTray, setCloseToTrayState] = useState(false);
     useEffect(() => {
         let active = true;
@@ -542,6 +564,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
             <nav className="settings-nav" aria-label="Разделы настроек">
                 <button type="button" aria-current={section === "sound" ? "page" : undefined} onClick={() => setSection("sound")}>Звук</button>
                 <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>Интерфейс</button>
+                <button type="button" aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}>Обновления</button>
             </nav>
             <div className="settings-content">
                 {section === "sound" && <>
@@ -609,6 +632,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
                                        }
                                    })}/>
                 </section>}
+                {section === "updates" && <UpdatesPanel updates={updates}/>}
             </div>
         </div>
     </section>;
