@@ -48,6 +48,8 @@ const (
 	// PacketVoiceBundle carries the current and the previous voice frames of
 	// one sender; server → client only, for clients that support it.
 	PacketVoiceBundle
+	PacketServerStatusRequest
+	PacketServerStatusAck
 
 	PacketEnd
 )

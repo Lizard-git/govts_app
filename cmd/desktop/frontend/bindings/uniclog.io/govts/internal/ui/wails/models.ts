@@ -171,6 +171,10 @@ export interface RecentServerDTO {
     "alias"?: string;
     "favorite": boolean;
     "lastVisited": number;
+    "onlineCount": number | null;
+    "status": string;
+    "updatedAt": number;
+    "lastAttemptAt": number;
     "current": boolean;
 }
 

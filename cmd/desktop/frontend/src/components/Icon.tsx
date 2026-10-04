@@ -1,7 +1,8 @@
-export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server";
+export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server" | "refresh";
 
 export function Icon({name}: {name: IconName}) {
     const paths: Record<IconName, React.ReactNode> = {
+        refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17"/></>,
         server: <><rect x="4" y="3" width="16" height="8" rx="2"/><rect x="4" y="13" width="16" height="8" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></>,
         channels: <><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 4v16M13 9h3M13 13h3"/></>,
         settings: <><path d="m9 3-1 3-3 1 1 3-2 2 2 2-1 3 3 1 1 3h6l1-3 3-1-1-3 2-2-2-2 1-3-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></>,

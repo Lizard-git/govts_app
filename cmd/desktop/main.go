@@ -24,6 +24,7 @@ import (
 func init() {
 	application.RegisterEvent[bool]("client-state-changed")
 	application.RegisterEvent[bool]("client-event-log-changed")
+	application.RegisterEvent[bool]("server-status-changed")
 	application.RegisterEvent[wailsui.AudioMeterDTO]("audio-meter")
 	application.RegisterEvent[bool]("tray-screen-share")
 }
@@ -84,12 +85,14 @@ func main() {
 
 	bridgeCtx, cancelBridge := context.WithCancel(context.Background())
 	stopBridge := wailsui.StartEventBridge(bridgeCtx, app, client)
+	stopServerStatus := wailsui.ConfigureServerStatuses(app, service)
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
+			stopServerStatus()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := client.Close(ctx); err != nil {

@@ -53,6 +53,7 @@ type Hub struct {
 	serverInfo    domain.ServerInfo
 	serverVersion appversion.Number
 	voiceBundles  bool
+	publicStatus  bool
 	outbox        []domain.StateEvent
 	eventReady    chan struct{}
 }

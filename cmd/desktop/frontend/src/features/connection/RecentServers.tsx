@@ -1,7 +1,28 @@
 import {useCallback, useEffect, useRef, useState} from "react";
 import {desktopAPI, type ClientViewDTO, type RecentServer} from "../../api";
+import {Icon} from "../../components/Icon";
 
-export function RecentServers({view, expanded, onToggle, onReconnect, onError, standalone = false, disabled = false, onSelect, onCountChange}: {
+function statusTitle(server: RecentServer): string {
+    const label = server.current ? (server.status === "available" ? "Текущее подключение" : "Синхронизация текущего подключения")
+        : server.status === "available" ? "Сервер ответил на последнюю проверку"
+        : server.status === "unknown" ? "Сервер ещё не проверен. Нажмите «Обновить»"
+        : "Нет ответа на проверку статуса. Сервер может быть недоступен или скрывать статус настройкой приватности";
+    const count = server.onlineCount == null ? "" : `\n${server.status === "available" ? "Подключено пользователей" : "Последнее известное число подключений"}: ${server.onlineCount}`;
+    return `${label}${count}${server.lastAttemptAt ? `\nПроверка: ${new Date(server.lastAttemptAt).toLocaleString()}` : ""}${server.updatedAt ? `\nПолучено: ${new Date(server.updatedAt).toLocaleString()}` : ""}`;
+}
+
+function ServerPopulation({server}: {server: RecentServer}) {
+    const count = server.onlineCount;
+    const title = statusTitle(server);
+    return <span className={`server-population ${server.status}`} title={title} role="img" aria-label={title}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="12" cy="7" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>
+        <span>{count ?? "—"}{server.status === "unavailable" && count != null ? "*" : ""}</span>
+    </span>;
+}
+
+export function RecentServers({view, expanded, onToggle, onReconnect, onError, refreshingServers, onRefreshServers, standalone = false, disabled = false, onSelect, onCountChange}: {
+    refreshingServers: boolean;
+    onRefreshServers: () => void;
     onCountChange?: (count: number) => void;
     standalone?: boolean;
     disabled?: boolean;
@@ -22,6 +43,7 @@ export function RecentServers({view, expanded, onToggle, onReconnect, onError, s
     const editingRef = useRef<string | null>(null);
     const busy = useRef(false);
     const mounted = useRef(true);
+    const loadGeneration = useRef(0);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     useEffect(() => {
         if (!menu) return;
@@ -41,12 +63,16 @@ export function RecentServers({view, expanded, onToggle, onReconnect, onError, s
     }, [menu]);
     useEffect(() => { setMenu(null); }, [expanded, view.chatContext, view.connectionStatus]);
     const load = useCallback(async () => {
+        const generation = ++loadGeneration.current;
         try {
             const result = await desktopAPI.recentServers();
-            if (mounted.current) setServers(result ?? []);
-        } catch (error) { if (mounted.current) onError(String(error)); }
+            if (mounted.current && generation === loadGeneration.current) setServers(result ?? []);
+        } catch (error) { if (mounted.current && generation === loadGeneration.current) onError(String(error)); }
     }, [onError]);
-    useEffect(() => { void load(); }, [load, view.chatContext, view.sessionId, view.connectionStatus]);
+    const visibleParticipantCount = expanded ? view.participants?.length : undefined;
+    const visibleSnapshotFresh = expanded ? view.snapshotFresh : undefined;
+    useEffect(() => { void load(); }, [load, view.chatContext, view.sessionId, view.connectionStatus, visibleParticipantCount, visibleSnapshotFresh, expanded]);
+    useEffect(() => desktopAPI.onServerStatusChanged(() => { if (expanded) void load(); }), [load, expanded]);
     const run = async (operation: () => Promise<void>) => {
         if (busy.current) return;
         busy.current = true; setPending(true);
@@ -69,10 +95,20 @@ export function RecentServers({view, expanded, onToggle, onReconnect, onError, s
         if (address) void run(() => desktopAPI.setServerAlias(address, alias));
     };
     return <section className={`sidebar-section recent-servers ${standalone ? "connection-server-list" : ""}`} aria-label="Последние серверы">
-        {standalone ? <div className="panel-heading"><h2>Серверы</h2><span className="count-badge">{servers.length}</span></div> :
+        <div className={`servers-heading ${standalone ? "panel-heading" : ""}`}>
+        {standalone ? <h2>Серверы</h2> :
         <button className="servers-toggle" type="button" aria-expanded={expanded} aria-controls="recent-servers-list" onClick={onToggle}>
-            <span className="servers-chevron" aria-hidden="true">{expanded ? "▾" : "▸"}</span><span>Серверы</span><span className="count-badge">{servers.length}</span>
+            <span className="servers-chevron" aria-hidden="true">{expanded ? "▾" : "▸"}</span><span>Серверы</span>
         </button>}
+        <button type="button" className="servers-refresh" tabIndex={-1} disabled={refreshingServers || servers.length === 0}
+                title={refreshingServers ? "Обновление статусов…" : "Обновить статусы сохранённых серверов"} aria-label="Обновить статусы сохранённых серверов" aria-busy={refreshingServers}
+                onMouseDown={(event) => event.preventDefault()}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.preventDefault(); }}
+                onClick={(event) => { if (event.button === 0 && event.detail > 0) onRefreshServers(); }}>
+            <Icon name="refresh"/>
+        </button>
+        <span className="count-badge">{servers.length}</span>
+        </div>
         <div id="recent-servers-list" className="servers-scroll" hidden={!expanded}>
             {servers.map((server) => <div key={server.address} className="recent-server">
                 {editing === server.address ? <input className="server-alias-input" autoFocus maxLength={64} value={alias}
@@ -95,13 +131,15 @@ export function RecentServers({view, expanded, onToggle, onReconnect, onError, s
                             if (event.key === "Delete") { event.preventDefault(); void run(() => desktopAPI.deleteRecentServer(server.address)); }
                             if (event.key === "Enter" && !event.repeat) { event.preventDefault(); reconnect(server); }
                         }}>
+                    <span className={`server-availability ${server.status}`} role="img" title={statusTitle(server)} aria-label={statusTitle(server)}/>
                     <span className="recent-server-label"><span>{server.alias || server.address}</span>{server.alias && <small>{server.address}</small>}</span>
                 </button>}
+                <ServerPopulation server={server}/>
                 <button type="button" className="server-favorite" aria-pressed={server.favorite}
                         aria-label={`${server.favorite ? "Открепить" : "Закрепить"} сервер ${server.alias || server.address}`}
                         title={server.favorite ? "Убрать из избранного" : "Закрепить в избранном"} disabled={pending}
                         onClick={() => void run(() => desktopAPI.setServerFavorite(server.address, !server.favorite))}>
-                    <span aria-hidden="true">{server.favorite ? "★" : "☆"}</span>
+                    <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z"/></svg>
                 </button>
             </div>)}
             {!servers.length && <p className="recent-servers-empty">Здесь появятся посещённые серверы.</p>}

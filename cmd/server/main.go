@@ -37,6 +37,7 @@ func main() {
 	mediaIdentity := flag.String("media-identity", "govts-media", "path prefix for generated media TLS certificate and key")
 	voiceIdentity := flag.String("voice-identity", "govts-voice.seed", "path to persistent server signing seed")
 	voiceRedundancy := flag.Bool("voice-redundancy", false, "repeat the previous voice frame in each server → client datagram for clients that support it")
+	publicStatus := flag.Bool("public-status", false, "allow unauthenticated UDP queries of the connected session count")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(serverVersion())
@@ -48,7 +49,7 @@ func main() {
 		log.Printf("file logging unavailable; continuing with console logging: %v", err)
 	}
 	log.Printf("server starting: version=%s", serverVersion())
-	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *voiceRedundancy)
+	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *voiceRedundancy, *publicStatus)
 	if err != nil {
 		log.Printf("server stopped with error: %v", err)
 	}
@@ -58,7 +59,7 @@ func main() {
 	}
 }
 
-func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, voiceRedundancy bool) error {
+func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, voiceRedundancy, publicStatus bool) error {
 	currentVersion, err := appversion.Parse(serverVersion())
 	if err != nil {
 		return fmt.Errorf("invalid embedded server version: %w", err)
@@ -94,6 +95,7 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 	}
 	hub.SetServerVersion(currentVersion)
 	hub.SetVoiceBundles(voiceRedundancy)
+	hub.SetPublicStatus(publicStatus)
 	if mediaPort != 0 && (mediaPort < 1 || mediaPort > 65535) {
 		return errors.New("invalid media signaling port")
 	}

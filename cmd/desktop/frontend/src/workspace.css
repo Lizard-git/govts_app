@@ -52,21 +52,36 @@
 .channel-browser.servers-expanded { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .sidebar-section { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
 .recent-servers { grid-template-rows: 39px minmax(0, 1fr); border-top: 1px solid var(--line); }
-.servers-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 0 12px; border: 0; color: var(--muted); background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
+.servers-heading { display: flex; align-items: center; gap: 7px; min-width: 0; padding-right: 8px; }
+.servers-heading > .count-badge { flex-shrink: 0; }
+.servers-toggle { display: flex; align-items: center; gap: 7px; align-self: stretch; flex: 1; min-width: 0; padding: 0 0 0 12px; border: 0; color: var(--muted); background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
 .servers-toggle:hover { color: var(--text); background: var(--card-strong); }
-.servers-toggle .count-badge { margin-left: auto; }
+.servers-refresh { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-left: auto; flex-shrink: 0; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.servers-refresh svg { width: 14px; height: 14px; }
+.servers-refresh:hover:enabled { color: var(--text); background: var(--card-strong); }
+.servers-refresh:disabled { opacity: .55; cursor: default; }
+.server-availability { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #8a8f98; }
+.server-availability.available { background: #4caf72; }
 .servers-chevron { width: 10px; flex-shrink: 0; }
 .servers-scroll { min-width: 0; min-height: 0; padding: 0 8px 12px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .servers-scroll[hidden] { display: none; }
-.recent-server { display: flex; align-items: center; min-width: 0; border-radius: 7px; margin-top: 3px; }
+.recent-server { display: grid; grid-template-columns: minmax(0, 1fr) 36px 28px; align-items: center; column-gap: 4px; min-width: 0; border-radius: 7px; margin-top: 3px; }
 .recent-server:hover { background: var(--card-strong); }
+.recent-server + .recent-server { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); border-top-left-radius: 0; border-top-right-radius: 0; }
 .recent-server-connect { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 8px 4px 8px 7px; border: 0; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
 .recent-server-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11px; }
+.server-population { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: center; gap: 3px; min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.server-population > span { text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-population svg { width: 12px; height: 12px; }
+.server-population.available { color: var(--text); }
+.server-population.unavailable { opacity: .65; }
 .recent-server-label > span, .recent-server-label > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-server-label > small { color: var(--muted); font-size: 9px; }
-.server-alias-input { flex: 1; width: 0; min-width: 0; margin: 3px; padding: 5px; font-size: 11px; }
-.server-favorite { flex-shrink: 0; padding: 5px; border: 0; background: transparent; color: var(--muted); font-size: 17px; cursor: pointer; }
+.server-alias-input { width: calc(100% - 6px); min-width: 0; box-sizing: border-box; margin: 3px; padding: 5px; font-size: 11px; }
+.server-favorite { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 17px; line-height: 1; cursor: pointer; }
 .server-favorite[aria-pressed="true"] { color: var(--accent-blue); }
+.server-favorite svg { width: 15px; height: 15px; fill: none; }
+.server-favorite[aria-pressed="true"] svg { fill: currentColor; }
 .server-favorite:hover { color: var(--text); }
 .recent-server-connect:disabled, .server-favorite:disabled { cursor: default; opacity: .6; }
 .recent-servers-empty { padding: 4px; font-size: 11px; color: var(--muted); }

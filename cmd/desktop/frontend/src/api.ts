@@ -22,7 +22,8 @@ export type {
 import type {AudioMeterDTO, ConnectRequest, ChatRequestDTO} from "../bindings/uniclog.io/govts/internal/ui/wails";
 
 let diagnosticsInFlight = 0;
-export type RecentServer = {address: string; alias?: string; favorite: boolean; lastVisited: number; current: boolean};
+export type RecentServer = {address: string; alias?: string; favorite: boolean; lastVisited: number; current: boolean;
+    onlineCount: number | null; status: "unknown" | "available" | "unavailable"; updatedAt: number; lastAttemptAt: number};
 export function logDiagnostic(operation: string, message: unknown): void {
     if (diagnosticsInFlight >= 16) return;
     diagnosticsInFlight++;
@@ -34,6 +35,8 @@ export function logDiagnostic(operation: string, message: unknown): void {
 
 export const desktopAPI = {
     recentServers: (): Promise<RecentServer[]> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.RecentServers"),
+    refreshServerStatuses: (): Promise<void> => Service.RefreshServerStatuses(),
+    onServerStatusChanged: (listener: () => void) => Events.On("server-status-changed", listener),
     setServerAlias: (address: string, alias: string): Promise<void> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.SetServerAlias", address, alias),
     deleteRecentServer: (address: string): Promise<void> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.DeleteRecentServer", address),
     setServerFavorite: (address: string, favorite: boolean): Promise<void> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.SetServerFavorite", address, favorite),

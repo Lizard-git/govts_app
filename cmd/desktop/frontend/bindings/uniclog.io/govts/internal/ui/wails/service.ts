@@ -96,6 +96,10 @@ export function ReconnectServer(address: string): $CancellablePromise<void> {
     return $Call.ByID(1012485691, address);
 }
 
+export function RefreshServerStatuses(): $CancellablePromise<void> {
+    return $Call.ByID(1470301523);
+}
+
 export function SavedDisplayName(): $CancellablePromise<string> {
     return $Call.ByID(1402910199);
 }
