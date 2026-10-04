@@ -15,7 +15,7 @@ import {Icon} from "./components/Icon";
 import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
-import {UpdateButton, UpdateDialog, useUpdates} from "./features/updates/Updates";
+import {UpdateButton, UpdateDialog, UpdatesPanel, useUpdates, type UpdatesState} from "./features/updates/Updates";
 
 const contentTabs = ["chat", "screens", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
@@ -200,7 +200,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
                                     rememberServerAddress(address);
                                 })}
                                 sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
-                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme}/>}
+                : <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme} updates={updates}/>}
         </main>
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
@@ -450,11 +450,12 @@ function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean
     </section>;
 }
 
-function SettingsPage({view, invoke, theme, setTheme}: {
+function SettingsPage({view, invoke, theme, setTheme, updates}: {
     view: ClientViewDTO;
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
     theme: string;
     setTheme: (value: string) => Promise<void>;
+    updates: UpdatesState;
 }) {
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
@@ -463,7 +464,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
     const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
     const [devicesError, setDevicesError] = useState("");
     const [devicePending, setDevicePending] = useState(false);
-    const [section, setSection] = useState<"sound" | "interface">("sound");
+    const [section, setSection] = useState<"sound" | "interface" | "updates">("sound");
     const [closeToTray, setCloseToTrayState] = useState(false);
     useEffect(() => {
         let active = true;
@@ -508,6 +509,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
             <nav className="settings-nav" aria-label="Разделы настроек">
                 <button type="button" aria-current={section === "sound" ? "page" : undefined} onClick={() => setSection("sound")}>Звук</button>
                 <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>Интерфейс</button>
+                <button type="button" aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}>Обновления</button>
             </nav>
             <div className="settings-content">
                 {section === "sound" && <>
@@ -575,6 +577,7 @@ function SettingsPage({view, invoke, theme, setTheme}: {
                                        }
                                    })}/>
                 </section>}
+                {section === "updates" && <UpdatesPanel updates={updates}/>}
             </div>
         </div>
     </section>;

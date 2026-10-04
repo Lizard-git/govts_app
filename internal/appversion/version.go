@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// SecureMinimumServerVersion is the oldest server a secure desktop client accepts.
+const SecureMinimumServerVersion = "0.2.13"
+
 // Number fits in the existing 32-bit Sequence field of Hello packets.
 // Components are encoded as major:8, minor:8, patch:16.
 type Number uint32

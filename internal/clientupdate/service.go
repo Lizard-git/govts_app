@@ -17,17 +17,20 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/updater"
+	"uniclog.io/govts/internal/appversion"
 )
 
 type Snapshot struct {
-	Current      string `json:"current"`
-	Available    string `json:"available"`
-	Status       string `json:"status"`
-	Error        string `json:"error"`
-	Written      int64  `json:"written"`
-	Total        int64  `json:"total"`
-	AutoDownload bool   `json:"autoDownload"`
-	ReleaseURL   string `json:"releaseURL"`
+	Current            string `json:"current"`
+	Available          string `json:"available"`
+	MinServer          string `json:"minServer"`
+	AvailableMinServer string `json:"availableMinServer"`
+	Status             string `json:"status"`
+	Error              string `json:"error"`
+	Written            int64  `json:"written"`
+	Total              int64  `json:"total"`
+	AutoDownload       bool   `json:"autoDownload"`
+	ReleaseURL         string `json:"releaseURL"`
 }
 
 type Service struct {
@@ -61,6 +64,7 @@ func Initialize(s *Service, app *application.App, version, publicKey string) err
 	s.u = app.Updater
 	s.root, s.stop = context.WithCancel(context.Background())
 	s.view.Current = version
+	s.view.MinServer = appversion.SecureMinimumServerVersion
 	if result, err := os.ReadFile(filepath.Join(filepath.Dir(s.prefs), "update-recovery-result.txt")); err == nil {
 		s.view.Error = string(result)
 	}
@@ -176,9 +180,12 @@ func (s *Service) Check() error {
 	status := "up-to-date"
 	s.mu.Lock()
 	if err == nil {
-		s.view.Available, s.view.ReleaseURL = "", ""
+		s.view.Available, s.view.AvailableMinServer, s.view.ReleaseURL = "", "", ""
 		if release != nil {
 			s.view.Available = release.Version
+			if minServer, _ := release.Metadata["minServerVersion"].(string); minServer != "" {
+				s.view.AvailableMinServer = minServer
+			}
 			s.view.ReleaseURL = "https://github.com/" + repository + "/releases/tag/v" + release.Version
 			status = "available"
 		}

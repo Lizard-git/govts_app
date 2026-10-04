@@ -131,7 +131,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	r := &updater.Release{Version: version, Name: "Govts " + version, Notes: release.Body,
 		Artifact:     updater.Artifact{Filename: m.Filename, Filetype: "exe", Size: m.Size, Platform: "windows", Arch: "amd64"},
 		Verification: &updater.Verification{DigestAlgo: "sha256", Digest: m.Digest, SignatureAlgo: "ed25519", Signature: m.Signature},
-		Metadata:     map[string]any{"url": binaryURL}}
+		Metadata:     map[string]any{"url": binaryURL, "minServerVersion": m.MinServerVersion}}
 	p.cached, p.etag = r, response.Header.Get("ETag")
 	return r, nil
 }

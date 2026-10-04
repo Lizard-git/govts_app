@@ -127,7 +127,9 @@
 .update-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .update-actions a { color: var(--accent-blue); }
 .update-preference { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 12px; }
-.updates-panel progress { width: 100%; accent-color: var(--accent); }
+.updates-panel p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+.updates-panel progress { display: block; width: 100%; margin: 0 0 8px; accent-color: var(--accent); }
+.updates-panel small { display: block; margin: 0 0 12px; color: var(--muted); font-size: 12px; }
 .update-dialog { width: min(560px, calc(100vw - 32px)); }
 .update-dialog .settings-card { margin: 0 0 14px; }
 .stage-avatar { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--muted); border-radius: 50%; color: var(--text); background: var(--card-strong); font-size: 18px; }
