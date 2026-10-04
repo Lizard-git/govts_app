@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$')]
-    [string]$Target = 'admin@193.187.92.89',
+    [string]$Target = 'admin@82.25.190.126',
 
     [ValidatePattern('^/[A-Za-z0-9._/-]+$')]
     [string]$RemoteDir = '/opt/govts',
@@ -10,7 +10,7 @@ param(
     [string]$ConfigPath = '',
 
     [ValidatePattern('^[0-9A-Fa-f:.]+$')]
-    [string]$PublicIp = '193.187.92.89',
+    [string]$PublicIp = '82.25.190.126',
 
     [ValidateRange(1, 65535)]
     [int]$VoicePort = 9000,
@@ -62,9 +62,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "binary upload failed with exit code $LASTEXITCODE"
 }
 
-& scp -- (Join-Path $PSScriptRoot 'redeploy-server.sh') "${Target}:$remoteScriptUpload"
-if ($LASTEXITCODE -ne 0) {
-    throw "redeploy script upload failed with exit code $LASTEXITCODE"
+$localScript = Join-Path $PSScriptRoot 'redeploy-server.sh'
+$normalizedScript = [System.IO.Path]::GetTempFileName()
+try {
+    # Linux requires LF line endings and a shebang without a UTF-8 BOM.
+    $scriptContent = [System.IO.File]::ReadAllText($localScript).Replace("`r`n", "`n").Replace("`r", "`n")
+    [System.IO.File]::WriteAllText($normalizedScript, $scriptContent, [System.Text.UTF8Encoding]::new($false))
+    & scp -- $normalizedScript "${Target}:$remoteScriptUpload"
+    if ($LASTEXITCODE -ne 0) {
+        throw "redeploy script upload failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Remove-Item -LiteralPath $normalizedScript -Force
 }
 
 $voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
