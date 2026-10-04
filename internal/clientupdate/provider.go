@@ -54,7 +54,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusNotModified {
 		return p.cached, nil
 	}
@@ -113,7 +113,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	if err != nil {
 		return nil, err
 	}
-	defer manifestResponse.Body.Close()
+	defer func() { _ = manifestResponse.Body.Close() }()
 	if manifestResponse.StatusCode != http.StatusOK {
 		return nil, errors.New("не удалось получить подпись обновления")
 	}
@@ -142,7 +142,7 @@ func (p *provider) Download(ctx context.Context, r *updater.Release, dst io.Writ
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("загрузка: HTTP %d", response.StatusCode)
 	}

@@ -238,9 +238,9 @@ func (s *Service) SetAutoDownload(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	if _, err = f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err = f.Close(); err != nil {
@@ -268,7 +268,7 @@ func (s *Service) Restart() error {
 		if err == nil {
 			path := f.Name()
 			err = f.Close()
-			os.Remove(path)
+			_ = os.Remove(path)
 		}
 	}
 	if err == nil {
