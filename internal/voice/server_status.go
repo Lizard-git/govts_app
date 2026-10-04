@@ -33,7 +33,6 @@ func (l *statusLimiter) allow(ip netip.Addr, now time.Time) bool {
 	if l.global.count >= 100 {
 		return false
 	}
-	l.global.count++
 	if l.ips == nil {
 		l.ips = make(map[netip.Addr]statusRateWindow)
 	}
@@ -53,10 +52,11 @@ func (l *statusLimiter) allow(ip netip.Addr, now time.Time) bool {
 	if now.Sub(window.start) >= time.Minute {
 		window = statusRateWindow{start: now}
 	}
-	if window.count >= 30 {
+	if window.count >= 120 {
 		return false
 	}
 	window.count++
+	l.global.count++
 	l.ips[ip] = window
 	return true
 }

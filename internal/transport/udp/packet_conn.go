@@ -177,6 +177,10 @@ func (c *ClientPacketConn) LocalAddr() net.Addr {
 	return c.packetConn.conn.LocalAddr()
 }
 
+func (c *ClientPacketConn) RemoteAddr() net.Addr {
+	return c.packetConn.conn.RemoteAddr()
+}
+
 func (c *ServerPacketConn) ReadPacket() (
 	protocol.VoicePacket,
 	*net.UDPAddr,

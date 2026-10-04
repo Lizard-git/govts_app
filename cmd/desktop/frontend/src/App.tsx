@@ -93,6 +93,23 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     useEffect(() => { chatStore?.invalidate(); }, [chatStore, view.chatRevision]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
     const [actionError, setActionError] = useState("");
+    const [refreshingServers, setRefreshingServers] = useState(false);
+    const refreshingServersRef = useRef(false);
+    const refreshServers = useCallback(async () => {
+        if (refreshingServersRef.current) return;
+        refreshingServersRef.current = true;
+        setRefreshingServers(true);
+        setActionError("");
+        try { await desktopAPI.refreshServerStatuses(); }
+        catch (error) { setActionError(errorText(error)); }
+        finally { refreshingServersRef.current = false; setRefreshingServers(false); }
+    }, []);
+    const startupStatusesRequested = useRef(false);
+    useEffect(() => {
+        if (startupStatusesRequested.current) return;
+        startupStatusesRequested.current = true;
+        void refreshServers();
+    }, [refreshServers]);
     const lastSequence = useRef("0");
     const screenMedia = useRef<ScreenMediaController | null>(null);
     if (!screenMedia.current) screenMedia.current = new ScreenMediaController();
@@ -180,6 +197,8 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
                 error={actionError}
                 onError={setActionError}
                 onRefresh={refresh}
+                refreshingServers={refreshingServers}
+                onRefreshServers={refreshServers}
                 onClearEvents={clearEvents}
                 onConnected={() => setPage("channels")}
             /><UpdateDialog updates={updates}/></>
@@ -191,7 +210,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
             <StatusBar view={view} page={page} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             {page === "channels"
-                ? <ChannelsPage view={view} events={events} invoke={invoke}
+                ? <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
                                 onReconnect={(address) => invoke(async () => {
                                     if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
                                     await screenMedia.current?.close();
@@ -207,7 +226,9 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore}: {
+function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers}: {
+    refreshingServers: boolean;
+    onRefreshServers: () => void;
     onReconnect: (address: string) => Promise<void>;
     view: ClientViewDTO;
     events: ClientEventDTO[];
@@ -299,7 +320,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
                 }}/></div>
                 </section>
-                <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError}/>
+                <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError} refreshingServers={refreshingServers} onRefreshServers={onRefreshServers}/>
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
             <section className="channel-stage">{selected ? <>

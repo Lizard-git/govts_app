@@ -46,11 +46,12 @@ type Service struct {
 	connectionMu     sync.Mutex
 	recentServers    []clientsettings.RecentServer
 	recordedVisit    string
-	serverStatus     *serverstatus.Monitor
+	serverStatus     *serverstatus.Cache
+	statusChanged    func()
 }
 
 func NewService(client *clientapp.App) *Service {
-	return &Service{client: client, serverStatus: serverstatus.NewMonitor()}
+	return &Service{client: client, serverStatus: serverstatus.NewCache()}
 }
 
 // LogDiagnostic receives infrequent browser-side lifecycle events. It accepts

@@ -23,7 +23,7 @@ import type {AudioMeterDTO, ConnectRequest, ChatRequestDTO} from "../bindings/un
 
 let diagnosticsInFlight = 0;
 export type RecentServer = {address: string; alias?: string; favorite: boolean; lastVisited: number; current: boolean;
-    onlineCount: number | null; status: "loading" | "fresh" | "stale" | "unavailable"; updatedAt: number; lastAttemptAt: number};
+    onlineCount: number | null; status: "unknown" | "available" | "unavailable"; updatedAt: number; lastAttemptAt: number};
 export function logDiagnostic(operation: string, message: unknown): void {
     if (diagnosticsInFlight >= 16) return;
     diagnosticsInFlight++;
@@ -35,7 +35,7 @@ export function logDiagnostic(operation: string, message: unknown): void {
 
 export const desktopAPI = {
     recentServers: (): Promise<RecentServer[]> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.RecentServers"),
-    setServerListVisible: (consumer: string, visible: boolean): Promise<void> => Service.SetServerListVisible(consumer, visible),
+    refreshServerStatuses: (): Promise<void> => Service.RefreshServerStatuses(),
     onServerStatusChanged: (listener: () => void) => Events.On("server-status-changed", listener),
     setServerAlias: (address: string, alias: string): Promise<void> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.SetServerAlias", address, alias),
     deleteRecentServer: (address: string): Promise<void> => Call.ByName("uniclog.io/govts/internal/ui/wails.Service.DeleteRecentServer", address),
