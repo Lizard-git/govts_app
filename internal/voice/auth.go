@@ -45,10 +45,6 @@ const maxNewHandshakesPerIPPerMinute = 60
 // not the desktop executable's independently incremented release version.
 const minimumSecureClientVersion appversion.Number = 2<<16 | 9 // 0.2.9: snapshot v6 and chat
 
-// voiceBundleClientVersion is the minimum server version requested by clients
-// that decode PacketVoiceBundle. Older clients keep receiving PacketVoice.
-const voiceBundleClientVersion appversion.Number = 2<<16 | 13 // 0.2.13
-
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.
 type Authenticator struct {
@@ -180,7 +176,7 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 		hub.Remove(session.ID)
 		return err
 	}
-	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= voiceBundleClientVersion)
+	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= appversion.SecureMinimumServer)
 	mac := auth.AckMAC(ackKey, digest, session.ID, account.JoinLevel, account.Permissions)
 	payload := append([]byte(nil), mac[:]...)
 	payload = binary.BigEndian.AppendUint16(payload, account.JoinLevel)

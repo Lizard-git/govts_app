@@ -126,7 +126,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	}
 	if options.MinServerVersion == "" {
 		if a.secure {
-			options.MinServerVersion = "0.2.13" // voice bundles
+			options.MinServerVersion = appversion.SecureMinimumServerVersion
 		} else {
 			options.MinServerVersion = voiceclient.MinimumServerVersion
 		}

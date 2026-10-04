@@ -54,7 +54,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusNotModified {
 		return p.cached, nil
 	}
@@ -113,7 +113,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	if err != nil {
 		return nil, err
 	}
-	defer manifestResponse.Body.Close()
+	defer func() { _ = manifestResponse.Body.Close() }()
 	if manifestResponse.StatusCode != http.StatusOK {
 		return nil, errors.New("не удалось получить подпись обновления")
 	}
@@ -131,7 +131,7 @@ func (p *provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	r := &updater.Release{Version: version, Name: "Govts " + version, Notes: release.Body,
 		Artifact:     updater.Artifact{Filename: m.Filename, Filetype: "exe", Size: m.Size, Platform: "windows", Arch: "amd64"},
 		Verification: &updater.Verification{DigestAlgo: "sha256", Digest: m.Digest, SignatureAlgo: "ed25519", Signature: m.Signature},
-		Metadata:     map[string]any{"url": binaryURL}}
+		Metadata:     map[string]any{"url": binaryURL, "minServerVersion": m.MinServerVersion}}
 	p.cached, p.etag = r, response.Header.Get("ETag")
 	return r, nil
 }
@@ -142,7 +142,7 @@ func (p *provider) Download(ctx context.Context, r *updater.Release, dst io.Writ
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("загрузка: HTTP %d", response.StatusCode)
 	}
