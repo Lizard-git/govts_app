@@ -6,12 +6,24 @@ import (
 	"strings"
 )
 
-// SecureMinimumServerVersion is the oldest server a secure desktop client accepts.
+// SecureMinimumServerVersion is the oldest server a secure client accepts.
+// The server treats a handshake at this level or newer as able to decode voice bundles.
 const SecureMinimumServerVersion = "0.2.13"
+
+// SecureMinimumServer is SecureMinimumServerVersion packed into a handshake Sequence.
+var SecureMinimumServer = mustParse(SecureMinimumServerVersion)
 
 // Number fits in the existing 32-bit Sequence field of Hello packets.
 // Components are encoded as major:8, minor:8, patch:16.
 type Number uint32
+
+func mustParse(text string) Number {
+	number, err := Parse(text)
+	if err != nil {
+		panic(err)
+	}
+	return number
+}
 
 func Parse(text string) (Number, error) {
 	parts := strings.Split(text, ".")
