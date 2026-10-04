@@ -8,10 +8,12 @@ import (
 
 	"uniclog.io/govts/internal/clientapp"
 	"uniclog.io/govts/internal/clientsettings"
+	"uniclog.io/govts/internal/serverstatus"
 )
 
 type RecentServerDTO struct {
 	clientsettings.RecentServer
+	serverstatus.Status
 	Current bool `json:"current"`
 }
 
@@ -78,7 +80,17 @@ func (s *Service) RecentServers() []RecentServerDTO {
 	endpoint, _ := clientapp.ParseServerEndpoint(s.serverAddress)
 	result := make([]RecentServerDTO, 0, len(s.recentServers))
 	for _, server := range s.recentServers {
-		result = append(result, RecentServerDTO{RecentServer: server, Current: view.ConnectionStatus == "connected" && server.Address == endpoint.String()})
+		address, _ := clientapp.ParseServerEndpoint(server.Address)
+		status := serverstatus.Status{Status: "loading"}
+		if s.serverStatus != nil {
+			status = s.serverStatus.Snapshot(address)
+		}
+		current := view.ConnectionStatus == "connected" && address == endpoint
+		if current && view.SnapshotFresh {
+			count := uint32(len(view.Participants))
+			status = serverstatus.Status{OnlineCount: &count, Status: "fresh"}
+		}
+		result = append(result, RecentServerDTO{RecentServer: server, Current: current, Status: status})
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		if result[i].Favorite != result[j].Favorite {
@@ -123,6 +135,10 @@ func (s *Service) DeleteRecentServer(address string) error {
 	s.settingsMu.Unlock()
 	if !found {
 		return errors.New("сервер отсутствует в истории")
+	}
+	if s.serverStatus != nil {
+		endpoint, _ := clientapp.ParseServerEndpoint(address)
+		s.serverStatus.Forget(endpoint)
 	}
 	return s.saveSettings()
 }

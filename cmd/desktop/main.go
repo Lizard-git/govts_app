@@ -24,6 +24,7 @@ import (
 func init() {
 	application.RegisterEvent[bool]("client-state-changed")
 	application.RegisterEvent[bool]("client-event-log-changed")
+	application.RegisterEvent[bool]("server-status-changed")
 	application.RegisterEvent[wailsui.AudioMeterDTO]("audio-meter")
 	application.RegisterEvent[bool]("tray-screen-share")
 }
@@ -84,12 +85,14 @@ func main() {
 
 	bridgeCtx, cancelBridge := context.WithCancel(context.Background())
 	stopBridge := wailsui.StartEventBridge(bridgeCtx, app, client)
+	stopServerStatus := wailsui.StartServerStatus(bridgeCtx, app, service)
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
+			stopServerStatus()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := client.Close(ctx); err != nil {
@@ -108,6 +111,12 @@ func main() {
 		BackgroundColour: application.NewRGB(28, 37, 57),
 		URL:              "/",
 	})
+	for _, kind := range []events.WindowEventType{events.Common.WindowHide, events.Common.WindowMinimise} {
+		mainWindow.RegisterHook(kind, func(*application.WindowEvent) { wailsui.SetServerStatusSuspended(service, true) })
+	}
+	for _, kind := range []events.WindowEventType{events.Common.WindowShow, events.Common.WindowRestore} {
+		mainWindow.RegisterHook(kind, func(*application.WindowEvent) { wailsui.SetServerStatusSuspended(service, false) })
+	}
 	// Cancelling the close keeps the process alive. The default listener otherwise
 	// destroys the window and quits the client.
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {

@@ -16,6 +16,7 @@ import (
 	"uniclog.io/govts/internal/domain"
 	"uniclog.io/govts/internal/mediasignal"
 	"uniclog.io/govts/internal/protocol"
+	"uniclog.io/govts/internal/serverstatus"
 )
 
 const operationTimeout = 10 * time.Second
@@ -45,9 +46,12 @@ type Service struct {
 	connectionMu     sync.Mutex
 	recentServers    []clientsettings.RecentServer
 	recordedVisit    string
+	serverStatus     *serverstatus.Monitor
 }
 
-func NewService(client *clientapp.App) *Service { return &Service{client: client} }
+func NewService(client *clientapp.App) *Service {
+	return &Service{client: client, serverStatus: serverstatus.NewMonitor()}
+}
 
 // LogDiagnostic receives infrequent browser-side lifecycle events. It accepts
 // bounded text only; callers must not pass SDP, credentials or media content.

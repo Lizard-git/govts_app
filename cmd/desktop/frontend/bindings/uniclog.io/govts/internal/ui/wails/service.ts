@@ -140,6 +140,10 @@ export function SetServerFavorite(address: string, favorite: boolean): $Cancella
     return $Call.ByID(1793569962, address, favorite);
 }
 
+export function SetServerListVisible(consumer: string, visible: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2347220596, consumer, visible);
+}
+
 export function SetTheme(value: string): $CancellablePromise<void> {
     return $Call.ByID(338374198, value);
 }
