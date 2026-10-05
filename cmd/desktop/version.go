@@ -1,13 +1,7 @@
 package main
 
-import (
-	_ "embed"
-	"strings"
-)
-
-//go:embed version.txt
-var rawApplicationVersion string
+import "uniclog.io/govts/internal/appversion"
 
 func applicationVersion() string {
-	return strings.TrimSpace(rawApplicationVersion)
+	return appversion.ClientVersion
 }

@@ -176,7 +176,7 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 		hub.Remove(session.ID)
 		return err
 	}
-	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= appversion.SecureMinimumServer)
+	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= appversion.VoiceBundlesMinimum)
 	mac := auth.AckMAC(ackKey, digest, session.ID, account.JoinLevel, account.Permissions)
 	payload := append([]byte(nil), mac[:]...)
 	payload = binary.BigEndian.AppendUint16(payload, account.JoinLevel)

@@ -4,14 +4,47 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	releaseversion "uniclog.io/govts/version"
 )
 
-// SecureMinimumServerVersion is the oldest server a secure client accepts.
-// The server treats a handshake at this level or newer as able to decode voice bundles.
-const SecureMinimumServerVersion = "0.2.13"
+var release = mustReadRelease()
 
-// SecureMinimumServer is SecureMinimumServerVersion packed into a handshake Sequence.
-var SecureMinimumServer = mustParse(SecureMinimumServerVersion)
+var (
+	ClientVersion        = release.ClientVersion
+	ServerVersion        = release.ServerVersion
+	MinimumServerVersion = release.MinServerVersion
+)
+
+// VoiceBundlesMinimumVersion is the first handshake level supporting voice bundles.
+// This protocol capability threshold must not track the current release minimum.
+const VoiceBundlesMinimumVersion = "0.2.13"
+
+var VoiceBundlesMinimum = mustParse(VoiceBundlesMinimumVersion)
+
+func mustReadRelease() releaseversion.Release {
+	config, err := releaseversion.Read()
+	if err != nil {
+		panic(fmt.Errorf("version/release.json: %w", err))
+	}
+	for _, field := range []struct{ name, value string }{
+		{"clientVersion", config.ClientVersion},
+		{"serverVersion", config.ServerVersion},
+		{"minServerVersion", config.MinServerVersion},
+	} {
+		if _, err := Parse(field.value); err != nil {
+			panic(fmt.Errorf("version/release.json %s: %w", field.name, err))
+		}
+	}
+	minimum := mustParse(config.MinServerVersion)
+	if minimum > mustParse(config.ServerVersion) {
+		panic("version/release.json: minServerVersion exceeds serverVersion")
+	}
+	if minimum < mustParse(VoiceBundlesMinimumVersion) {
+		panic("version/release.json: minServerVersion must support voice bundles")
+	}
+	return config
+}
 
 // Number fits in the existing 32-bit Sequence field of Hello packets.
 // Components are encoded as major:8, minor:8, patch:16.

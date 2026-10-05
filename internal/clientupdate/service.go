@@ -64,7 +64,7 @@ func Initialize(s *Service, app *application.App, version, publicKey string) err
 	s.u = app.Updater
 	s.root, s.stop = context.WithCancel(context.Background())
 	s.view.Current = version
-	s.view.MinServer = appversion.SecureMinimumServerVersion
+	s.view.MinServer = appversion.MinimumServerVersion
 	if result, err := os.ReadFile(filepath.Join(filepath.Dir(s.prefs), "update-recovery-result.txt")); err == nil {
 		s.view.Error = string(result)
 	}

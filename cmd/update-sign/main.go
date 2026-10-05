@@ -16,7 +16,7 @@ func main() {
 	generate := flag.String("generate-key", "", "write a NEW private seed to this file (outside the repository)")
 	public := flag.String("public-key", "", "public key file")
 	binary := flag.String("binary", "", "desktop executable to sign")
-	version := flag.String("version", "", "desktop version")
+	version := flag.String("version", appversion.ClientVersion, "desktop version (defaults to version/release.json)")
 	out := flag.String("out", "", "signed manifest destination")
 	flag.Parse()
 	if err := run(*generate, *public, *binary, *version, *out); err != nil {

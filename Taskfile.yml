@@ -10,10 +10,10 @@ vars:
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
 
 tasks:
-  version:bump:
+  version:prepare:
     internal: true
     cmds:
-      - go run ./cmd/versionbump -version-file cmd/desktop/version.txt -wails-config build/config.yml
+      - go run ./cmd/release-version -wails-config build/config.yml
 
   bindings:
     desc: Generate type-safe Wails bindings for the desktop service
@@ -53,8 +53,9 @@ tasks:
 
   build:dev:
     desc: Build the desktop backend for Wails development mode
-    deps: [bindings, version:bump, windows:resources]
+    deps: [bindings, version:prepare]
     cmds:
+      - task: windows:resources
       # Keep the Vite-backed development executable separate from the
       # standalone application. It only contains the fallback page and must
       # not be mistaken for a distributable build.
@@ -65,8 +66,9 @@ tasks:
 
   build:
     desc: Build the Wails desktop client
-    deps: [frontend:build, version:bump, windows:resources]
+    deps: [frontend:build, version:prepare]
     cmds:
+      - task: windows:resources
       - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s -H windowsgui"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.BINARY_NAME}}.exe ./cmd/desktop
         platforms: [windows]
       - cmd: go build {{if ne .DEV "true"}}-tags production -trimpath -ldflags="-w -s"{{else}}-buildvcs=false -gcflags=all="-l"{{end}} -o bin/{{.BINARY_NAME}} ./cmd/desktop
@@ -89,5 +91,6 @@ tasks:
 
   dev:
     desc: Run the desktop client with Wails/Vite hot reload
+    deps: [version:prepare]
     cmds:
-      - go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - go run github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}} dev -config ./build/config.generated.yml -port {{.VITE_PORT}}

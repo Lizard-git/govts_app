@@ -35,7 +35,7 @@ func Sign(version string, binary []byte, key ed25519.PrivateKey) ([]byte, error)
 		Size:             int64(len(binary)),
 		Digest:           digest[:],
 		Signature:        ed25519.Sign(key, digest[:]),
-		MinServerVersion: appversion.SecureMinimumServerVersion,
+		MinServerVersion: appversion.MinimumServerVersion,
 	}
 	payload, err := json.Marshal(m)
 	if err != nil {
