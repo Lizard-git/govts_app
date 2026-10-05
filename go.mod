@@ -12,7 +12,7 @@ require (
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/rolandhe/go-vad v0.0.0-20260516173913-73b02b0699ec
-	github.com/wailsapp/wails/v3 v3.0.0-beta.26
+	github.com/wailsapp/wails/v3 v3.0.0-beta.28
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 )
