@@ -26,7 +26,7 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Check release version and synchronize Wails metadata
+      - name: Check release version and render Wails configuration
         shell: pwsh
         run: |
           go run ./cmd/release-version -tag "$env:GITHUB_REF_NAME" -wails-config build/config.yml

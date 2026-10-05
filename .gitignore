@@ -10,6 +10,7 @@
 *.syso
 build/windows/icon.ico
 build/windows/icon.icns
+build/config.generated.yml
 bin/
 dist/
 coverage/
