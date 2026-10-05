@@ -26,17 +26,20 @@
 
 - `cmd/server/main.go` запускает голосовой UDP-сервер, локальную консоль
   управления правами и, если не отключён, HTTPS-сервер сигнализации и WebRTC SFU.
-  `cmd/server/version.go` встраивает версию из `version.txt`.
+  Версию сервера получает из `version/release.json` через `internal/appversion/`.
 - `cmd/desktop/main.go` запускает Wails-приложение. Файлы
   `assets_development.go` и `assets_production.go` выбирают способ
   доставки frontend; production-сборка встраивает собранные ресурсы.
-  Desktop-версия также хранится в `cmd/desktop/version.txt`.
+  Версия клиента также хранится в `version/release.json`.
 - `cmd/update-sign/` подписывает desktop EXE и манифест релиза. Закрытый seed
   получает из `UPDATE_SIGNING_KEY`; ключ не хранится в Git. Открытый ключ
   `cmd/desktop/update-public-key.txt` встроен через `update_key.go`.
-- `cmd/versionbump/` обновляет patch-версию для локальных сборок через
-  `Taskfile.yml`. Поэтому локальная сборка может изменить файл версии и
-  `build/config.yml`.
+- `cmd/release-version/` проверяет соответствие тега версии клиента и
+  синхронизирует `info.version` в `build/config.yml` с `version/release.json`.
+  Локальные сборки не увеличивают версии.
+- `version/release.json` содержит `clientVersion`, `serverVersion` и
+  `minServerVersion`; `version/release.go` встраивает файл в бинарники.
+  Параметры редактируются перед релизом и коммитятся до создания тега.
 - `Taskfile.yml` связывает генерацию Wails bindings, сборку frontend,
   режим разработки и сборку desktop. Корневой `package.json` содержит
   npm-обёртки; зависимости и скрипты самого UI находятся в
@@ -187,13 +190,14 @@ WebRTC требуется корректный `-media-advertised-ip`.
   и `npm run build --prefix cmd/desktop/frontend`.
 - `.github/workflows/test.yml` запускает проверки Go в CI.
   `.github/workflows/release.yml` срабатывает на тег `vX.Y.Z`, сверяет
-  его с `cmd/desktop/version.txt`, собирает Windows desktop и Linux
+  его с `clientVersion` в `version/release.json`, собирает Windows desktop и Linux
   server, подписывает desktop через secret `UPDATE_SIGNING_KEY`, загружает
   бинарники, `signature` и `SHA256SUMS` в draft и затем публикует релиз.
   Уже опубликованный релиз под тем же тегом не заменяется.
-- `internal/appversion/` разбирает и сравнивает версии. На стороне клиента
-  минимальная версия сервера передаётся при подключении; серверная версия
-  встраивается из `cmd/server/version.txt`.
+- `internal/appversion/` разбирает и сравнивает версии, проверяет параметры
+  релиза из встроенного `version/release.json`. Минимальная версия сервера
+  используется при подключении клиента и включается в подписанный манифест.
+  Порог поддержки голосовых пакетов задаётся отдельно от требований релиза.
 - `scripts/build-server.ps1`, `deploy-server.ps1` и
   `redeploy-server.sh` — локальные сценарии сборки/развёртывания сервера;
   они не являются частью GitHub Release workflow.
