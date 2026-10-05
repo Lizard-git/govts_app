@@ -35,8 +35,9 @@
   получает из `UPDATE_SIGNING_KEY`; ключ не хранится в Git. Открытый ключ
   `cmd/desktop/update-public-key.txt` встроен через `update_key.go`.
 - `cmd/release-version/` проверяет соответствие тега версии клиента и
-  синхронизирует `info.version` в `build/config.yml` с `version/release.json`.
-  Локальные сборки не увеличивают версии.
+  создаёт `build/config.generated.yml` из шаблона `build/config.yml`, подставляя
+  `clientVersion` из `version/release.json`. Исходный YAML не изменяется,
+  сгенерированный файл исключён из Git. Локальные сборки не увеличивают версии.
 - `version/release.json` содержит `clientVersion`, `serverVersion` и
   `minServerVersion`; `version/release.go` встраивает файл в бинарники.
   Параметры редактируются перед релизом и коммитятся до создания тега.
