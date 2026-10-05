@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Протокол Govts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f5f6fa;--surface:#fff;--ink:#151821;--muted:#5d6475;--line:#e2e5ee;--accent:#4f46e5;--srv:#0d9488;--warn:#d97706;--code:#f0f2f8;--glow:rgba(79,70,229,.12)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0d14;--surface:#131724;--ink:#e8eaf2;--muted:#98a0b6;--line:#252b3d;--accent:#8b85ff;--srv:#2dd4bf;--warn:#fbbf24;--code:#1a1f2e;--glow:rgba(139,133,255,.16)}}
+:root[data-theme="dark"]{--bg:#0b0d14;--surface:#131724;--ink:#e8eaf2;--muted:#98a0b6;--line:#252b3d;--accent:#8b85ff;--srv:#2dd4bf;--warn:#fbbf24;--code:#1a1f2e;--glow:rgba(139,133,255,.16)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 Inter,system-ui,"Segoe UI",sans-serif}
+.hero{position:relative;overflow:hidden;padding:72px 16px 56px;border-bottom:1px solid var(--line);
+  background:radial-gradient(600px 300px at 85% -10%,var(--glow),transparent 70%),radial-gradient(500px 260px at 0% 110%,color-mix(in srgb,var(--srv) 14%,transparent),transparent 70%)}
+.hero-in{max-width:1180px;margin:0 auto}
+.eyebrow{font:600 .75rem "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.hero h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.08;margin:10px 0 14px;letter-spacing:-.02em;font-weight:800}
+.hero h1 span{background:linear-gradient(90deg,var(--accent),var(--srv));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{max-width:720px;color:var(--muted);font-size:1.05rem;margin:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:32px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.kpi b{display:block;font:800 1.4rem Inter,sans-serif}.kpi span{color:var(--muted);font-size:.82rem}
+.layout{max-width:1180px;margin:0 auto;padding:24px 16px 80px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+nav{position:sticky;top:20px;align-self:start;display:flex;flex-direction:column;gap:2px;border-left:1px solid var(--line);padding-left:4px}
+nav a{color:var(--muted);text-decoration:none;font-size:.88rem;padding:5px 12px;border-radius:6px;border-left:2px solid transparent;margin-left:-5px}
+nav a:hover,nav a.on{color:var(--accent);background:var(--glow);border-left-color:var(--accent)}
+main section{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px 28px;margin-bottom:20px}
+h2{font-size:1.35rem;margin:0 0 10px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+h2 .n{font:600 .75rem "JetBrains Mono",monospace;color:var(--accent);background:var(--glow);padding:3px 8px;border-radius:6px}
+h3{font-size:1rem;margin:22px 0 6px}
+.muted{color:var(--muted)}
+code,pre,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:.84em}
+code{background:var(--code);padding:1px 6px;border-radius:5px}
+pre{background:var(--code);border:1px solid var(--line);padding:14px 16px;border-radius:10px;overflow-x:auto;line-height:1.5;margin:12px 0}
+table{width:100%;border-collapse:separate;border-spacing:0;margin:12px 0;font-size:.88rem;display:block;overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+th,td{border-bottom:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{color:var(--muted);font-weight:600;white-space:nowrap;background:var(--code)}
+td:first-child{font-weight:500;white-space:nowrap}
+.note{border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));background:color-mix(in srgb,var(--warn) 9%,var(--surface));padding:10px 14px;border-radius:10px;margin:14px 0}
+.bytes{display:flex;flex-wrap:wrap;gap:4px;margin:14px 0}
+.bytes div{padding:12px 6px;text-align:center;border-radius:8px;font:600 .78rem "JetBrains Mono",monospace;color:#fff;background:#64748b;min-width:70px;transition:transform .15s}
+.bytes div:hover{transform:translateY(-2px)}
+.bytes div small{display:block;opacity:.85;font-weight:400}
+.bytes:not(.rec) div:nth-child(1){background:#6366f1}.bytes:not(.rec) div:nth-child(2){background:#0891b2}.bytes:not(.rec) div:nth-child(3){background:#0d9488}.bytes:not(.rec) div:nth-child(4){background:#d97706}
+.bytes .aad{background:#6366f1}.bytes .enc{background:#0d9488}
+svg text{fill:var(--ink);font:12px "JetBrains Mono",Consolas,monospace}svg .m{fill:var(--muted)}
+ul,ol{padding-left:22px}li{margin:3px 0}
+a{color:var(--accent)}
+footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px}
+@media (max-width:860px){.layout{grid-template-columns:1fr}nav{position:static;flex-direction:row;flex-wrap:wrap;border-left:0;padding:0}nav a{margin:0;border-left:0}main section{padding:18px 16px}}
+.lossflow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin:16px 0}
+.lossflow div{border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:10px;padding:10px 12px;background:var(--code)}
+.lossflow div:nth-child(2){border-top-color:#0891b2}.lossflow div:nth-child(3){border-top-color:var(--srv)}.lossflow div:nth-child(4){border-top-color:var(--warn)}
+.lossflow b{display:block;font-size:.92rem}.lossflow span{color:var(--muted);font-size:.84rem}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-in">
+<div class="eyebrow">Govts · технический справочник</div>
+<h1>Протокол <span>Govts</span></h1>
+<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.3.44, сервер 0.2.16). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
+<div class="kpis">
+<div class="kpi"><b>17 B</b><span>заголовок пакета</span></div>
+<div class="kpi"><b>1200 B</b><span>макс. payload</span></div>
+<div class="kpi"><b>+33 B</b><span>защищённая запись</span></div>
+<div class="kpi"><b>4</b><span>сообщения handshake</span></div>
+<div class="kpi"><b>64</b><span>окно anti-replay</span></div>
+<div class="kpi"><b>20 мс</b><span>кадр Opus</span></div>
+</div></div></header>
+<div class="layout">
+<nav id="toc">
+<a href="#layers">1. Слои</a><a href="#packet">2. Пакет</a><a href="#types">3. Типы</a><a href="#hs">4. Handshake</a><a href="#rec">5. Защищённая запись</a><a href="#srv">6. Сервер</a><a href="#voice">7. Голос</a><a href="#loss">8. Потери</a><a href="#state">9. Состояние</a><a href="#life">10. Жизнь сессии</a><a href="#chat">11. Чат</a><a href="#media">12. Экран</a><a href="#limits">13. Лимиты</a><a href="#gaps">14. Ограничения</a>
+</nav>
+<main>
+
+<section id="layers"><h2><span class="n">01</span>Слои</h2>
+<p>Голос, control и чат идут по одному UDP-сокету (по умолчанию <code>:9000</code>). Демонстрация экрана — отдельный тракт: HTTPS-сигнализация (<code>:9002</code>) и WebRTC (UDP <code>20000–20100</code>).</p>
+<pre>React UI ── Wails service (internal/ui/wails) ── clientapp (lifecycle, reconnect)
+   └─ client (state, jitter, mixer, requests)
+       └─ transport/udp.ClientPacketConn ── DatagramCodec (protocol.SecureDatagramCodec)
+           ══ UDP ══
+       transport/udp.ServerPacketConn ── SecureDatagramCodec
+   └─ voice.ServeUDP (один цикл) ── Hub (сессии, каналы, ревизия) ── persist (SQLite)</pre>
+<p>Граница: <b>VoicePacket</b> — логический пакет; <b>DatagramCodec</b> превращает его в байты провода (шифрует/расшифровывает) с учётом направления и <code>KeyOwnerID</code>.</p>
+
+</section>
+<section id="packet"><h2><span class="n">02</span>Логический пакет <code>VoicePacket</code></h2>
+<p><code>internal/protocol/packet.go</code>. Big-endian.</p>
+<div class="bytes">
+<div style="flex:1">Type<small>1 B</small></div><div style="flex:3">SessionID<small>8 B, uint64</small></div><div style="flex:2">Sequence<small>4 B, uint32</small></div><div style="flex:2">RequestID<small>4 B, uint32</small></div><div style="flex:6">Payload<small>0..1200 B</small></div>
+</div>
+<table>
+<tr><th>Поле</th><th>Смысл</th></tr>
+<tr><td>Type</td><td>Тип пакета (см. §3). Неизвестный тип — ошибка декодирования.</td></tr>
+<tr><td>SessionID</td><td>Сессия отправителя. Выдаётся сервером, crypto/rand, ненулевая. 0 — только у auth- и status-пакетов. В пересылаемом голосе — ID <i>говорящего</i>.</td></tr>
+<tr><td>Sequence</td><td>Для голоса — номер кадра (jitter buffer). В auth-пакетах переиспользуется как версия протокола.</td></tr>
+<tr><td>RequestID</td><td>Корреляция запрос/ответ для control-пакетов; ключ дедупликации в <code>voice.RequestCache</code>. Для голоса 0.</td></tr>
+<tr><td>Payload</td><td>Зависит от типа. Голос — непрозрачный Opus-кадр; сервер его не декодирует.</td></tr>
+</table>
+<p>Итого 17 B заголовка + до 1200 B payload = до 1217 B открытого пакета.</p>
+
+</section>
+<section id="types"><h2><span class="n">03</span>Типы пакетов</h2>
+<table>
+<tr><th>Группа</th><th>Типы</th><th>Направление / обработка</th></tr>
+<tr><td>Auth</td><td>AuthInit, AuthChallenge, AuthFinish, AuthAck, ServerVersionTooOld</td><td>Открытым текстом; внутри защищённой записи запрещены. Сервер — <code>voice.Authenticator</code>.</td></tr>
+<tr><td>Голос</td><td>Voice, VoiceBundle</td><td>C→S Voice; S→C Voice или VoiceBundle (текущий + предыдущий кадр отправителя, если клиент поддерживает).</td></tr>
+<tr><td>Liveness</td><td>Heartbeat / HeartbeatAck, Disconnect, SessionInvalid</td><td>Heartbeat каждые 5 с, ACK-дедлайн 3 с.</td></tr>
+<tr><td>Каналы</td><td>JoinChannel / JoinChannelAck</td><td>Смена канала, проверка <code>min_join_level</code> и <code>max_users</code>.</td></tr>
+<tr><td>Состояние</td><td>StateSnapshotRequest / Ack, StateEvent</td><td>Постраничный snapshot + live-события с ревизией.</td></tr>
+<tr><td>Аудио-состояние</td><td>AudioState / Ack</td><td>mute/deafen, рассылается остальным через события.</td></tr>
+<tr><td>Модерация</td><td>Kick, Ban, Drag, ModerationAck, AccountPrivileges</td><td>Проверка прав <code>kick/ban/drag</code>; Privileges — пуш при изменении прав из консоли.</td></tr>
+<tr><td>Экран</td><td>MediaCredentialRequest / Ack</td><td>32-байтный bearer-токен для HTTPS-сигнализации.</td></tr>
+<tr><td>Чат</td><td>ChatRequest / ChatAck, ChatChanged</td><td>Отдельная очередь на сервере (§10).</td></tr>
+<tr><td>Статус</td><td>ServerStatusRequest / Ack</td><td>Без сессии и шифрования; только при <code>-public-status</code>.</td></tr>
+<tr><td>Ошибки</td><td>Error</td><td>Текст ошибки; с SessionID=0 может идти открыто.</td></tr>
+<tr><td>Legacy</td><td>Hello / HelloAck</td><td>Анонимный вход отключён: на Hello сервер отвечает «client upgrade required».</td></tr>
+</table>
+
+</section>
+<section id="hs"><h2><span class="n">04</span>Handshake</h2>
+<p><code>internal/auth/handshake.go</code>, клиент — <code>internal/client/secure_handshake.go</code>, сервер — <code>internal/voice/auth.go</code>.</p>
+<svg viewBox="0 0 640 300" width="100%" role="img" aria-label="Диаграмма handshake">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker></defs>
+<text x="40" y="18">Клиент</text><text x="545" y="18">Сервер</text>
+<line x1="70" y1="28" x2="70" y2="290" stroke="currentColor" opacity=".3"/><line x1="570" y1="28" x2="570" y2="290" stroke="currentColor" opacity=".3"/>
+<g style="color:var(--accent)"><line x1="72" y1="55" x2="566" y2="55" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
+<text x="90" y="48">AuthInit: name, clientEd25519Pub, clientX25519Eph, nonceC(16)</text><text x="90" y="70" class="m">Sequence = версия; RequestID случайный ненулевой</text>
+<g style="color:var(--srv)"><line x1="568" y1="110" x2="74" y2="110" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
+<text x="90" y="103">AuthChallenge: serverEd25519Pub, serverX25519Eph, nonceS(16), sigS(T)</text><text x="90" y="125" class="m">клиент: verify sigS, затем TOFU-pin по host:port</text>
+<g style="color:var(--accent)"><line x1="72" y1="165" x2="566" y2="165" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
+<text x="90" y="158">AuthFinish: sigC(T)</text><text x="90" y="180" class="m">сервер: verify, FindOrCreateAccount (SQLite), бан, права</text>
+<g style="color:var(--srv)"><line x1="568" y1="220" x2="74" y2="220" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
+<text x="90" y="213">AuthAck: SessionID, joinLevel, permissions, HMAC(ackKey)</text><text x="90" y="235" class="m">обе стороны: X25519 → HKDF → c2s, s2c, ack</text>
+<rect x="72" y="255" width="496" height="26" rx="4" fill="var(--srv)" opacity=".18"/><text x="210" y="273">далее только AES-256-GCM записи</text>
+</svg>
+<h3>Transcript T</h3>
+<pre>T = H("govts-auth-v1" ‖ RequestID ‖ version ‖ AuthInit целиком ‖
+      serverEd25519Pub ‖ serverX25519Eph ‖ nonceS)</pre>
+<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. Сервер требует версию клиента не ниже <code>0.2.5</code>.</p>
+<h3>Вывод ключей</h3>
+<pre>shared = X25519(eph_priv_own, eph_pub_peer)
+c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
+                              info = "govts-udp-v1 traffic and ack"), 3 × 32 B</pre>
+<ul>
+<li>Ключи направлений разные → свои счётчики, пара key+nonce не повторяется.</li>
+<li>Эфемерные X25519 новые на каждое подключение → forward secrecy для завершённых сессий.</li>
+<li>Клиент ставит трафиковые ключи только после проверки HMAC в AuthAck.</li>
+</ul>
+<h3>Состояние незавершённого handshake на сервере</h3>
+<ul>
+<li>Ключ — <code>(IP:port, RequestID)</code>, живёт 30 с.</li>
+<li>Повтор идентичного AuthInit/AuthFinish → тот же challenge/ack (UDP-ретраи безопасны). Тот же RequestID с другими данными → отказ.</li>
+<li>Лимиты: 60 новых handshake/мин с IP, 512 одновременных pending.</li>
+<li>Следствие: если NAT поменяет порт во время ретрая, handshake начнётся заново.</li>
+</ul>
+<h3>TOFU</h3>
+<p>Клиент хранит <code>%APPDATA%\Govts\voice-pins.json</code>: <code>host:port → serverEd25519Pub</code>. Первый контакт закрепляет ключ, смена ключа — отказ подключения. Идентичность клиента — seed в <code>client.seed</code> (Base64, не зашифрован); учётная запись на сервере = публичный ключ, имя — только отображение.</p>
+
+</section>
+<section id="rec"><h2><span class="n">05</span>Защищённая запись на проводе</h2>
+<p><code>internal/protocol/secure.go</code>. Шифруется <b>весь</b> VoicePacket, включая его 17-байтный заголовок.</p>
+<div class="bytes rec">
+<div class="aad" style="flex:1">0xFF<small>1 B</small></div><div class="aad" style="flex:3">KeyOwnerID<small>8 B</small></div><div class="aad" style="flex:3">Counter<small>8 B</small></div><div class="enc" style="flex:8">Ciphertext(VoicePacket)<small>17..1217 B</small></div><div class="enc" style="flex:2">GCM tag<small>16 B</small></div>
+</div>
+<p class="muted">Фиолетовый — внешний заголовок (открыт, но входит в AAD). Зелёный — шифртекст. Накладные 33 B, максимум на проводе 1250 B.</p>
+<table>
+<tr><th>Элемент</th><th>Детали</th></tr>
+<tr><td>0xFF</td><td>Маркер записи. Без него датаграмма разбирается как открытый пакет и принимается только для auth/status/Error(SessionID=0); на сервере ещё Hello (ради ответа «upgrade required»).</td></tr>
+<tr><td>KeyOwnerID</td><td>Сессия, чьим ключом защищена запись. При пересылке S→C — это <i>получатель</i>, а внутренний SessionID — говорящий. Клиент отвергает запись с чужим KeyOwnerID.</td></tr>
+<tr><td>Counter</td><td>uint64, свой на каждое направление, начинается с 1, растёт перед отправкой; при переполнении — ошибка. Nonce GCM = <code>00000000 ‖ Counter</code> (12 B).</td></tr>
+<tr><td>Anti-replay</td><td>Максимум принятого счётчика + окно 64. Новый больший — принимается; внутри окна и не виденный — принимается (переупорядочивание UDP); повтор или старше окна — отказ. Окно двигается только после успешного GCM Open и проверки внутреннего пакета.</td></tr>
+</table>
+<h3>Проверки после расшифровки</h3>
+<ol>
+<li>есть security context для KeyOwnerID;</li>
+<li>внутренний SessionID соответствует ожидаемой сессии;</li>
+<li>auth-пакеты внутри записи запрещены;</li>
+<li>адрес клиента (IP:port) совпадает с адресом активной сессии (на сервере);</li>
+<li>тип и размер внутреннего пакета допустимы.</li>
+</ol>
+<p>Любой отказ → <code>ErrRejectedDatagram</code>: пакет отбрасывается, причина агрегируется в <code>logging.NewFailures</code>, цикл приёма продолжает работу. Ошибки сокета — фатальны.</p>
+
+</section>
+<section id="srv"><h2><span class="n">06</span>Сервер: цикл обработки</h2>
+<p><code>internal/voice/server.go</code> — <code>ServeUDP</code>. Один goroutine читает сокет и обрабатывает пакеты последовательно.</p>
+<pre>ReadPacket (decode + decrypt)
+ ├─ rejected            → счётчик причин, continue
+ ├─ ServerStatusRequest → лимитер (100/с глобально, 120/мин на IP, ≤4096 IP) → Ack
+ ├─ ChatRequest         → chatWorker.enqueue (очередь 128, ≤4 на пользователя)
+ └─ остальное, под policyGate (sync.Mutex):
+     ├─ Hello           → Error "client upgrade required"
+     ├─ AuthInit/Finish → Authenticator.Handle
+     ├─ Kick/Ban/Drag   → HandleModeration
+     └─ HandlePacket    → Voice, Heartbeat, Disconnect, JoinChannel,
+                          Snapshot, MediaCredential, AudioState</pre>
+<p>Параллельно работают:</p>
+<ul>
+<li><code>DispatchEvents</code> — забирает события из outbox Hub (ёмкость 256) и рассылает их.</li>
+<li><code>CleanupLoopWithPolicyGate</code> — удаляет сессии без активности 30 с, снимает ключи из codec и RequestCache.</li>
+<li><code>chatWorker</code> — SQLite-операции чата вне голосового цикла.</li>
+<li>HTTPS media-сервер и консоль — берут тот же <code>policyGate</code>.</li>
+</ul>
+<div class="note">Узкое место: <code>policyGate</code> берётся и для голосовых пакетов, а <code>AuthFinish</code> делает SQLite-запрос под ним. См. <code>project-review.md</code> §1.1.</div>
+<h3>Hub</h3>
+<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии.</p>
+<h3>RequestCache</h3>
+<p><code>internal/voice/cache.go</code>. Ключ — (SessionID, RequestID). Повтор control-запроса получает сохранённый ответ, мутация не выполняется дважды. Клиент повторяет запрос до ответа или таймаута (<code>internal/client/request.go</code>).</p>
+
+</section>
+<section id="voice"><h2><span class="n">07</span>Голосовой тракт</h2>
+<h3>Отправка (клиент)</h3>
+<pre>malgo capture (PCM) → RNNoise (опц.) → VAD/voice gate (опц.: level | vad | hybrid,
+pre-roll 60 мс, hangover 300 мс) → Opus encode, кадр 20 мс
+→ VoicePacket{Type=Voice, SessionID=own, Sequence=n++} → AES-GCM(c2s) → UDP</pre>
+<p>Без микрофона клиент остаётся в канале в состоянии mute и продолжает принимать звук.</p>
+<h3>Сервер</h3>
+<ol>
+<li>Проверка: сессия существует, адрес совпадает (иначе пакет молча отброшен).</li>
+<li>Учёт прибытия (<code>RecordVoicePacket</code>) для статистики потерь.</li>
+<li>Получатели = все сессии в канале отправителя, кроме него самого (deafen учитывается по событиям/клиенту).</li>
+<li>При включённом <code>-voice-redundancy</code> и клиенте ≥ 0.2.13 — <code>VoiceBundle</code> с текущим и предыдущим кадром, иначе обычный Voice (подробно — раздел 08).</li>
+<li>На каждого получателя — отдельная запись AES-GCM(s2c получателя), KeyOwnerID = получатель.</li>
+</ol>
+<h3>Приём (клиент)</h3>
+<pre>receive loop → разделение voice / control
+→ jitter buffer на отправителя (глубина 3 кадра, сортировка по Sequence,
+  до 3 подряд замаскированных кадров, очистка потока после 30 с тишины)
+→ Opus decoder на отправителя (битый кадр отбрасывается, декодер пересоздаётся)
+→ mixer: очередь ≤ 5 кадров (100 мс) на отправителя, вытеснение старых,
+  громкость/mute конкретного участника
+→ malgo playback, тик 20 мс</pre>
+
+</section>
+<section id="loss"><h2><span class="n">08</span>Устойчивость к потерям</h2>
+<p>Голос идёт по UDP без ретрансмиссий: ждать повторную отправку дольше, чем длится кадр (20 мс), бессмысленно. Поэтому потери компенсируются на трёх уровнях. Исходная мотивация — DPI на части маршрутов отбрасывает 10–20 % датаграмм в направлении server → client (<code>readme_docs/fixes/udp-downlink-packet-loss.md</code>).</p>
+
+<div class="lossflow">
+<div><b>1. Redundancy</b><span>сервер повторяет кадр N−1 в датаграмме N</span></div>
+<div><b>2. Jitter buffer</b><span>переупорядочивание, дубли, подтверждение пропуска</span></div>
+<div><b>3. Opus PLC</b><span>синтез до 3 потерянных кадров подряд</span></div>
+<div><b>4. Обрыв</b><span>длиннее 60 мс — тишина до следующего кадра</span></div>
+</div>
+
+<h3>Уровень 1. Server-side redundancy: <code>PacketVoiceBundle</code></h3>
+<p><code>internal/voice/media.go</code>, <code>internal/protocol/voice_bundle.go</code>, <code>Hub.SwapLastVoiceFrame</code>.</p>
+<pre>Payload VoiceBundle:
+u8  version = 1
+u8  frame_count = 1..2
+repeat frame_count:
+    u32 sequence
+    u16 payload_length
+    u8  opus[payload_length]        // сначала N−1, затем N</pre>
+<ol>
+<li>Сервер хранит у каждой сессии-отправителя последний кадр <code>{sequence, opus}</code> (копию байтов).</li>
+<li>На кадр N: если сохранённый кадр — ровно N−1, собирается bundle [N−1, N]. Дубликат, перестановка или разрыв sequence → bundle не собирается, уходит обычный <code>Voice</code>.</li>
+<li>Bundle — это <b>одна</b> датаграмма: оба кадра лежат в payload одного <code>VoicePacket</code>, поэтому на них действует тот же лимит payload 1200 B: <code>2 + (6 + len(N−1)) + (6 + len(N)) ≤ 1200</code>. При 24 кбит/с кадр ≈ 60 B, bundle ≈ 134 B — запас почти десятикратный. Если лимит всё же превышен (очень высокий bitrate), сервер не делит bundle на части, а отправляет обычный <code>Voice</code> только с кадром N; копия N−1 в этот раз не передаётся (<code>newVoiceBundlePacket</code> → <code>RouteVoicePacket</code>).</li>
+<li>Получатели с поддержкой (клиент ≥ <code>0.2.13</code>, по версии из AuthInit → <code>Session.VoiceBundles</code>) получают bundle, остальные — обычный <code>Voice</code>.</li>
+<li>Клиент раскладывает оба кадра в jitter buffer отправителя; уже полученная копия N−1 отбрасывается как дубликат.</li>
+</ol>
+<p>Число датаграмм в секунду не растёт (в отличие от двойной отправки, которую DPI с rate limit может прорежать так же), растёт только размер: +~6 B заголовка кадра + Opus-кадр ≈ 60 B при 24 кбит/с.</p>
+<div class="note"><b>Выключено по умолчанию.</b> Включается флагом сервера <code>-voice-redundancy</code> (<code>cmd/server/main.go:39</code>). Без него работают только уровни 2–4.</div>
+<h3>Фактический размер пакета</h3>
+<p>Профиль по умолчанию (<code>internal/domain/channel.go:61</code>): 48 кГц, моно, кадр 20 мс, <b>24 кбит/с</b> → Opus-кадр в среднем 24 000 × 0,02 / 8 ≈ <b>60 B</b>. Это номинальная оценка: при VBR отдельные кадры меньше или больше, реальные размеры не замерялись.</p>
+<table>
+<tr><th>Слой</th><th><code>Voice</code> (1 кадр)</th><th><code>VoiceBundle</code> (2 кадра)</th></tr>
+<tr><td>Opus</td><td>60</td><td>60 + 60</td></tr>
+<tr><td>Служебные поля bundle (2 + 6 + 6)</td><td>—</td><td>14</td></tr>
+<tr><td><b>Payload</b></td><td><b>60</b></td><td><b>134</b></td></tr>
+<tr><td>+ заголовок VoicePacket 17</td><td>77</td><td>151</td></tr>
+<tr><td>+ защищённая запись 33 (маркер 1, KeyOwnerID 8, Counter 8, GCM tag 16)</td><td><b>110</b> (UDP payload)</td><td><b>184</b> (UDP payload)</td></tr>
+<tr><td>+ UDP 8 + IPv4 20</td><td><b>138 B</b></td><td><b>212 B</b></td></tr>
+<tr><td>IPv6 (+20)</td><td>158 B</td><td>232 B</td></tr>
+</table>
+<p>Клиент → сервер — всегда обычный <code>Voice</code> (≈ 138 B). Сервер → клиент — 138 B без redundancy или ≈ 212 B с bundle.</p>
+<h3>Трафик</h3>
+<p>50 пакетов/с (кадр каждые 20 мс), на уровне IP:</p>
+<table>
+<tr><th>Поток</th><th>Пакет</th><th>Скорость</th></tr>
+<tr><td>Uplink говорящего</td><td>138 B</td><td>≈ 55 кбит/с</td></tr>
+<tr><td>Downlink на одного говорящего, без redundancy</td><td>138 B</td><td>≈ 55 кбит/с</td></tr>
+<tr><td>Downlink на одного говорящего, с bundle</td><td>212 B</td><td>≈ 85 кбит/с (+54 %)</td></tr>
+</table>
+<ul>
+<li>Полезного звука — 24 кбит/с, ещё ≈ 30 кбит/с занимают заголовки: при маленьких кадрах их доля велика.</li>
+<li>Исходящий трафик сервера: N × (N − 1) × поток при N одновременно говорящих в канале. Например, 5 говорящих с bundle ≈ 1,7 Мбит/с.</li>
+<li>Пока VAD / voice gate фиксирует тишину, кадры не отправляются — средний трафик заметно ниже пикового.</li>
+</ul>
+<h3>Верхняя граница bitrate</h3>
+<table>
+<tr><th>Bitrate канала</th><th>Opus-кадр</th><th>Что происходит</th></tr>
+<tr><td>≤ 236 кбит/с</td><td>≤ 590 B</td><td>bundle помещается в 1200 B</td></tr>
+<tr><td>236–480 кбит/с</td><td>590–1200 B</td><td>bundle не помещается → обычный <code>Voice</code>, без копии N−1</td></tr>
+<tr><td>&gt; 480 кбит/с</td><td>&gt; 1200 B</td><td>не помещается даже один кадр — пакет, вероятно, будет отклонён при кодировании</td></tr>
+</table>
+<div class="note"><b>Несоответствие:</b> проверка профиля канала допускает до 510 кбит/с (<code>internal/domain/channel.go:77</code>), а один кадр при 510 кбит/с — 1275 B, больше лимита payload. Как <code>pion/opus</code> ограничивает размер кадра, не проверено. Разумно ограничить bitrate ≈ 480 кбит/с, а для работы redundancy — ≈ 236 кбит/с.</div>
+
+<h3>Оценка эффекта</h3>
+<p>Кадр теряется безвозвратно, только если потеряны и его датаграмма, и следующая (с копией). При независимых потерях с вероятностью <i>p</i>:</p>
+<table class="ptable">
+<tr><th>Потери датаграмм <i>p</i></th><th>Без redundancy</th><th>С redundancy (<i>p²</i>)</th><th>Из них скроет PLC</th></tr>
+<tr><td>5 %</td><td>5 %</td><td>0,25 %</td><td>почти все</td></tr>
+<tr><td>10 %</td><td>10 %</td><td>1 %</td><td>одиночные и пары</td></tr>
+<tr><td>20 %</td><td>20 %</td><td>4 %</td><td>серии ≤ 3 кадров</td></tr>
+</table>
+<p class="muted">При пакетных (burst) потерях результат хуже p²: серия из двух и более подряд потерянных датаграмм восстанавливается лишь частично. Цена — до +20 мс эффективной задержки на ожидание копии, она укладывается в окно jitter buffer (3 кадра ≈ 60 мс).</p>
+
+<h3>Уровень 2. Jitter buffer</h3>
+<p><code>internal/client/jitter.go</code>, отдельный экземпляр на каждый <code>SenderID</code>, <code>DefaultJitterDepth = 3</code>.</p>
+<ul>
+<li><b>Старт:</b> воспроизведение начинается, когда накоплено 3 кадра (или по таймеру тиков).</li>
+<li><b>Переупорядочивание:</b> кадры хранятся в map по Sequence и выдаются строго по порядку; сравнение через <code>int32(a−b) &lt; 0</code> корректно при переполнении uint32.</li>
+<li><b>Дубликаты</b> (в том числе копии из bundle) — счётчик <code>Duplicates</code>, отброс. <b>Опоздавшие</b> (Sequence уже проигран) — <code>TooOld</code>, отброс.</li>
+<li><b>Подтверждение потери:</b> пропуск считается потерей, только когда в буфере набралось ≥ depth более поздних кадров либо истекли depth тиков по 20 мс без нужного кадра. Так кадр, ещё способный прийти, не объявляется потерянным раньше времени.</li>
+<li>При подтверждённом пропуске длиной <i>d</i>: <code>Lost += d</code>, в поток вставляется <code>min(d, 3)</code> заглушек <code>MediaFrame{Missing: true}</code>, курсор переходит к ближайшему имеющемуся кадру.</li>
+</ul>
+<pre>пришли:   41 42 __ 44 45 46        (43 потерян)
+выдано:   41 42 [43 Missing] 44 45 46
+пришли:   50 __ __ __ __ __ 56     (пропуск 5)
+выдано:   50 [51 M][52 M][53 M] 56  (54–55 не синтезируются: обрыв)</pre>
+
+<h3>Уровень 3. Opus PLC</h3>
+<p><code>internal/client/decode.go</code>, <code>internal/audio/opus.go</code> → <code>OpusDecoder.ConcealLoss()</code> → <code>pion/opus Decoder.DecodePLC</code>.</p>
+<ul>
+<li>Обычный кадр — <code>Decode(data)</code>; Missing — <code>ConcealLoss()</code> <b>того же</b> декодера отправителя: PLC экстраполирует из его внутреннего состояния, а следующий настоящий кадр декодируется с сохранённым контекстом.</li>
+<li>PLC-кадр идёт дальше как обычный PCM-кадр с исходными SenderID/Sequence/Duration — микшер получает ровно один кадр на каждые 20 мс, шкала времени не сжимается.</li>
+<li>Если у отправителя ещё нет декодера (потеря до первого кадра) — заглушка пропускается (<code>errLossNotConcealed</code>).</li>
+<li>Битый Opus-кадр не роняет поток: кадр отбрасывается, декодер этого отправителя пересоздаётся.</li>
+</ul>
+
+<h3>Уровень 4. Длинный разрыв</h3>
+<p><code>maxConcealedFrames = 3</code>: дольше 60 мс речь не синтезируется — это давало бы «булькающий» звук. Остаток пропуска — тишина до следующего настоящего кадра. Потерю последнего кадра перед паузой обнаружить нельзя (нет следующего Sequence), и это допустимо: voice gate отправляет hangover 300 мс, хвост реплики не обрезается.</p>
+
+<h3>Ограничение задержки при перегрузе</h3>
+<ul>
+<li>Очередь микшера ≤ 5 кадров (100 мс) на отправителя; при переполнении вытесняется самый старый кадр — задержка не накапливается после всплеска.</li>
+<li>Поток отправителя без кадров 30 с удаляется вместе с его jitter buffer и декодером.</li>
+</ul>
+
+<h3>Измерение потерь</h3>
+<table>
+<tr><th>Направление</th><th>Как измеряется</th></tr>
+<tr><td>client → server</td><td>Сервер ведёт окно прибытия Sequence за 35 с (≤ 4096 записей, дубли не считаются). Heartbeat клиента несёт в <code>Sequence</code>: младшие 14 бит — сколько кадров отправлено за ~30 с, старшие — последний Sequence (16 бит). Сервер отвечает в <code>HeartbeatAck.Sequence</code> долей потерь в сотых процента (0–10000).</td></tr>
+<tr><td>server → client</td><td>Счётчики jitter buffer клиента: <code>Lost</code>, <code>Concealed</code>, <code>Duplicates</code>, <code>TooOld</code> и гистограмма длин пропусков (<code>onGap</code>).</td></tr>
+</table>
+<p>Обе стороны отображаются в окне статистики «Подключено» (<code>internal/client/connection_stats.go</code>, <code>ConnectionStatsPopup.tsx</code>).</p>
+
+<h3>Чего нет</h3>
+<ul>
+<li>Opus in-band FEC (LBRR) и DTX не используются; redundancy реализована на уровне протокола.</li>
+<li>Глубина jitter buffer фиксированная (3), адаптации под измеренный jitter нет.</li>
+<li>Направление client → server не защищено redundancy: потерянный на uplink кадр теряется для всех получателей и маскируется только их PLC.</li>
+<li>Redundancy только для голоса; control-пакеты защищены повторами по RequestID, события — пересинхронизацией по ревизии.</li>
+</ul>
+</section>
+<section id="state"><h2><span class="n">09</span>Синхронизация состояния</h2>
+<ol>
+<li>После AuthAck клиент запрашивает <b>snapshot</b>: постраничный (<code>internal/protocol/snapshot.go</code>, каждая страница ≤ 1200 B) — сервер, каналы, участники, потоки экрана, ревизия. Snapshot v6 содержит <code>user_id</code>.</li>
+<li>Клиент атомарно заменяет своё состояние (<code>client.State</code>), UI получает глубокую копию <code>ClientViewState</code>.</li>
+<li>Далее <b>StateEvent</b> (join/move/leave, audio state, экраны, права), каждое с ревизией. Применяется, только если ревизия = текущая + 1.</li>
+<li>Разрыв ревизий или ошибка применения → <code>requestResync</code> → новый snapshot.</li>
+<li>События best effort. Потерю последнего события ловит проверка ревизии каждые 5 с (метаданные в heartbeat/опросе).</li>
+<li>Generation-счётчик клиента отсекает ответы и события от предыдущей сессии после reconnect.</li>
+</ol>
+
+</section>
+<section id="life"><h2><span class="n">10</span>Жизненный цикл сессии</h2>
+<table>
+<tr><th>Фаза</th><th>Что происходит</th></tr>
+<tr><td>Connect</td><td>Handshake → AuthAck → snapshot → JoinChannel в канал с <code>"default": true</code> (или первый неограниченный).</td></tr>
+<tr><td>Работа</td><td>Heartbeat 5 с; нет ACK за 3 с — признак потери связи. Любой валидный пакет обновляет активность сессии на сервере.</td></tr>
+<tr><td>Потеря связи</td><td><code>clientapp/reconnect.go</code>: backoff 1 → 2 → 4 → 4… с; каждый раз <b>новый handshake и новая сессия</b>; повторный вход в default-канал.</td></tr>
+<tr><td>Замена</td><td>Новая аутентификация того же аккаунта/endpoint заменяет старую сессию: её ключи и кэш удаляются.</td></tr>
+<tr><td>Timeout</td><td>Сервер удаляет сессию после 30 с без пакетов, рассылает событие ухода.</td></tr>
+<tr><td>Disconnect</td><td>Явный пакет Disconnect → немедленное удаление.</td></tr>
+<tr><td>Kick/Ban</td><td>Сессия удаляется; бан помечает аккаунт в SQLite и проверяется при каждом AuthFinish.</td></tr>
+</table>
+
+</section>
+<section id="chat"><h2><span class="n">11</span>Чат</h2>
+<ul>
+<li>Адресат: текущий канал или личный диалог с <code>user_id</code> (в том числе офлайн).</li>
+<li>Операции <code>ChatRequest</code>: send, history (курсор, вперёд/назад), dialogs, read-позиция. Текст ≤ 1000 B UTF-8, страница ≤ 1200 B.</li>
+<li>Сервер: очередь 128, ≤ 4 ожидающих на пользователя, таймаут 3 с. Права проверяются под policyGate, SQLite — вне голосового цикла.</li>
+<li>Идемпотентность: уникальная пара <code>(sender_id, client_id)</code> — повтор после reconnect не создаёт дубль.</li>
+<li><code>ChatChanged</code> — уведомление «есть новое»; клиент дополнительно опрашивает раз в 5 с для восстановления потерь.</li>
+</ul>
+
+</section>
+<section id="media"><h2><span class="n">12</span>Демонстрация экрана</h2>
+<pre>Клиент ── MediaCredentialRequest (UDP, защищённо) ──► Hub выдаёт 32 B credential
+Клиент ── HTTPS POST /media/publish|subscribe|stop|unsubscribe ──► media.HTTPHandler
+          Headers: X-Govts-Session: &lt;id&gt;, Authorization: Bearer base64url(credential)
+          Body: JSON (mediasignal), ≤ 256 KiB, неизвестные поля запрещены
+media.Manager (Pion SFU) ── SDP answer ──► клиент
+WebRTC DTLS-SRTP, VP8 (+ опциональное аудио), UDP 20000–20100</pre>
+<ul>
+<li>TLS-сертификат самоподписанный (<code>govts-media.crt/.key</code>); клиент сверяет SHA-256 отпечаток — отдельный TOFU, хранится в <code>clientsettings</code>.</li>
+<li>Доступ к потоку проверяется по состоянию Hub (тот же канал, права); раз в секунду идёт сверка подписок.</li>
+<li>Публичный адрес ICE задаётся <code>-media-advertised-ip</code>; TURN/TCP fallback нет.</li>
+</ul>
+
+</section>
+<section id="limits"><h2><span class="n">13</span>Лимиты и константы</h2>
+<table>
+<tr><th>Параметр</th><th>Значение</th><th>Где</th></tr>
+<tr><td>Payload</td><td>1200 B</td><td>protocol</td></tr>
+<tr><td>Датаграмма на проводе</td><td>1250 B</td><td>protocol/secure</td></tr>
+<tr><td>Аудиокадр</td><td>20 мс Opus</td><td>audio</td></tr>
+<tr><td>Jitter buffer</td><td>3 кадра, маскировка ≤ 3</td><td>client/jitter.go</td></tr>
+<tr><td>Voice redundancy</td><td>выкл., <code>-voice-redundancy</code>; клиент ≥ 0.2.13</td><td>voice/media.go</td></tr>
+<tr><td>PLC подряд</td><td>≤ 3 кадра (60 мс)</td><td>client/jitter.go</td></tr>
+<tr><td>Очередь микшера</td><td>5 кадров на отправителя</td><td>client/mixer.go</td></tr>
+<tr><td>Heartbeat / ACK</td><td>5 с / 3 с</td><td>client</td></tr>
+<tr><td>Session timeout</td><td>30 с</td><td>server</td></tr>
+<tr><td>Reconnect backoff</td><td>1, 2, 4, 4… с</td><td>clientapp</td></tr>
+<tr><td>Pending handshake</td><td>512, TTL 30 с, 60/мин на IP</td><td>voice/auth.go</td></tr>
+<tr><td>Anti-replay окно</td><td>64</td><td>protocol/secure</td></tr>
+<tr><td>Event outbox</td><td>256</td><td>voice/events.go</td></tr>
+<tr><td>Чат</td><td>очередь 128, 4 на пользователя, текст 1000 B</td><td>voice/chat.go</td></tr>
+<tr><td>Status</td><td>100/с глобально, 120/мин на IP, 4096 IP</td><td>voice/server_status.go</td></tr>
+<tr><td>Signaling body</td><td>256 KiB</td><td>media/http.go</td></tr>
+<tr><td>SQLite</td><td>1 соединение, WAL, busy_timeout 5 с</td><td>persist/store.go</td></tr>
+</table>
+
+</section>
+<section id="gaps"><h2><span class="n">14</span>Что протокол не делает</h2>
+<ul>
+<li>Не E2E: сервер расшифровывает и видит голос и control.</li>
+<li>Не скрывает: IP/порты, размеры и тайминг пакетов, KeyOwnerID и Counter, имя/ключи/версию в handshake.</li>
+<li>Нет rekey внутри долгой сессии — новые ключи только при новом handshake.</li>
+<li>Нет защиты первого TOFU-контакта от активного MITM и нет процедуры ротации ключа сервера.</li>
+<li>Нет adaptive jitter и Opus FEC/DTX; потери компенсируют VoiceBundle (если включён) и PLC — см. раздел 08.</li>
+<li>Собственная криптосхема (не TLS/Noise), внешнего аудита и fuzz-тестов wire format нет.</li>
+<li>Открытая регистрация: любой новый ключ создаёт аккаунт.</li>
+</ul>
+</section>
+</main>
+</div>
+<footer>Govts · справочник протокола · readme_docs/review</footer>
+<script>(function(){const l=[...document.querySelectorAll("#toc a")];const o=new IntersectionObserver(e=>{e.forEach(x=>{if(x.isIntersecting){l.forEach(a=>a.classList.toggle("on",a.getAttribute("href")==="#"+x.target.id))}})},{rootMargin:"-30% 0px -60% 0px"});document.querySelectorAll("main section").forEach(s=>o.observe(s))})();</script>
+</body>
+</html>
