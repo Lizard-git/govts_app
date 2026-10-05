@@ -16,11 +16,6 @@ $oldCgoEnabled = $env:CGO_ENABLED
 try {
     Push-Location $repoRoot
     try {
-        & go run ./cmd/versionbump -version-file cmd/server/version.txt
-        if ($LASTEXITCODE -ne 0) {
-            throw "server version bump failed with exit code $LASTEXITCODE"
-        }
-
         $env:GOOS = 'linux'
         $env:GOARCH = 'amd64'
         $env:CGO_ENABLED = '0'
