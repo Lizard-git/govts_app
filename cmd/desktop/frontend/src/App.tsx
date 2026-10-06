@@ -12,6 +12,7 @@ import {ParticipantRow} from "./features/participants/ParticipantRow";
 import {RecentServers} from "./features/connection/RecentServers";
 import {rememberServerAddress} from "./features/connection/ConnectionViews";
 import {Icon} from "./components/Icon";
+import {Select, type SelectOption} from "./components/Select";
 import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
@@ -484,6 +485,24 @@ function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean
     </section>;
 }
 
+const vadModeOptions: SelectOption[] = [
+    {value: "level", label: "По громкости"},
+    {value: "vad", label: "Распознавание речи"},
+    {value: "hybrid", label: "Гибридный"},
+];
+
+function deviceOptions(devices: AudioDeviceDTO[]): SelectOption[] {
+    return [
+        {value: "", label: "Системное устройство по умолчанию"},
+        ...devices.map((device) => ({
+            value: device.id,
+            label: device.name,
+            detail: device.isDefault ? "Системное по умолчанию" : undefined,
+            selectedLabel: device.isDefault ? `${device.name} — системное по умолчанию` : device.name,
+        })),
+    ];
+}
+
 function SettingsOverlay({onClose, children}: {onClose: () => void; children: ReactNode}) {
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
@@ -571,12 +590,12 @@ function SettingsPage({view, invoke, theme, setTheme, updates}: {
                     {devicesError && <div className="device-error" role="alert">Не удалось получить аудиоустройства: {devicesError}
                         <button className="text-button" onClick={() => void loadDevices()}>Повторить</button>
                     </div>}
-                    <section className="settings-card"><h3>Микрофон</h3><DeviceSelect id="capture-device"
-                                                                                      label="Устройство захвата звука"
-                                                                                      devices={devices?.capture ?? []}
-                                                                                      value={devices?.selectedCapture ?? ""}
-                                                                                      disabled={!devices || devicePending}
-                                                                                      onChange={(id) => selectDevice("capture", id)}/>
+                    <section className="settings-card"><h3>Микрофон</h3><Select id="capture-device"
+                                                                                 label="Устройство захвата звука"
+                                                                                 value={devices?.selectedCapture ?? ""}
+                                                                                 disabled={!devices || devicePending}
+                                                                                 options={deviceOptions(devices?.capture ?? [])}
+                                                                                 onChange={(id) => void selectDevice("capture", id)}/>
                         {!view.audio.captureAvailable && <p className="device-hint">Микрофон не найден. Выберите устройство, когда оно появится. Пока его нет, вы остаётесь в канале без передачи голоса.</p>}
                         <SettingToggle title="Шумоподавление"
                                        description="Убирает постоянный фоновый шум до анализа голосовой активности."
@@ -591,9 +610,11 @@ function SettingsPage({view, invoke, theme, setTheme, updates}: {
                                        description="Микрофон передаёт звук, когда обнаружена речь."
                                        checked={view.audio.vadEnabled}
                                        onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
-                        <ModeSelect value={view.audio.vadMode} disabled={!view.audio.vadEnabled}
-                                    open={view.audio.vadOpen}
-                                    onChange={(value) => invoke(() => desktopAPI.setVADMode(value))}/>
+                        <Select id="vad-mode" className="mode-select" label="Режим" value={view.audio.vadMode}
+                                disabled={!view.audio.vadEnabled}
+                                options={vadModeOptions}
+                                labelExtra={<span className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? "Передача" : "Ожидание речи"}</span>}
+                                onChange={(value) => void invoke(() => desktopAPI.setVADMode(value))}/>
                         <div className="sensitivity-setting">
                             <div><span className="setting-label">Порог передачи звука</span>
                                 <output>{Math.round((1 - sensitivity) * 100)}%</output>
@@ -603,21 +624,20 @@ function SettingsPage({view, invoke, theme, setTheme, updates}: {
                                        onSensitivityChange={setSensitivity}
                                        onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
                     </section>
-                    <section className="settings-card compact-card"><h3>Воспроизведение</h3><DeviceSelect id="playback-device"
-                                                                                                          label="Устройство вывода звука"
-                                                                                                          devices={devices?.playback ?? []}
-                                                                                                          value={devices?.selectedPlayback ?? ""}
-                                                                                                          disabled={!devices || devicePending}
-                                                                                                          onChange={(id) => selectDevice("playback", id)}/><SettingToggle
+                    <section className="settings-card compact-card"><h3>Воспроизведение</h3><Select id="playback-device"
+                                                                                                         label="Устройство вывода звука"
+                                                                                                         value={devices?.selectedPlayback ?? ""}
+                                                                                                         disabled={!devices || devicePending}
+                                                                                                         options={deviceOptions(devices?.playback ?? [])}
+                                                                                                         onChange={(id) => void selectDevice("playback", id)}/><SettingToggle
                         title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
                         checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>
                 </>}
                 {section === "interface" && <section className="settings-card"><h3>Интерфейс</h3>
-                    <label className="theme-setting"><span className="setting-label">Тема оформления</span>
-                        <select value={theme} onChange={(event) => void invoke(() => setTheme(event.target.value))}>
-                            <option value="system">Системная</option><option value="dark">Тёмная</option><option value="light">Светлая</option>
-                        </select><small>Системная тема следует настройкам Windows.</small>
-                    </label>
+                    <Select id="theme" label="Тема оформления" value={theme}
+                            options={[{value: "system", label: "Системная"}, {value: "dark", label: "Тёмная"}, {value: "light", label: "Светлая"}]}
+                            hint="Системная тема следует настройкам Windows."
+                            onChange={(value) => void invoke(() => setTheme(value))}/>
                     <SettingToggle title="Сворачивать в трей при закрытии"
                                    description="Крестик прячет окно в трей, приложение и голос продолжают работать. Без этой настройки крестик завершает Govts."
                                    checked={closeToTray}
@@ -796,97 +816,6 @@ function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivit
             <canvas ref={canvasRef} role="img" aria-label="Индикатор передаваемого и отсечённого звука"/>
         </div>
     </>;
-}
-
-function DeviceSelect({id, label, devices, value, disabled, onChange}: {
-    id: string;
-    label: string;
-    devices: AudioDeviceDTO[];
-    value: string;
-    disabled: boolean;
-    onChange: (id: string) => Promise<void>
-}) {
-    const [open, setOpen] = useState(false);
-    const selected = devices.find((device) => device.id === value);
-    const selectedName = selected ? `${selected.name}${selected.isDefault ? " — системное по умолчанию" : ""}` : "Системное устройство по умолчанию";
-    useEffect(() => {
-        if (!open) return;
-        const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-        };
-        window.addEventListener("keydown", closeOnEscape, true);
-        return () => {
-            window.removeEventListener("keydown", closeOnEscape, true);
-        };
-    }, [open]);
-    const choose = (deviceID: string) => {
-        setOpen(false);
-        if (deviceID !== value) void onChange(deviceID);
-    };
-    return <div className="device-select"><span className="setting-label" id={`${id}-label`}>{label}</span>
-        <div className="device-select-control">
-            <button id={id} className="device-select-trigger" type="button" disabled={disabled}
-                    aria-labelledby={`${id}-label ${id}`} aria-haspopup="listbox" aria-expanded={open}
-                    onClick={() => setOpen((current) => !current)}><span>{selectedName}</span></button>
-            {open && <div className="device-options" role="listbox" aria-labelledby={`${id}-label`}>
-                <button type="button" role="option" aria-selected={value === ""}
-                        className={value === "" ? "selected" : ""} onClick={() => choose("")}>Системное устройство по
-                    умолчанию
-                </button>
-                {devices.map((device) => <button type="button" role="option" aria-selected={device.id === value}
-                                                 className={device.id === value ? "selected" : ""}
-                                                 onClick={() => choose(device.id)}
-                                                 key={device.id}>{device.name}{device.isDefault ?
-                    <small>Системное по умолчанию</small> : null}</button>)}</div>}</div>
-    </div>;
-}
-
-function ModeSelect({value, disabled, open, onChange}: {
-    value: string;
-    disabled: boolean;
-    open: boolean;
-    onChange: (value: string) => Promise<void>;
-}) {
-    const [optionsOpen, setOptionsOpen] = useState(false);
-    const options = [
-        {value: "level", label: "По громкости"},
-        {value: "vad", label: "Распознавание речи"},
-        {value: "hybrid", label: "Гибридный"},
-    ];
-    const selectedName = options.find((option) => option.value === value)?.label ?? value;
-    useEffect(() => {
-        if (!optionsOpen) return;
-        const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            setOptionsOpen(false);
-        };
-        window.addEventListener("keydown", closeOnEscape, true);
-        return () => window.removeEventListener("keydown", closeOnEscape, true);
-    }, [optionsOpen]);
-    const choose = (nextValue: string) => {
-        setOptionsOpen(false);
-        if (nextValue !== value) void onChange(nextValue);
-    };
-    return <div className="device-select mode-select">
-        <div className="mode-select-heading"><span className="setting-label" id="vad-mode-label">Режим</span><span
-            className={`gate-indicator ${open ? "open" : ""}`}>{open ? "Передача" : "Ожидание речи"}</span></div>
-        <div className="device-select-control">
-            <button id="vad-mode" className="device-select-trigger" type="button" disabled={disabled}
-                    aria-labelledby="vad-mode-label vad-mode" aria-haspopup="listbox" aria-expanded={optionsOpen}
-                    onClick={() => setOptionsOpen((current) => !current)}><span>{selectedName}</span></button>
-            {optionsOpen && <div className="device-options" role="listbox" aria-labelledby="vad-mode-label">
-                {options.map((option) => <button type="button" role="option" aria-selected={option.value === value}
-                                                 className={option.value === value ? "selected" : ""}
-                                                 onClick={() => choose(option.value)}
-                                                 key={option.value}>{option.label}</button>)}
-            </div>}
-        </div>
-    </div>;
 }
 
 function SettingToggle({title, description, checked, onChange}: {
