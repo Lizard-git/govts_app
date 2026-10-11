@@ -1,4 +1,8 @@
 /* Цвета, шрифт и подложка сцены задаются в theme.css. */
+:root {
+  --channel-browser-width: 210px;
+  --channel-info-width: 245px;
+}
 .app-shell { color: var(--text); }
 .app-shell svg { display: block; width: 18px; height: 18px; flex-shrink: 0; }
 .info-toggle { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
@@ -294,6 +298,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .participants-strip { gap: 12px; }
 }
 @media (max-width: 850px) {
+  :root { --channel-browser-width: 185px; }
   .channels-layout, .channels-layout.info-hidden { grid-template-columns: var(--channel-browser-width, 185px) 6px minmax(0, 1fr); position: relative; }
   .channel-detail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; width: var(--channel-info-width, 245px); box-shadow: -10px 0 35px color-mix(in srgb, var(--shadow) 20%, transparent); }
   .info-divider { position: absolute; top: 0; bottom: 0; right: var(--channel-info-width, 245px); z-index: 6; width: 6px; }
