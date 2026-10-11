@@ -30,7 +30,7 @@ h2{font-size:1.35rem;margin:0 0 10px;letter-spacing:-.01em;display:flex;align-it
 h2 .n{font:600 .75rem "JetBrains Mono",monospace;color:var(--accent);background:var(--glow);padding:3px 8px;border-radius:6px}
 h3{font-size:1rem;margin:22px 0 6px}
 .muted{color:var(--muted)}
-code,pre,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:.84em}
+code,pre{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:.84em}
 code{background:var(--code);padding:1px 6px;border-radius:5px}
 pre{background:var(--code);border:1px solid var(--line);padding:14px 16px;border-radius:10px;overflow-x:auto;line-height:1.5;margin:12px 0}
 table{width:100%;border-collapse:separate;border-spacing:0;margin:12px 0;font-size:.88rem;display:block;overflow-x:auto;border:1px solid var(--line);border-radius:10px}
@@ -43,7 +43,7 @@ td:first-child{font-weight:500;white-space:nowrap}
 .bytes div{padding:12px 6px;text-align:center;border-radius:8px;font:600 .78rem "JetBrains Mono",monospace;color:#fff;background:#64748b;min-width:70px;transition:transform .15s}
 .bytes div:hover{transform:translateY(-2px)}
 .bytes div small{display:block;opacity:.85;font-weight:400}
-.bytes:not(.rec) div:nth-child(1){background:#6366f1}.bytes:not(.rec) div:nth-child(2){background:#0891b2}.bytes:not(.rec) div:nth-child(3){background:#0d9488}.bytes:not(.rec) div:nth-child(4){background:#d97706}
+.bytes.pkt div:nth-child(1){background:#6366f1}.bytes.pkt div:nth-child(2){background:#0891b2}.bytes.pkt div:nth-child(3){background:#0d9488}.bytes.pkt div:nth-child(4){background:#d97706}
 .bytes .aad{background:#6366f1}.bytes .enc{background:#0d9488}
 svg text{fill:var(--ink);font:12px "JetBrains Mono",Consolas,monospace}svg .m{fill:var(--muted)}
 ul,ol{padding-left:22px}li{margin:3px 0}
@@ -71,7 +71,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 </div></div></header>
 <div class="layout">
 <nav id="toc">
-<a href="#layers">1. Слои</a><a href="#packet">2. Пакет</a><a href="#types">3. Типы</a><a href="#hs">4. Handshake</a><a href="#rec">5. Защищённая запись</a><a href="#srv">6. Сервер</a><a href="#voice">7. Голос</a><a href="#loss">8. Потери</a><a href="#state">9. Состояние</a><a href="#life">10. Жизнь сессии</a><a href="#chat">11. Чат</a><a href="#media">12. Экран</a><a href="#limits">13. Лимиты</a><a href="#gaps">14. Ограничения</a>
+<a class="on" href="#layers">1. Слои</a><a href="#packet">2. Пакет</a><a href="#types">3. Типы</a><a href="#hs">4. Handshake</a><a href="#rec">5. Защищённая запись</a><a href="#srv">6. Сервер</a><a href="#voice">7. Голос</a><a href="#loss">8. Потери</a><a href="#state">9. Состояние</a><a href="#life">10. Жизнь сессии</a><a href="#chat">11. Чат</a><a href="#media">12. Экран</a><a href="#limits">13. Лимиты</a><a href="#gaps">14. Ограничения</a>
 </nav>
 <main>
 
@@ -88,7 +88,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 </section>
 <section id="packet"><h2><span class="n">02</span>Логический пакет <code>VoicePacket</code></h2>
 <p><code>internal/protocol/packet.go</code>. Big-endian.</p>
-<div class="bytes">
+<div class="bytes pkt">
 <div style="flex:1">Type<small>1 B</small></div><div style="flex:3">SessionID<small>8 B, uint64</small></div><div style="flex:2">Sequence<small>4 B, uint32</small></div><div style="flex:2">RequestID<small>4 B, uint32</small></div><div style="flex:6">Payload<small>0..1200 B</small></div>
 </div>
 <table>
@@ -162,7 +162,7 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 </section>
 <section id="rec"><h2><span class="n">05</span>Защищённая запись на проводе</h2>
 <p><code>internal/protocol/secure.go</code>. Шифруется <b>весь</b> VoicePacket, включая его 17-байтный заголовок.</p>
-<div class="bytes rec">
+<div class="bytes">
 <div class="aad" style="flex:1">0xFF<small>1 B</small></div><div class="aad" style="flex:3">KeyOwnerID<small>8 B</small></div><div class="aad" style="flex:3">Counter<small>8 B</small></div><div class="enc" style="flex:8">Ciphertext(VoicePacket)<small>17..1217 B</small></div><div class="enc" style="flex:2">GCM tag<small>16 B</small></div>
 </div>
 <p class="muted">Фиолетовый — внешний заголовок (открыт, но входит в AAD). Зелёный — шифртекст. Накладные 33 B, максимум на проводе 1250 B.</p>
