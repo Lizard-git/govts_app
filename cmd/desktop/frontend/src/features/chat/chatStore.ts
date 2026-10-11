@@ -147,15 +147,16 @@ export class ChatStore {
                 signal.addEventListener("abort", aborted, {once: true});
             });
             check(); this.lastRequestAt = Date.now();
+            let page: ChatPageDTO;
             try {
-                const page = await desktopAPI.chat({context: this.context, operation, kind: target?.kind ?? "", targetId: target?.id ?? "0", cursor: "0", forward: false, clientId: "", text: "", ...extra});
+                page = await desktopAPI.chat({context: this.context, operation, kind: target?.kind ?? "", targetId: target?.id ?? "0", cursor: "0", forward: false, clientId: "", text: "", ...extra});
                 check();
-                if (page.userId !== this.userId) throw new Error(errorCode("chat-account-changed"));
-                return page;
             } catch (e) {
                 if (/лимит запросов чата/i.test(chatError(e))) this.pausedUntil = Date.now() + 60000;
                 throw e;
             }
+            if (page.userId !== this.userId) throw new Error(errorCode("chat-account-changed"));
+            return page;
         };
         const result = this.requestTail.then(run, run);
         this.requestTail = result.catch(() => undefined);

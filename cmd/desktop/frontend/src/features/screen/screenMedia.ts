@@ -112,10 +112,16 @@ export class ScreenMediaController {
         const pc = new RTCPeerConnection({iceServers: []});
         const pending = {pc, capture};
         this.pendingPublisher = pending;
+        const requireCaptureTrack = (track: MediaStreamTrack | undefined): MediaStreamTrack => {
+            if (!track) throw new Error(errorCode("screen-no-track"));
+            return track;
+        };
+        const ensureStillPending = () => {
+            if (this.pendingPublisher !== pending) throw new DOMException(errorCode("screen-aborted"), "AbortError");
+        };
         let streamID = "";
         try {
-            const captureTrack = capture.getVideoTracks()[0];
-            if (!captureTrack) throw new Error(errorCode("screen-no-track"));
+            const captureTrack = requireCaptureTrack(capture.getVideoTracks()[0]);
             const checkCapture = () => {
                 if (captureTrack.readyState === "ended") throw new DOMException(errorCode("screen-capture-ended"), "AbortError");
             };
@@ -158,7 +164,7 @@ export class ScreenMediaController {
             await waitForConnected(pc);
             checkCurrent();
             checkCapture();
-            if (this.pendingPublisher !== pending) throw new DOMException(errorCode("screen-aborted"), "AbortError");
+            ensureStillPending();
             this.pendingPublisher = undefined;
             const active = {streamID, pc, capture};
             this.publisher = active;
