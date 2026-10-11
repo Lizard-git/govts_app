@@ -66,7 +66,7 @@ h2 { margin: 0; font-size: 1.25rem; }
 .connection-card h1 { margin-bottom: 12px; font-size: 1.875rem; }
 .lead { margin-bottom: 28px; color: var(--muted); line-height: 1.55; }
 .connection-card form { display: grid; gap: 18px; }
-.connection-card label { display: grid; gap: 8px; font-size: 0.8125rem; font-weight: 700; }
+.connection-card form > label { display: grid; gap: 8px; font-size: 0.8125rem; font-weight: 700; }
 .connection-card input { width: 100%; padding: 14px 15px; }
 .connection-card input::placeholder { color: var(--muted); }
 .primary-button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 11px; color: var(--on-accent); background: var(--accent); font-weight: 800; cursor: pointer; }
@@ -241,6 +241,11 @@ h2 { margin: 0; font-size: 1.25rem; }
 .settings-card h3 { margin-bottom: 22px; font-size: 1.0625rem; }
 .setting-block { margin-bottom: 22px; }
 .setting-label { display: block; margin-bottom: 8px; font-size: 0.8125rem; font-weight: 700; }
+.locale-setting { display: grid; gap: 8px; margin-bottom: 22px; }
+.locale-setting p { margin: 0; color: var(--muted); font-size: 0.75rem; line-height: 1.45; font-weight: 400; }
+.locale-switch { display: flex; flex-wrap: wrap; gap: 8px; }
+.locale-switch button { min-height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--card-strong); cursor: pointer; font-weight: 700; }
+.locale-switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .app-select { display: grid; gap: 7px; }
 .app-select-control { position: relative; min-width: 0; }
 .app-select-trigger { display: flex; width: 100%; min-width: 0; min-height: 46px; align-items: center; gap: 12px; padding: 0 14px; cursor: pointer; text-align: left; }

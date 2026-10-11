@@ -1,14 +1,15 @@
 import {desktopAPI, logDiagnostic} from "../../api";
+import {errorCode, mediaKeyError} from "../../locales";
 import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
 import {defaultScreenProfile, type ScreenProfile} from "./screenProfiles";
 
 function waitForGathering(pc: RTCPeerConnection): Promise<void> {
     if (pc.iceGatheringState === "complete") return Promise.resolve();
     return new Promise((resolve, reject) => {
-        const timeout = window.setTimeout(() => finish(new Error("Истекло время подготовки WebRTC offer")), 10_000);
+        const timeout = window.setTimeout(() => finish(new Error(errorCode("screen-offer-timeout"))), 10_000);
         const changed = () => {
             if (pc.iceGatheringState === "complete") finish();
-            else if (pc.connectionState === "closed") finish(new DOMException("Операция отменена", "AbortError"));
+            else if (pc.connectionState === "closed") finish(new DOMException(errorCode("screen-aborted"), "AbortError"));
         };
         const finish = (error?: Error) => {
             window.clearTimeout(timeout);
@@ -24,18 +25,18 @@ function waitForGathering(pc: RTCPeerConnection): Promise<void> {
 async function localOffer(pc: RTCPeerConnection): Promise<{type: string; sdp: string}> {
     await pc.setLocalDescription(await pc.createOffer());
     await waitForGathering(pc);
-    if (!pc.localDescription?.sdp) throw new Error("Не удалось создать WebRTC offer");
+    if (!pc.localDescription?.sdp) throw new Error(errorCode("screen-offer-failed"));
     return {type: "offer", sdp: pc.localDescription.sdp};
 }
 
 function waitForConnected(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<void> {
     if (pc.connectionState === "connected") return Promise.resolve();
     return new Promise((resolve, reject) => {
-        const timeout = window.setTimeout(() => finish(new Error("Не удалось установить WebRTC media-соединение. Проверьте UDP-порты сервера и advertised IP")), timeoutMs);
+        const timeout = window.setTimeout(() => finish(new Error(errorCode("screen-connect-failed"))), timeoutMs);
         const changed = () => {
             if (pc.connectionState === "connected") finish();
             if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-                finish(new Error("WebRTC media-соединение не установлено. Проверьте UDP-порты сервера и advertised IP"));
+                finish(new Error(errorCode("screen-connect-closed")));
             }
         };
         const finish = (error?: Error) => {
@@ -49,14 +50,14 @@ function waitForConnected(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<vo
 
 function waitForRemoteVideo(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<MediaStream> {
     return new Promise((resolve, reject) => {
-        const timeout = window.setTimeout(() => finish(undefined, new Error("Не удалось получить видеотрек демонстрации")), timeoutMs);
+        const timeout = window.setTimeout(() => finish(undefined, new Error(errorCode("screen-video-timeout"))), timeoutMs);
         const onTrack = (event: RTCTrackEvent) => {
             if (event.track.kind !== "video") return;
             finish(event.streams[0] ?? new MediaStream([event.track]));
         };
         const onConnectionStateChanged = () => {
             if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-                finish(undefined, new Error("WebRTC media-соединение закрылось до получения видеотрека"));
+                finish(undefined, new Error(errorCode("screen-video-closed")));
             }
         };
         const finish = (stream?: MediaStream, error?: Error) => {
@@ -74,7 +75,7 @@ function waitForRemoteVideo(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<
 async function ensureTrusted(): Promise<void> {
     const identity = await desktopAPI.mediaServerIdentity();
     if (identity.trusted) return;
-    if (identity.known) throw new Error(`Ключ media-сервера изменился. Новый отпечаток: ${identity.fingerprint}`);
+    if (identity.known) throw new Error(mediaKeyError(identity.fingerprint));
     await desktopAPI.trustMediaServer(identity.fingerprint);
 }
 
@@ -89,10 +90,10 @@ export class ScreenMediaController {
 
     async publish(onEnded: () => void, profile: ScreenProfile = defaultScreenProfile, isCurrent: () => boolean = () => true): Promise<string> {
         if (this.publisher) return this.publisher.streamID;
-        if (this.picking || this.pendingPublisher) throw new Error("Демонстрация уже запускается");
+        if (this.picking || this.pendingPublisher) throw new Error(errorCode("screen-already-starting"));
         const generation = ++this.publishGeneration;
         const checkCurrent = () => {
-            if (generation !== this.publishGeneration || !isCurrent()) throw new DOMException("Операция отменена", "AbortError");
+            if (generation !== this.publishGeneration || !isCurrent()) throw new DOMException(errorCode("screen-aborted"), "AbortError");
         };
         // Keep the picker in the direct click call chain: some WebViews require user activation.
         this.picking = true;
@@ -114,9 +115,9 @@ export class ScreenMediaController {
         let streamID = "";
         try {
             const captureTrack = capture.getVideoTracks()[0];
-            if (!captureTrack) throw new Error("Источник не предоставил видеотрек");
+            if (!captureTrack) throw new Error(errorCode("screen-no-track"));
             const checkCapture = () => {
-                if (captureTrack.readyState === "ended") throw new DOMException("Захват завершён", "AbortError");
+                if (captureTrack.readyState === "ended") throw new DOMException(errorCode("screen-capture-ended"), "AbortError");
             };
             captureTrack.onended = () => pc.close();
             captureTrack.contentHint = profile.contentHint;
@@ -157,7 +158,7 @@ export class ScreenMediaController {
             await waitForConnected(pc);
             checkCurrent();
             checkCapture();
-            if (this.pendingPublisher !== pending) throw new DOMException("Операция отменена", "AbortError");
+            if (this.pendingPublisher !== pending) throw new DOMException(errorCode("screen-aborted"), "AbortError");
             this.pendingPublisher = undefined;
             const active = {streamID, pc, capture};
             this.publisher = active;

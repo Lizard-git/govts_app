@@ -64,6 +64,10 @@ export function Kick(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(2418434406, sessionID);
 }
 
+export function Locale(): $CancellablePromise<string> {
+    return $Call.ByID(3067415634);
+}
+
 /**
  * LogDiagnostic receives infrequent browser-side lifecycle events. It accepts
  * bounded text only; callers must not pass SDP, credentials or media content.
@@ -114,6 +118,10 @@ export function SetCloseToTray(value: boolean): $CancellablePromise<void> {
 
 export function SetDeafened(value: boolean): $CancellablePromise<void> {
     return $Call.ByID(56765554, value);
+}
+
+export function SetLocale(value: string): $CancellablePromise<void> {
+    return $Call.ByID(2546414418, value);
 }
 
 export function SetMicrophoneGain(value: number): $CancellablePromise<void> {

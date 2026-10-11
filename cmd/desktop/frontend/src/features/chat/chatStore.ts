@@ -1,4 +1,5 @@
 import {desktopAPI, type ChatDialogDTO, type ChatMessageDTO, type ChatPageDTO, type ChatRequestDTO} from "../../api";
+import {errorCode} from "../../locales";
 
 export type ChatTarget = {kind: "channel" | "direct"; id: string};
 export type PendingMessage = {clientId: string; text: string; sentAtMS: number; state: "sending" | "error"; error?: string};
@@ -62,7 +63,7 @@ export class ChatStore {
     }
     dispose() { this.disposed = true; this.lifecycle.abort(); window.clearInterval(this.timer); this.listeners.clear(); }
     prepareUpdate() {
-        if ([...this.conversations.values()].some((c) => c.pending.length > 0)) throw new Error("В чате есть неподтверждённые сообщения. Отправьте или удалите их перед обновлением.");
+        if ([...this.conversations.values()].some((c) => c.pending.length > 0)) throw new Error(errorCode("chat-pending-refresh"));
         const drafts: Record<string,string> = {...this.restoredDrafts};
         for (const [key,c] of this.conversations) { if (c.draft) drafts[key]=c.draft; else delete drafts[key]; }
         localStorage.setItem(`sonoryx.updateDrafts:${this.context}`, JSON.stringify(drafts));
@@ -126,7 +127,7 @@ export class ChatStore {
     }
     setDraft(target: ChatTarget, text: string) {
         const c = this.conversation(target);
-        if (!c.draft && text && [...this.conversations.values()].filter((v) => v.draft).length >= 32) c.error = "Сохранено 32 черновика; отправьте или очистите один из них";
+        if (!c.draft && text && [...this.conversations.values()].filter((v) => v.draft).length >= 32) c.error = errorCode("chat-draft-limit");
         else c.draft = limitDraft(text);
         this.notify();
     }
@@ -134,14 +135,14 @@ export class ChatStore {
     private async request(operation: string, target?: ChatTarget, extra: Partial<ChatRequestDTO> = {}): Promise<ChatPageDTO> {
         const epoch = this.epoch, signal = this.lifecycle.signal;
         const check = () => {
-            if (this.disposed || !this.connected || epoch !== this.epoch || signal.aborted) throw new Error("Сессия чата завершена");
+            if (this.disposed || !this.connected || epoch !== this.epoch || signal.aborted) throw new Error(errorCode("chat-session-ended"));
         };
         const run = async () => {
             check();
-            if (Date.now() < this.pausedUntil) throw new Error("Лимит запросов чата; повторите позже");
+            if (Date.now() < this.pausedUntil) throw new Error(errorCode("chat-rate-limit"));
             const delay = Math.max(0, this.lastRequestAt + 1000 - Date.now());
             if (delay) await new Promise<void>((resolve, reject) => {
-                const aborted = () => { window.clearTimeout(timer); reject(new Error("Сессия чата завершена")); };
+                const aborted = () => { window.clearTimeout(timer); reject(new Error(errorCode("chat-session-ended"))); };
                 const timer = window.setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, delay);
                 signal.addEventListener("abort", aborted, {once: true});
             });
@@ -149,7 +150,7 @@ export class ChatStore {
             try {
                 const page = await desktopAPI.chat({context: this.context, operation, kind: target?.kind ?? "", targetId: target?.id ?? "0", cursor: "0", forward: false, clientId: "", text: "", ...extra});
                 check();
-                if (page.userId !== this.userId) throw new Error("Учётная запись чата изменилась");
+                if (page.userId !== this.userId) throw new Error(errorCode("chat-account-changed"));
                 return page;
             } catch (e) {
                 if (/лимит запросов чата/i.test(chatError(e))) this.pausedUntil = Date.now() + 60000;
@@ -248,7 +249,7 @@ export class ChatStore {
         const c = this.conversation(target);
         if (retry?.state === "sending") return;
         if (!retry && [...this.conversations.values()].reduce((sum, v) => sum + v.pending.length, 0) >= 32) {
-            c.error = "Слишком много неподтверждённых сообщений"; this.notify(); return;
+            c.error = errorCode("chat-too-many-pending"); this.notify(); return;
         }
         const pending: PendingMessage = retry ?? {clientId: crypto.randomUUID().replace(/-/g, ""), text, sentAtMS: Date.now(), state: "sending"};
         pending.state = "sending"; pending.error = undefined;

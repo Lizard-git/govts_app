@@ -5,19 +5,18 @@ import {desktopAPI} from "../../api";
 import {ScreenMediaController} from "./screenMedia";
 import type {ScreenStats} from "./screenStats";
 import {Icon} from "../../components/Icon";
+import {errorText, rawError} from "../../locales";
+import {useLocale} from "../../locales/Locale";
 
-function errorText(error: unknown): string {
-    return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
-}
-
-function bitrateText(value: number): string {
-    return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(2)} Мбит/с` : `${Math.round(value / 1000)} Кбит/с`;
+function bitrateText(value: number, m: ReturnType<typeof useLocale>["m"]): string {
+    return value >= 1_000_000 ? m.screen.mbps((value / 1_000_000).toFixed(2)) : m.screen.kbps(String(Math.round(value / 1000)));
 }
 
 export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; ownerName: string}) {
+    const {m} = useLocale();
     const videoRef = useRef<HTMLVideoElement>(null);
     const controller = useRef<ScreenMediaController | null>(null);
-    const [status, setStatus] = useState("Подключение…");
+    const [status, setStatus] = useState<"connecting" | "left" | "live" | "failed">("connecting");
     const [resolution, setResolution] = useState("");
     const [error, setError] = useState("");
     const [fullscreen, setFullscreen] = useState(false);
@@ -35,7 +34,7 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
             const snapshot = await desktopAPI.snapshot();
             const stream = (snapshot.screenStreams ?? []).find((item) => item.id === streamID);
             if (!stream || stream.channelId !== snapshot.channelId) {
-                setStatus("Просмотр завершён: вы покинули канал");
+                setStatus("left");
                 await close();
                 return false;
             }
@@ -50,12 +49,12 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
                     videoRef.current.srcObject = remote;
                     await videoRef.current.play();
                 }
-                setStatus("В эфире");
+                setStatus("live");
             } catch (reason) {
-                if (!cancelled) { setError(errorText(reason)); setStatus("Ошибка подключения"); }
+                if (!cancelled) { setError(rawError(reason)); setStatus("failed"); }
             }
         })();
-        const offState = desktopAPI.onStateChanged(() => void validateMembership().catch((reason) => setError(errorText(reason))));
+        const offState = desktopAPI.onStateChanged(() => void validateMembership().catch((reason) => setError(rawError(reason))));
         return () => {
             cancelled = true;
             offState();
@@ -76,14 +75,15 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
         await WailsWindow.ToggleFullscreen();
         setFullscreen(await WailsWindow.IsFullscreen());
     };
+    const statusText = status === "left" ? m.screen.leftChannel : status === "live" ? m.screen.live : status === "failed" ? m.screen.connectError : m.screen.connecting;
+    const statsText = stats ? m.screen.viewerLine(stats.fps.toFixed(0), bitrateText(stats.bitrate, m), stats.packetsLost, stats.lossSampleAvailable ? `${stats.lossPercent.toFixed(1)}%` : m.screen.lossUnknown, stats.rttMs.toFixed(0), stats.jitterMs.toFixed(0), stats.frames, stats.framesDropped) + (stats.freezeCount ? m.screen.freezes(stats.freezeCount, (stats.freezeDurationMs / 1000).toFixed(1)) : "") : "";
     return <main className="screen-viewer-window">
         <header className="screen-viewer-toolbar">
-            <div><strong>{ownerName}</strong><span>{status}{resolution ? ` · ${resolution}` : ""}
-                {stats ? ` · ${stats.fps.toFixed(0)} FPS · ${bitrateText(stats.bitrate)} · потеряно ${stats.packetsLost} (${stats.lossSampleAvailable ? `${stats.lossPercent.toFixed(1)}%` : "нет данных"}) · RTT ${stats.rttMs.toFixed(0)} мс · jitter ${stats.jitterMs.toFixed(0)} мс · кадры ${stats.frames}, сброшено ${stats.framesDropped}${stats.freezeCount ? ` · зависания ${stats.freezeCount} / ${(stats.freezeDurationMs / 1000).toFixed(1)} с` : ""}` : ""}</span></div>
-            <button onClick={() => void toggleFullscreen()}>{fullscreen ? "Восстановить окно" : "Во весь экран"}</button>
-            <button onClick={() => void close()}>Закрыть</button>
+            <div><strong>{ownerName}</strong><span>{statusText}{resolution ? ` · ${resolution}` : ""}{statsText}</span></div>
+            <button onClick={() => void toggleFullscreen()}>{fullscreen ? m.screen.restore : m.screen.fullscreen}</button>
+            <button onClick={() => void close()}>{m.screen.close}</button>
         </header>
-        {error && <div className="screen-viewer-error" role="alert">{error}</div>}
+        {error && <div className="screen-viewer-error" role="alert">{errorText(error, m)}</div>}
         <video ref={videoRef} autoPlay muted playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={(event) => {
             const video = event.currentTarget;
             setResolution(`${video.videoWidth}×${video.videoHeight}`);
@@ -94,18 +94,19 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
 export function ScreenStageTile({stream, ownerName, local, connected, onError}: {
     stream: ScreenStreamDTO; ownerName: string; local: boolean; connected: boolean; onError: (message: string) => void;
 }) {
+    const {m} = useLocale();
     const [pending, setPending] = useState(false);
     const watch = async () => {
         if (pending) return;
         setPending(true);
         try { await desktopAPI.openScreenWindow(stream.id, ownerName); }
-        catch (reason) { onError(errorText(reason)); }
+        catch (reason) { onError(rawError(reason)); }
         finally { setPending(false); }
     };
-    return <div className="stage-screen" aria-label={`Демонстрация: ${ownerName}`}>
+    return <div className="stage-screen" aria-label={m.screen.tile(ownerName)}>
         <span className="stage-screen-icon"><Icon name="screen"/></span>
-        <span className="stage-screen-name" title={`Экран — ${ownerName}`}>Экран — {ownerName}</span>
-        {local ? <span className="stage-screen-own">Вы</span> : <button type="button" disabled={pending || !connected} onClick={() => void watch()}>Смотреть</button>}
+        <span className="stage-screen-name" title={m.screen.tileName(ownerName)}>{m.screen.tileName(ownerName)}</span>
+        {local ? <span className="stage-screen-own">{m.screen.you}</span> : <button type="button" disabled={pending || !connected} onClick={() => void watch()}>{m.screen.watch}</button>}
     </div>;
 }
 
@@ -114,30 +115,31 @@ export function ScreenSharing({view, channelID, participants}: {
     channelID: string;
     participants: ParticipantDTO[];
 }) {
+    const {m} = useLocale();
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");
     const streams = (view.screenStreams ?? []).filter((stream) => stream.channelId === channelID);
     const watch = async (streamID: string, ownerName: string) => {
         setPending(true); setError("");
         try { await desktopAPI.openScreenWindow(streamID, ownerName); }
-        catch (reason) { setError(errorText(reason)); }
+        catch (reason) { setError(rawError(reason)); }
         finally { setPending(false); }
     };
 
     return <section className="screen-sharing">
-        <div className="screen-heading"><div><span>Демонстрации экрана</span></div></div>
+        <div className="screen-heading"><div><span>{m.screen.list}</span></div></div>
         <div className="screen-list">
-        {error && <div className="screen-error" role="alert">{error}</div>}
+        {error && <div className="screen-error" role="alert">{errorText(error, m)}</div>}
         {streams.length ? <div className="screen-cards">{streams.map((stream) => {
             const owner = participants.find((item) => item.sessionId === stream.ownerSessionId);
-            const ownerName = owner?.displayName ?? "Участник";
+            const ownerName = owner?.displayName ?? m.screen.participant;
             return <article className="screen-card" key={stream.id}>
-                <div className="screen-card-preview" aria-label={`Демонстрация ${ownerName}`}><Icon name="screen"/><span>{ownerName}</span><small>Демонстрация экрана</small></div>
-                <div><strong>{ownerName}</strong><small>показывает экран</small></div>
-                {stream.ownerSessionId === view.sessionId ? <span className="screen-own">Вы</span>
-                    : <button disabled={pending || channelID !== view.channelId} onClick={() => void watch(stream.id, ownerName)}>Смотреть</button>}
+                <div className="screen-card-preview" aria-label={m.screen.card(ownerName)}><Icon name="screen"/><span>{ownerName}</span><small>{m.screen.cardKind}</small></div>
+                <div><strong>{ownerName}</strong><small>{m.screen.showing}</small></div>
+                {stream.ownerSessionId === view.sessionId ? <span className="screen-own">{m.screen.you}</span>
+                    : <button disabled={pending || channelID !== view.channelId} onClick={() => void watch(stream.id, ownerName)}>{m.screen.watch}</button>}
             </article>;
-        })}</div> : <p className="screen-empty">Сейчас никто не демонстрирует экран.</p>}
+        })}</div> : <p className="screen-empty">{m.screen.nobody}</p>}
         </div>
     </section>;
 }
