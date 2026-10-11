@@ -36,14 +36,19 @@ type RecentServer struct {
 }
 
 const (
-	ThemeSystem = "system"
-	ThemeDark   = "dark"
-	ThemeLight  = "light"
+	// ThemeSystem is the legacy unset value. The desktop UI treats it as ThemeDark.
+	ThemeSystem  = "system"
+	ThemeLight   = "light"
+	ThemeNeutral = "neutral"
+	ThemeDark    = "dark"
+	ThemeBeige   = "beige"
+	ThemeBrown   = "brown"
+	ThemePurple  = "purple"
 )
 
 func NormalizeTheme(value string) string {
 	switch value {
-	case ThemeDark, ThemeLight:
+	case ThemeLight, ThemeNeutral, ThemeDark, ThemeBeige, ThemeBrown, ThemePurple:
 		return value
 	default:
 		return ThemeSystem

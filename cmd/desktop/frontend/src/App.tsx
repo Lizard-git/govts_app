@@ -17,6 +17,9 @@ import {ChatPanel} from "./features/chat/ChatPanel";
 import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
 import {UpdateButton, UpdateDialog, UpdatesPanel, useUpdates, type UpdatesState} from "./features/updates/Updates";
+import {applyAppearance, createCustomAppearance, downloadThemeFile, loadAppearance, maxSavedThemes, normalizeTheme, readThemeFile, saveAppearance, snapshotTheme, themeColor, type Appearance, type SavedTheme, type StageBackdrop} from "./appearance";
+import {InterfaceSettings} from "./features/settings/InterfaceSettings";
+import {StageScene} from "./features/settings/StageScene";
 
 const contentTabs = ["chat", "screens", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
@@ -49,31 +52,162 @@ function errorText(error: unknown): string {
 }
 
 function App() {
-    const [theme, setThemeState] = useState(localStorage.getItem("sonoryx-theme") || "system");
+    const [appearance, setAppearanceState] = useState(loadAppearance);
     useEffect(() => {
+        applyAppearance(loadAppearance());
         let active = true;
         void desktopAPI.theme().then((value) => {
-            if (active) setThemeState(value);
-        });
+            if (!active) return;
+            const current = loadAppearance();
+            if (current.theme === "custom") {
+                setAppearanceState(current);
+                return;
+            }
+            const mode = normalizeTheme(value);
+            if (current.theme === mode) {
+                setAppearanceState(current);
+                return;
+            }
+            const next = saveAppearance({...current, theme: mode});
+            applyAppearance(next);
+            setAppearanceState(next);
+        }).catch(() => undefined);
         return () => { active = false; };
     }, []);
-    useEffect(() => {
-        document.documentElement.dataset.theme = theme;
-        localStorage.setItem("sonoryx-theme", theme);
-    }, [theme]);
+    const remember = (next: Appearance) => {
+        const saved = saveAppearance(next);
+        applyAppearance(saved);
+        setAppearanceState(saved);
+        return saved;
+    };
     const setTheme = async (value: string) => {
-        const previous = theme;
-        setThemeState(value);
-        try { await desktopAPI.setTheme(value); }
-        catch (error) { setThemeState(previous); throw error; }
+        const previous = loadAppearance();
+        const mode = normalizeTheme(value);
+        if (mode === "custom") {
+            if (!previous.hasCustom && !previous.hasDraft) return;
+            remember({...previous, theme: "custom", activeSavedId: previous.hasDraft ? "" : previous.activeSavedId});
+            return;
+        }
+        remember({...previous, theme: mode});
+        try { await desktopAPI.setTheme(mode); }
+        catch (error) {
+            remember(previous);
+            throw error;
+        }
+    };
+    const createCustomTheme = () => {
+        remember(createCustomAppearance(loadAppearance()));
+    };
+    const updateAppearance = (patch: Partial<Appearance>) => {
+        const current = loadAppearance();
+        const next: Appearance = {...current, ...patch, custom: patch.custom ?? current.custom, savedThemes: current.savedThemes};
+        if (next.theme === "custom" && next.activeSavedId) {
+            next.savedThemes = next.savedThemes.map((theme) => theme.id === next.activeSavedId ? {
+                ...theme,
+                palette: {...next.custom},
+                fontFamily: next.fontFamily,
+                fontSize: next.fontSize,
+                stageBackdrop: next.stageBackdrop,
+                stageImage: next.stageBackdrop === "image" ? next.stageImage : "",
+            } : theme);
+        }
+        remember(next);
+    };
+    const openSavedTheme = (id: string) => {
+        const current = loadAppearance();
+        const saved = current.savedThemes.find((theme) => theme.id === id);
+        if (!saved) return;
+        remember({
+            ...current,
+            theme: "custom",
+            hasCustom: true,
+            hasDraft: false,
+            activeSavedId: saved.id,
+            customName: saved.name,
+            custom: {...saved.palette},
+            fontFamily: saved.fontFamily,
+            fontSize: saved.fontSize,
+            stageBackdrop: saved.stageBackdrop,
+            stageImage: saved.stageImage,
+        });
+    };
+    const saveNamedTheme = (name: string) => {
+        const current = loadAppearance();
+        if (current.theme !== "custom") return;
+        const snapshot = snapshotTheme({...current, customName: name}, name);
+        if (current.activeSavedId) {
+            remember({
+                ...current,
+                customName: snapshot.name,
+                hasDraft: false,
+                savedThemes: current.savedThemes.map((theme) => theme.id === current.activeSavedId ? {...snapshot, id: current.activeSavedId} : theme),
+            });
+            return;
+        }
+        if (current.savedThemes.length >= maxSavedThemes) throw new Error("Можно сохранить не больше 24 тем.");
+        remember({
+            ...current,
+            theme: "custom",
+            hasCustom: true,
+            hasDraft: false,
+            activeSavedId: snapshot.id,
+            customName: snapshot.name,
+            savedThemes: [...current.savedThemes, snapshot],
+        });
+    };
+    const importThemeFile = async (file: File) => {
+        const theme = await readThemeFile(file);
+        const current = loadAppearance();
+        if (current.savedThemes.length >= maxSavedThemes) throw new Error("Можно сохранить не больше 24 тем.");
+        remember({
+            ...current,
+            theme: "custom",
+            hasCustom: true,
+            hasDraft: false,
+            activeSavedId: theme.id,
+            customName: theme.name,
+            custom: {...theme.palette},
+            fontFamily: theme.fontFamily,
+            fontSize: theme.fontSize,
+            stageBackdrop: theme.stageBackdrop,
+            stageImage: theme.stageImage,
+            savedThemes: [...current.savedThemes, theme],
+        });
+    };
+    const deleteSavedTheme = (id: string) => {
+        const current = loadAppearance();
+        const savedThemes = current.savedThemes.filter((theme) => theme.id !== id);
+        const active = current.activeSavedId === id;
+        remember({
+            ...current,
+            savedThemes,
+            hasCustom: savedThemes.length > 0 || current.theme === "custom" || current.hasDraft,
+            activeSavedId: active ? "" : current.activeSavedId,
+            customName: active ? "" : current.customName,
+            hasDraft: active || current.hasDraft,
+        });
+    };
+    const exportTheme = (theme: SavedTheme) => {
+        if (theme.id === "draft" && loadAppearance().theme !== "custom") return;
+        downloadThemeFile(theme);
     };
     const params = new URLSearchParams(window.location.search);
     const streamID = params.get("screen");
     if (streamID) return <ScreenViewerWindow streamID={streamID} ownerName={params.get("owner") || "Участник"}/>;
-    return <MainApp theme={theme} setTheme={setTheme}/>;
+    return <MainApp appearance={appearance} setTheme={setTheme} createCustomTheme={createCustomTheme} updateAppearance={updateAppearance} openSavedTheme={openSavedTheme} saveNamedTheme={saveNamedTheme} importThemeFile={importThemeFile} deleteSavedTheme={deleteSavedTheme} exportTheme={exportTheme}/>;
 }
 
-function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) => Promise<void>}) {
+function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, openSavedTheme, saveNamedTheme, importThemeFile, deleteSavedTheme, exportTheme}: {
+    appearance: Appearance;
+    setTheme: (value: string) => Promise<void>;
+    createCustomTheme: () => void;
+    updateAppearance: (patch: Partial<Appearance>) => void;
+    openSavedTheme: (id: string) => void;
+    saveNamedTheme: (name: string) => void;
+    importThemeFile: (file: File) => Promise<void>;
+    deleteSavedTheme: (id: string) => void;
+    exportTheme: (theme: SavedTheme) => void;
+}) {
     const [view, setView] = useState<ClientViewDTO>(emptyView);
     const [page, setPage] = useState<Page>("channels");
     const [contentTab, setContentTab] = useState<ContentTab>("chat");
@@ -221,6 +355,7 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
             <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{actionError}</div>}
             <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
+                          stageBackdrop={appearance.theme === "custom" ? appearance.stageBackdrop : "mountains"}
                           onReconnect={(address) => invoke(async () => {
                               if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
                               await screenMedia.current?.close();
@@ -232,14 +367,14 @@ function MainApp({theme, setTheme}: {theme: string; setTheme: (value: string) =>
             </>}
         </main>
         {page === "settings" && <SettingsOverlay onClose={closeSettings}>
-            <SettingsPage view={view} invoke={invoke} theme={theme} setTheme={setTheme} updates={updates}/>
+            <SettingsPage view={view} invoke={invoke} appearance={appearance} setTheme={setTheme} createCustomTheme={createCustomTheme} updateAppearance={updateAppearance} openSavedTheme={openSavedTheme} saveNamedTheme={saveNamedTheme} importThemeFile={importThemeFile} deleteSavedTheme={deleteSavedTheme} exportTheme={exportTheme} updates={updates}/>
         </SettingsOverlay>}
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers}: {
+function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers, stageBackdrop}: {
     refreshingServers: boolean;
     onRefreshServers: () => void;
     onReconnect: (address: string) => Promise<void>;
@@ -253,6 +388,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
     directChats: DirectChat[];
     setDirectChats: Dispatch<SetStateAction<DirectChat[]>>;
     chatStore: ChatStore | null;
+    stageBackdrop: StageBackdrop;
 }) {
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
@@ -340,7 +476,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                 <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || "Голосовой канал"}>{selected.topic || "Голосовой канал"}</p></div>
                     <button className="info-toggle" aria-label="Информация о канале" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
-                <div className="participants-stage" role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><div className="stage-landscape" aria-hidden="true"/><div className="participants-strip">
+                <div className="participants-stage" data-backdrop={stageBackdrop} role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><StageScene backdrop={stageBackdrop}/><div className="participants-strip">
                     {members.length ? members.map((participant) => <div className="stage-participant-group" key={participant.sessionId}><ParticipantRow
                         participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
                         depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>
@@ -523,11 +659,18 @@ function SettingsOverlay({onClose, children}: {onClose: () => void; children: Re
     </div>;
 }
 
-function SettingsPage({view, invoke, theme, setTheme, updates}: {
+function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, updateAppearance, openSavedTheme, saveNamedTheme, importThemeFile, deleteSavedTheme, exportTheme, updates}: {
     view: ClientViewDTO;
     invoke: (operation: () => Promise<unknown>) => Promise<void>;
-    theme: string;
+    appearance: Appearance;
     setTheme: (value: string) => Promise<void>;
+    createCustomTheme: () => void;
+    updateAppearance: (patch: Partial<Appearance>) => void;
+    openSavedTheme: (id: string) => void;
+    saveNamedTheme: (name: string) => void;
+    importThemeFile: (file: File) => Promise<void>;
+    deleteSavedTheme: (id: string) => void;
+    exportTheme: (theme: SavedTheme) => void;
     updates: UpdatesState;
 }) {
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
@@ -666,10 +809,7 @@ function SettingsPage({view, invoke, theme, setTheme, updates}: {
                         title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
                         checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>}
                 {section === "interface" && <section className="settings-card"><h3>Интерфейс</h3>
-                    <Select id="theme" label="Тема оформления" value={theme}
-                            options={[{value: "system", label: "Системная"}, {value: "dark", label: "Тёмная"}, {value: "light", label: "Светлая"}]}
-                            hint="Системная тема следует настройкам Windows."
-                            onChange={(value) => void invoke(() => setTheme(value))}/>
+                    <InterfaceSettings appearance={appearance} onTheme={(value) => invoke(() => setTheme(value))} onCreate={createCustomTheme} onChange={updateAppearance} onOpenSaved={openSavedTheme} onSave={saveNamedTheme} onImport={importThemeFile} onExport={exportTheme} onDelete={deleteSavedTheme}/>
                     <SettingToggle title="Сворачивать в трей при закрытии"
                                    description="Крестик прячет окно в трей, приложение и голос продолжают работать. Без этой настройки крестик завершает Sonoryx."
                                    checked={closeToTray}
@@ -816,11 +956,11 @@ function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivit
             context.beginPath();
             context.moveTo(0, waveCenter);
             context.lineTo(width, waveCenter);
-            context.strokeStyle = "rgba(126, 143, 174, .10)";
+            context.strokeStyle = themeColor("--muted", 0.1);
             context.lineWidth = 1;
             context.stroke();
-            ribbon(rejectedHistory, waveCenter, height * 0.38, "rgba(126, 143, 174, .18)", "rgba(151, 166, 193, .34)");
-            ribbon(transmittedHistory, waveCenter, height * 0.38, "rgba(19, 231, 176, .24)", "rgba(28, 240, 184, .9)");
+            ribbon(rejectedHistory, waveCenter, height * 0.38, themeColor("--muted", 0.18), themeColor("--muted", 0.34));
+            ribbon(transmittedHistory, waveCenter, height * 0.38, themeColor("--accent", 0.24), themeColor("--accent", 0.9));
             animationFrame = requestAnimationFrame(draw);
         };
         animationFrame = requestAnimationFrame(draw);

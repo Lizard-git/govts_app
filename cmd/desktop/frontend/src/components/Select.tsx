@@ -5,6 +5,7 @@ export type SelectOption = {
     label: string;
     detail?: string;
     selectedLabel?: string;
+    fontFamily?: string;
 };
 
 export function Select({id, label, value, options, disabled = false, onChange, hint, labelExtra, className}: {
@@ -59,10 +60,11 @@ export function Select({id, label, value, options, disabled = false, onChange, h
         <div className="app-select-control">
             <button id={id} className="app-select-trigger" type="button" disabled={disabled}
                     aria-labelledby={`${labelId} ${id}`} aria-haspopup="listbox" aria-expanded={open}
-                    onClick={() => setOpen((current) => !current)}><span>{selectedName}</span></button>
+                    onClick={() => setOpen((current) => !current)}><span style={selected?.fontFamily ? {fontFamily: `"${selected.fontFamily}", "Noto Sans", sans-serif`} : undefined}>{selectedName}</span></button>
             {open && <div className="app-select-options" role="listbox" aria-labelledby={labelId}>
                 {options.map((option) => <button type="button" role="option" aria-selected={option.value === value}
                                                   className={option.value === value ? "selected" : ""}
+                                                  style={option.fontFamily ? {fontFamily: `"${option.fontFamily}", "Noto Sans", sans-serif`} : undefined}
                                                   onClick={() => choose(option.value)}
                                                   key={option.value}>{option.label}{option.detail ?
                     <small>{option.detail}</small> : null}</button>)}

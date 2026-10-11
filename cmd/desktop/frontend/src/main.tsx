@@ -1,11 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import {applyAppearance, loadAppearance} from "./appearance";
+import "./fonts.css";
+import "./theme.css";
 import "./styles.css";
 import "./workspace.css";
 
-const initialTheme = localStorage.getItem("sonoryx-theme") || "system";
-document.documentElement.dataset.theme = initialTheme;
+applyAppearance(loadAppearance());
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
