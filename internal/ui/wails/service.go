@@ -42,6 +42,7 @@ type Service struct {
 	serverAddress    string
 	trustedMediaKeys map[string]string
 	theme            string
+	locale           string
 	closeToTray      bool
 	connectionMu     sync.Mutex
 	recentServers    []clientsettings.RecentServer
@@ -240,6 +241,28 @@ func (s *Service) SetTheme(value string) error {
 	}
 	s.settingsMu.Lock()
 	s.theme = normalized
+	s.settingsMu.Unlock()
+	return s.saveSettings()
+}
+
+func (s *Service) Locale() string {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	locale, ok := clientsettings.NormalizeLocale(s.locale)
+	if !ok {
+		return "ru"
+	}
+	return locale
+}
+
+func (s *Service) SetLocale(value string) error {
+	value = strings.TrimSpace(value)
+	locale, ok := clientsettings.NormalizeLocale(value)
+	if !ok || value == "" {
+		return &validationError{Field: "locale", Message: "неизвестный язык"}
+	}
+	s.settingsMu.Lock()
+	s.locale = locale
 	s.settingsMu.Unlock()
 	return s.saveSettings()
 }

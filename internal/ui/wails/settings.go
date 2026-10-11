@@ -23,6 +23,11 @@ func (s *Service) enableSettings(path string) error {
 	s.settingsMu.Lock()
 	s.displayName = settings.DisplayName
 	s.theme = clientsettings.NormalizeTheme(settings.Theme)
+	if locale, ok := clientsettings.NormalizeLocale(settings.Locale); ok {
+		s.locale = locale
+	} else {
+		s.locale = "ru"
+	}
 	s.closeToTray = settings.CloseToTray
 	s.recentServers = settings.RecentServers
 	s.trustedMediaKeys = settings.TrustedMediaKeys
@@ -76,6 +81,10 @@ func (s *Service) saveSettings() (saveErr error) {
 	displayName := s.displayName
 	trustedMediaKeys := cloneStringMap(s.trustedMediaKeys)
 	theme := clientsettings.NormalizeTheme(s.theme)
+	locale, localeOK := clientsettings.NormalizeLocale(s.locale)
+	if !localeOK {
+		locale = "ru"
+	}
 	closeToTray := s.closeToTray
 	recentServers := append([]clientsettings.RecentServer(nil), s.recentServers...)
 	s.settingsMu.RUnlock()
@@ -92,6 +101,7 @@ func (s *Service) saveSettings() (saveErr error) {
 		VADSensitivity:     view.VADSensitivity,
 		TrustedMediaKeys:   trustedMediaKeys,
 		Theme:              theme,
+		Locale:             locale,
 		CloseToTray:        closeToTray,
 		RecentServers:      recentServers,
 	})

@@ -20,6 +20,11 @@
 .status-bar .header-nav-button { min-height: 28px; padding: 4px 8px; }
 .status-pill, .sync-pill { padding: 5px 8px; color: var(--muted); border-color: var(--line); background: var(--card); font-size: 0.625rem; }
 .status-bar .status-pill { height: 27px; }
+.locale-header { display: flex; align-items: center; height: 27px; flex: 0 0 auto; gap: 1px; padding: 2px 2px 2px 1px; border: 1px solid var(--line); border-radius: 99px; background: var(--card); }
+.locale-header .locale-header-mark { width: 14px; height: 14px; margin: 0 1px 0 7px; color: var(--muted); flex-shrink: 0; }
+.locale-header button { height: 21px; padding: 0 9px; border: 0; border-radius: 99px; color: var(--muted); background: transparent; font-size: 0.6875rem; font-weight: 600; line-height: 1; cursor: pointer; white-space: nowrap; }
+.locale-header button[aria-pressed="true"] { color: var(--text); background: var(--card-strong); }
+.locale-header button:hover:not([aria-pressed="true"]) { color: var(--text); }
 .settings-pill { width: 6rem; justify-content: center; flex-shrink: 0; cursor: pointer; white-space: nowrap; }
 .settings-pill:hover { border-color: var(--accent-blue); }
 .settings-pill svg { width: 14px; height: 14px; }
@@ -219,6 +224,14 @@
 .audio-control-island .screen-share-button { white-space: normal; line-height: 1.2; }
 .audio-control-island .screen-share-button.sharing { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .screen-share-dialog { width: min(430px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 24px; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--card); box-shadow: 0 20px 70px color-mix(in srgb, var(--shadow) 40%, transparent); overflow-y: auto; }
+.link-confirm { width: min(400px, calc(100vw - 32px)); margin: auto; padding: 22px 22px 18px; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--card); box-shadow: 0 24px 70px color-mix(in srgb, var(--shadow) 42%, transparent); text-align: center; }
+.link-confirm::backdrop { background: var(--overlay); }
+.link-confirm-mark { display: grid; width: 42px; height: 42px; margin: 0 auto 14px; place-items: center; border-radius: 50%; color: var(--accent); background: var(--accent-soft); }
+.link-confirm .link-confirm-mark svg { width: 18px; height: 18px; }
+.link-confirm h2 { margin: 0 0 14px; font-size: 1.05rem; font-weight: 700; line-height: 1.35; }
+.link-confirm-address { margin: 0 0 18px; padding: 10px 12px; border-radius: 10px; background: var(--window); color: var(--text); font-size: 0.8125rem; line-height: 1.45; overflow-wrap: anywhere; text-align: left; }
+.link-confirm .screen-dialog-actions { justify-content: center; }
+.link-confirm :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .screen-share-dialog::backdrop { background: var(--overlay); }
 .screen-share-dialog h2 { margin: 0 0 10px; font-size: 1.25rem; }
 .screen-share-dialog > p { color: var(--muted); line-height: 1.5; }
@@ -267,6 +280,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .chat-composer textarea { box-sizing: border-box; display: block; width: 100%; min-width: 0; height: 32px; max-height: 68px; resize: none; overflow-y: hidden; padding: 6px 8px; font: inherit; font-size: 0.75rem; line-height: 18px; }
 .chat-composer small { color: var(--muted); font-size: 0.625rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chat-message { margin: 0; padding: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8125rem; line-height: 1.45; }
+.chat-message a { color: var(--accent-blue); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.chat-message a:hover { color: var(--text); }
 .chat-message.own > strong { color: var(--accent); }
 .chat-message time, .chat-send-status { color: var(--muted); font-size: 0.6875rem; }
 .chat-message button, .chat-error button, .chat-older, .chat-new { border: 1px solid var(--line); border-radius: 6px; background: var(--card-strong); color: var(--text); padding: 5px 8px; font-size: 0.6875rem; }

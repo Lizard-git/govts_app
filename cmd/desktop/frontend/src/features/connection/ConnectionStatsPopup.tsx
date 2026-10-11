@@ -4,10 +4,12 @@ import {desktopAPI} from "../../api";
 import type {ScreenMediaController} from "../screen/screenMedia";
 import type {ScreenSharingState} from "../screen/ScreenShareDialog";
 import type {ScreenStats} from "../screen/screenStats";
+import {useLocale} from "../../locales/Locale";
 
 export function ConnectionStatsPopup({sessionId, status, channelId, sharing, screenMedia}: {
     sessionId: string; status: string; channelId: string; sharing: ScreenSharingState; screenMedia: ScreenMediaController;
 }) {
+    const {m} = useLocale();
     const [open, setOpen] = useState(false);
     const [stats, setStats] = useState<ConnectionStatsDTO | null>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
@@ -77,28 +79,29 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
         return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
     }, [open]);
 
-    const labels: Record<string, string> = {connecting: "Подключение", connected: "Подключено", reconnecting: "Переподключение", disconnected: "Отключено"};
+    const statusLabel = m.connection.status[status as keyof typeof m.connection.status] ?? status;
+    const ping = stats?.pingAvailable ? m.connection.pingValue(stats.pingMs.toFixed(0), stats.pingVariationAvailable ? stats.pingVariationMs.toFixed(1) : "") : "—";
     return <div className="connection-stats-anchor">
-        <button ref={buttonRef} type="button" className={`status-pill ${status}`} aria-label={`${labels[status] ?? status}. Статистика подключения`}
+        <button ref={buttonRef} type="button" className={`status-pill ${status}`} aria-label={m.connection.statsButton(statusLabel)}
                 aria-expanded={open} aria-controls="connection-stats-popup" onClick={() => setOpen((value) => !value)}>
-            <span className="status-dot"/>{labels[status] ?? status}
+            <span className="status-dot"/>{statusLabel}
         </button>
-        {open && <div ref={popupRef} id="connection-stats-popup" className="connection-stats-popup" role="region" aria-label="Статус подключения">
-            <h2>Статус подключения</h2>
-            <div className="connection-stat-row"><span>Потеря пакетов (входящие)</span><strong title={stats?.incomingKnown ? undefined : "Голосовых пакетов пока нет"}>{status === "connected" ? `${(stats?.incomingLoss ?? 0).toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>Восстановлено копией</span><strong title="Доля входящих голосовых кадров, восстановленных из резервной копии сервера, за 30 секунд">{status === "connected" && stats?.incomingKnown ? `${stats.recoveredLoss.toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>Восстановлено PLC</span><strong title="Доля входящих голосовых кадров, синтезированных вместо потерянных, за 30 секунд">{status === "connected" && stats?.incomingKnown ? `${stats.concealedLoss.toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>Серии потерь (1 / 2 / 3+)</span><strong title="Число разрывов по длине в кадрах за 30 секунд">{status === "connected" && stats?.incomingKnown ? `${stats.lossBurstsSingle} / ${stats.lossBurstsDouble} / ${stats.lossBurstsLong}` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>Потеря пакетов (исходящие)</span><strong title={stats?.outgoingKnown ? undefined : "Ожидание данных сервера"}>{status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>Пинг</span><strong>{stats?.pingAvailable ? `${stats.pingMs.toFixed(0)} мс${stats.pingVariationAvailable ? ` ± ${stats.pingVariationMs.toFixed(1)}` : ""}` : "—"}</strong></div>
-            {sharing.active && status === "connected" && <section className="connection-screen-stats" aria-label="Статистика демонстрации">
-                <h2>Демонстрация экрана</h2>
-                <div className="connection-stat-row"><span>Качество</span><strong>{sharing.profile.label}</strong></div>
-                <div className="connection-stat-row"><span>Разрешение</span><strong>{screenStats?.width && screenStats.height ? `${screenStats.width}×${screenStats.height}` : "—"}</strong></div>
+        {open && <div ref={popupRef} id="connection-stats-popup" className="connection-stats-popup" role="region" aria-label={m.connection.statsRegion}>
+            <h2>{m.connection.statsTitle}</h2>
+            <div className="connection-stat-row"><span>{m.connection.lossIn}</span><strong title={stats?.incomingKnown ? undefined : m.connection.noVoiceYet}>{status === "connected" ? `${(stats?.incomingLoss ?? 0).toFixed(1)}%` : "—"}</strong></div>
+            <div className="connection-stat-row"><span>{m.connection.recovered}</span><strong title={m.connection.recoveredTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.recoveredLoss.toFixed(1)}%` : "—"}</strong></div>
+            <div className="connection-stat-row"><span>{m.connection.plc}</span><strong title={m.connection.plcTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.concealedLoss.toFixed(1)}%` : "—"}</strong></div>
+            <div className="connection-stat-row"><span>{m.connection.bursts}</span><strong title={m.connection.burstsTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.lossBurstsSingle} / ${stats.lossBurstsDouble} / ${stats.lossBurstsLong}` : "—"}</strong></div>
+            <div className="connection-stat-row"><span>{m.connection.lossOut}</span><strong title={stats?.outgoingKnown ? undefined : m.connection.waitingServer}>{status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</strong></div>
+            <div className="connection-stat-row"><span>{m.connection.ping}</span><strong>{ping}</strong></div>
+            {sharing.active && status === "connected" && <section className="connection-screen-stats" aria-label={m.connection.shareStats}>
+                <h2>{m.connection.shareTitle}</h2>
+                <div className="connection-stat-row"><span>{m.connection.quality}</span><strong>{m.screen.profiles[sharing.profile.id]}</strong></div>
+                <div className="connection-stat-row"><span>{m.connection.resolution}</span><strong>{screenStats?.width && screenStats.height ? `${screenStats.width}×${screenStats.height}` : "—"}</strong></div>
                 <div className="connection-stat-row"><span>FPS</span><strong>{screenStats ? screenStats.fps.toFixed(0) : "—"}</strong></div>
-                <div className="connection-stat-row"><span>Битрейт</span><strong>{screenStats ? `${(screenStats.bitrate / 1_000_000).toFixed(2)} Мбит/с` : "—"}</strong></div>
-                <div className="connection-stat-row"><span>Кадры / ключевые</span><strong>{screenStats ? `${screenStats.frames} / ${screenStats.keyFrames}` : "—"}</strong></div>
-                {screenStats?.qualityLimitation && <div className="connection-stat-row"><span>Ограничение качества</span><strong>{screenStats.qualityLimitation}</strong></div>}
+                <div className="connection-stat-row"><span>{m.connection.bitrate}</span><strong>{screenStats ? m.connection.mbps((screenStats.bitrate / 1_000_000).toFixed(2)) : "—"}</strong></div>
+                <div className="connection-stat-row"><span>{m.connection.framesKeys}</span><strong>{screenStats ? `${screenStats.frames} / ${screenStats.keyFrames}` : "—"}</strong></div>
+                {screenStats?.qualityLimitation && <div className="connection-stat-row"><span>{m.connection.qualityLimit}</span><strong>{screenStats.qualityLimitation}</strong></div>}
             </section>}
         </div>}
     </div>;

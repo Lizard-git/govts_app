@@ -3,12 +3,8 @@ import type {ClientViewDTO} from "../../api";
 import {logDiagnostic} from "../../api";
 import {ScreenMediaController} from "./screenMedia";
 import {defaultScreenProfile, screenProfiles, type ScreenProfileID} from "./screenProfiles";
-
-const descriptions = {
-    economy: "Для слабого соединения",
-    text: "Для чтения текста",
-    standard: "Для движения и видео",
-};
+import {errorText} from "../../locales";
+import {useLocale} from "../../locales/Locale";
 
 export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaController, onError: (message: string) => void) {
     const [open, setOpen] = useState(false);
@@ -78,6 +74,7 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
 export type ScreenSharingState = ReturnType<typeof useScreenSharing>;
 
 export function ScreenShareDialog({sharing}: {sharing: ScreenSharingState}) {
+    const {m} = useLocale();
     const dialogRef = useRef<HTMLDialogElement>(null);
     const restoreFocus = useRef(false);
     useEffect(() => {
@@ -95,19 +92,19 @@ export function ScreenShareDialog({sharing}: {sharing: ScreenSharingState}) {
     }, [sharing.open, sharing.pending, sharing.buttonRef]);
     return <dialog ref={dialogRef} className="screen-share-dialog" aria-labelledby="screen-share-title"
         onCancel={(event) => { event.preventDefault(); sharing.close(); }}>
-        <h2 id="screen-share-title">Демонстрация экрана</h2>
-        <p>Выберите качество. Затем выберите экран или окно для показа.</p>
+        <h2 id="screen-share-title">{m.screen.title}</h2>
+        <p>{m.screen.pick}</p>
         <fieldset disabled={sharing.pending}>
-            <legend>Качество</legend>
+            <legend>{m.screen.quality}</legend>
             {screenProfiles.map((profile) => <label className="screen-quality-option" key={profile.id}>
                 <input type="radio" name="screen-quality" value={profile.id} checked={sharing.profileID === profile.id}
                     onChange={() => sharing.selectProfile(profile.id)}/>
-                <span><strong>{profile.label}</strong><small>{descriptions[profile.id]}</small></span>
+                <span><strong>{m.screen.profiles[profile.id]}</strong><small>{m.screen.profileDetail[profile.id]}</small></span>
             </label>)}
         </fieldset>
-        {sharing.error && <p className="screen-error" role="alert">{sharing.error}</p>}
+        {sharing.error && <p className="screen-error" role="alert">{errorText(sharing.error, m)}</p>}
         <div className="screen-dialog-actions">
-            <button type="button" onClick={sharing.close}>Отмена</button>
+            <button type="button" onClick={sharing.close}>{m.screen.cancel}</button>
             <button className="primary-button" type="button" disabled={sharing.pending || !sharing.available}
                 onClick={() => {
                     // Remove the modal top layer before WebView2 opens its capture
@@ -115,7 +112,7 @@ export function ScreenShareDialog({sharing}: {sharing: ScreenSharingState}) {
                     dialogRef.current?.close();
                     restoreFocus.current = true;
                     void sharing.start();
-                }}>{sharing.pending ? "Запуск…" : "Начать демонстрацию"}</button>
+                }}>{sharing.pending ? m.screen.starting : m.screen.start}</button>
         </div>
     </dialog>;
 }

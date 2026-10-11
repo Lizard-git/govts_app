@@ -3,6 +3,7 @@ import {createPortal} from "react-dom";
 import type {ParticipantDTO} from "../../api";
 import {desktopAPI} from "../../api";
 import {Icon} from "../../components/Icon";
+import {useLocale} from "../../locales/Locale";
 
 type MenuState = {x: number; y: number; volume: number} | null;
 
@@ -49,6 +50,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
     variant?: "tree" | "list" | "stage";
     sharingScreen?: boolean;
 }) {
+    const {m} = useLocale();
     const [menu, setMenu] = useState<MenuState>(null);
     const rowRef = useRef<HTMLDivElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -79,7 +81,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
     const setVolumeLevel = (level: number, immediate = false) => setVolume((level / 100) ** 2, immediate);
     const moderate = async (action: "kick" | "ban") => {
         if (!menu) return;
-        if (action === "ban" && !window.confirm(`Заблокировать ${participant.displayName}?`)) return;
+        if (action === "ban" && !window.confirm(m.people.banConfirm(participant.displayName))) return;
         try {
             if (action === "kick") await desktopAPI.kick(participant.sessionId);
             if (action === "ban") await desktopAPI.ban(participant.sessionId);
@@ -136,24 +138,24 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
                 }
              }}>{variant === "stage" ? <>
             <span className="stage-avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
-            <span className="stage-label"><span className="stage-name" title={`${participant.displayName}${participant.local ? " (вы)" : ""}`}>{participant.displayName}{participant.local ? " (вы)" : ""}</span>
+            <span className="stage-label"><span className="stage-name" title={`${participant.displayName}${participant.local ? m.people.you : ""}`}>{participant.displayName}{participant.local ? m.people.you : ""}</span>
             </span>
-            <span className="stage-voice" aria-label={participant.muted ? "Микрофон выключен" : participant.deafened ? "Звук выключен" : participant.speaking ? "Говорит" : "Не говорит"}>
-                {sharingScreen && <span className="participant-screen" title="Демонстрирует экран" aria-label="Демонстрирует экран"><Icon name="screen"/></span>}
+            <span className="stage-voice" aria-label={participant.muted ? m.people.micOff : participant.deafened ? m.people.soundOff : participant.speaking ? m.people.speaking : m.people.silent}>
+                {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
                 {participant.muted ? <MicOffIcon/> : participant.deafened ? <SoundOffIcon/> : participant.speaking ? <span className="voice-bars"><i/><i/><i/><i/><i/></span> : null}
             </span>
             </> : <><span className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
-            <span className="participant-label"><span className="participant-name" title={participant.displayName}>{participant.displayName}{participant.local ? " (вы)" : ""}</span>
+            <span className="participant-label"><span className="participant-name" title={participant.displayName}>{participant.displayName}{participant.local ? m.people.you : ""}</span>
             </span>
             {variant !== "list" && <span className="participant-status">
-                {sharingScreen && <span className="participant-screen" title="Демонстрирует экран" aria-label="Демонстрирует экран"><Icon name="screen"/></span>}
-                {participant.muted && <span className="participant-flag" aria-label="Микрофон выключен"><MicOffIcon/></span>}
-                {participant.deafened && <span className="participant-flag" aria-label="Звук выключен"><SoundOffIcon/></span>}
-                <span className="speaking-ring" aria-label={participant.speaking ? "Говорит" : "Не говорит"}/>
+                {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
+                {participant.muted && <span className="participant-flag" aria-label={m.people.micOff}><MicOffIcon/></span>}
+                {participant.deafened && <span className="participant-flag" aria-label={m.people.soundOff}><SoundOffIcon/></span>}
+                <span className="speaking-ring" aria-label={participant.speaking ? m.people.speaking : m.people.silent}/>
             </span>}</>}
         </div>
         {!participant.local && menu && createPortal(<div ref={menuRef} className="participant-menu" role="menu" style={position}
-                                   aria-label={`Управление пользователем ${participant.displayName}`}>
+                                   aria-label={m.people.manage(participant.displayName)}>
             <div className="participant-menu-user">
                 <span className="participant-menu-avatar" aria-hidden="true">{participant.displayName.slice(0, 1).toUpperCase()}</span>
                 <strong>{participant.displayName}</strong>
@@ -161,7 +163,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
             <div className="participant-menu-separator"/>
             {!participant.local && <>
             <div className="participant-volume-heading">
-                <label htmlFor={`participant-volume-${participant.sessionId}`}>Громкость пользователя</label>
+                <label htmlFor={`participant-volume-${participant.sessionId}`}>{m.people.volume}</label>
                 <output>{volumeLevel}pt.</output>
             </div>
             <div className="participant-volume-control">
@@ -176,13 +178,13 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
             </div>
             </>}
             <div className="participant-menu-actions">
-                <button type="button" role="menuitem" onClick={() => { onMessage(participant); close(); }}><span><Icon name="chat"/></span>Сообщение</button>
+                <button type="button" role="menuitem" onClick={() => { onMessage(participant); close(); }}><span><Icon name="chat"/></span>{m.people.message}</button>
                 {!participant.local && <button type="button" role="menuitem" className={menu.volume === 0 ? "active" : ""}
                         onClick={() => setVolume(menu.volume === 0 ? 1 : 0, true)}>
-                    <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? "Включить звук" : "Заглушить"}
+                    <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? m.people.unmute : m.people.mute}
                 </button>}
-                {!participant.local && canKick && <button type="button" role="menuitem" onClick={() => void moderate("kick")}>Отключить</button>}
-                {!participant.local && canBan && <button type="button" role="menuitem" onClick={() => void moderate("ban")}>Заблокировать</button>}
+                {!participant.local && canKick && <button type="button" role="menuitem" onClick={() => void moderate("kick")}>{m.people.kick}</button>}
+                {!participant.local && canBan && <button type="button" role="menuitem" onClick={() => void moderate("ban")}>{m.people.ban}</button>}
             </div>
         </div>, document.body)}
     </>;
