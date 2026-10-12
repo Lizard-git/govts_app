@@ -369,7 +369,6 @@ func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 	return write()
 }
 
-const SpeakingRMSThreshold = 600
 const SpeakingHangover = 300 * time.Millisecond
 
 type SpeakingDetector struct{ ActiveUntil time.Time }
@@ -382,15 +381,13 @@ func (d *SpeakingDetector) Observe(samples []int16, now time.Time) bool {
 }
 func (d *SpeakingDetector) Speaking(now time.Time) bool { return now.Before(d.ActiveUntil) }
 func activePCM(samples []int16) bool {
-	if len(samples) == 0 {
-		return false
-	}
-	var sum float64
+	// Show even the quietest noise so its sender can be identified.
 	for _, sample := range samples {
-		v := float64(sample)
-		sum += v * v
+		if sample != 0 {
+			return true
+		}
 	}
-	return sum/float64(len(samples)) >= SpeakingRMSThreshold*SpeakingRMSThreshold
+	return false
 }
 
 func (s *State) ObserveSpeaking(id uint64, samples []int16, now time.Time) bool {
