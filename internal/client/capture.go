@@ -139,7 +139,9 @@ func EncodeLoopWithPipeline(
 				}
 			}
 
-			if len(states) > 0 && len(frames) > 0 {
+			// While the user monitors themselves nothing is transmitted, so
+			// the own speaking indicator stays off as others see it.
+			if len(states) > 0 && len(frames) > 0 && states[0].Audio.Monitor() == nil {
 				now := time.Now()
 				if gate != nil && gateConfig.Mode != voicegate.ModeDisabled {
 					states[0].ObserveVoiceActivity(states[0].SessionID(), voicegate.Active(gateConfig, result), now)
@@ -159,6 +161,10 @@ func EncodeLoopWithPipeline(
 				if len(states) > 0 {
 					muted, _, epoch := states[0].Audio.Snapshot()
 					if muted || epoch != released.ControlEpoch {
+						continue
+					}
+					if monitor := states[0].Audio.Monitor(); monitor != nil {
+						monitor(released.Samples)
 						continue
 					}
 				}

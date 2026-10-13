@@ -30,6 +30,7 @@ type AudioControlState struct {
 	epoch              uint64
 	playbackEpoch      uint64
 	player             audio.DeafenPlayer
+	monitor            func([]int16)
 	onChange           func()
 	meter              AudioMeterSample
 	participantVolumes map[uint64]float32
@@ -124,6 +125,21 @@ func clampMeterLevel(value float32) float32 {
 		return 1
 	}
 	return value
+}
+
+// SetMonitor routes the frames released by the voice gate to fn instead of
+// the encoder: the user hears themselves and nothing is sent to the server.
+// A nil fn restores transmission.
+func (a *AudioControlState) SetMonitor(fn func([]int16)) {
+	a.mu.Lock()
+	a.monitor = fn
+	a.mu.Unlock()
+}
+
+func (a *AudioControlState) Monitor() func([]int16) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.monitor
 }
 
 // MaxMicrophoneGain caps the software microphone gain at +6 dB.

@@ -19,40 +19,67 @@ type micPreview struct {
 	done   chan struct{}
 }
 
-// previewSink stands in for the Opus encoder: EncodeLoopWithPipeline hands it
-// exactly the frames the voice gate releases, which the monitor plays back.
-type previewSink struct{ player audio.Player }
+// previewSink stands in for the Opus encoder; the preview never sends.
+type previewSink struct{}
 
-func (s previewSink) Encode(samples []int16) ([]byte, error) {
-	if s.player != nil {
-		return nil, s.player.Write(samples)
-	}
-	return nil, nil
-}
+func (previewSink) Encode([]int16) ([]byte, error) { return nil, nil }
 
 // SetMicrophonePreview requests the preview; it only runs while disconnected
-// and stops for the duration of a connection.
+// and stops for the duration of a connection. Disabling it also stops the
+// monitor, so leaving the microphone settings always resumes transmission.
 func (a *App) SetMicrophonePreview(enabled bool) {
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()
 	a.previewWanted = enabled
 	if !enabled {
-		a.previewMonitor = false
+		a.stopMonitorLocked()
 	}
 	a.syncPreviewLocked()
 }
 
-// SetMicrophoneMonitor plays the preview's transmitted audio back on the
-// playback device so the user hears what others would hear.
-func (a *App) SetMicrophoneMonitor(enabled bool) {
+// SetMicrophoneMonitor plays the frames that pass the voice gate on the
+// playback device. Before joining a server the preview supplies them; in a
+// session the capture pipeline does, and transmission is blocked meanwhile.
+func (a *App) SetMicrophoneMonitor(enabled bool) error {
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()
-	if a.previewMonitor == enabled {
+	if !enabled {
+		a.stopMonitorLocked()
+		return nil
+	}
+	if a.monitor != nil {
+		return nil
+	}
+	return a.startMonitorLocked()
+}
+
+func (a *App) startMonitorLocked() error {
+	// A separate stream: the session player belongs to MixLoop, and the
+	// system mixer combines both on the same device.
+	player, err := audio.NewSwitchablePlayer(clientAudioConfig(), a.AudioDeviceSelection().PlaybackID)
+	if err != nil {
+		return fmt.Errorf("create monitor player: %w", err)
+	}
+	a.monitor = player
+	a.state.Audio.SetMonitor(func(samples []int16) { _ = player.Write(samples) })
+	return nil
+}
+
+func (a *App) stopMonitorLocked() {
+	if a.monitor == nil {
 		return
 	}
-	a.previewMonitor = enabled
-	a.stopPreviewLocked()
-	a.syncPreviewLocked()
+	a.state.Audio.SetMonitor(nil)
+	if err := a.monitor.Close(); err != nil {
+		a.logger.Printf("close monitor player: %v", err)
+	}
+	a.monitor = nil
+}
+
+func (a *App) stopMonitor() {
+	a.previewMu.Lock()
+	defer a.previewMu.Unlock()
+	a.stopMonitorLocked()
 }
 
 func (a *App) syncPreview() {
@@ -61,12 +88,16 @@ func (a *App) syncPreview() {
 	a.syncPreviewLocked()
 }
 
-// restartPreview reopens devices after a selection change; playback only
-// matters while the monitor is on.
+// restartPreview reopens devices after a selection change.
 func (a *App) restartPreview(capture bool) {
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()
-	if !capture && !a.previewMonitor {
+	if !capture {
+		if a.monitor != nil {
+			if err := a.monitor.Switch(a.AudioDeviceSelection().PlaybackID); err != nil {
+				a.logger.Printf("switch monitor player: %v", err)
+			}
+		}
 		return
 	}
 	a.stopPreviewLocked()
@@ -88,10 +119,9 @@ func (a *App) syncPreviewLocked() {
 	preview := &micPreview{cancel: cancel, done: make(chan struct{})}
 	a.preview = preview
 	devices := a.AudioDeviceSelection()
-	monitor := a.previewMonitor
 	go func() {
 		defer close(preview.done)
-		if err := a.runPreview(ctx, devices, monitor); err != nil && !errors.Is(err, context.Canceled) {
+		if err := a.runPreview(ctx, devices); err != nil && !errors.Is(err, context.Canceled) {
 			a.logger.Printf("microphone preview: %v", err)
 		}
 	}()
@@ -106,7 +136,7 @@ func (a *App) stopPreviewLocked() {
 	a.preview = nil
 }
 
-func (a *App) runPreview(ctx context.Context, devices AudioDeviceSelection, monitor bool) (runErr error) {
+func (a *App) runPreview(ctx context.Context, devices AudioDeviceSelection) (runErr error) {
 	codecConfig := clientAudioConfig()
 	filter, err := newMicrophoneFilter(codecConfig, a.state.Audio)
 	if err != nil {
@@ -127,24 +157,6 @@ func (a *App) runPreview(ctx context.Context, devices AudioDeviceSelection, moni
 		return fmt.Errorf("create audio recorder: %w", err)
 	}
 
-	sink := previewSink{}
-	if monitor {
-		player, err := audio.NewSwitchablePlayer(codecConfig, devices.PlaybackID)
-		if err != nil {
-			_ = recorder.Close()
-			return fmt.Errorf("create audio player: %w", err)
-		}
-		defer func() { runErr = errors.Join(runErr, wrapError("close audio player", player.Close())) }()
-		// Attaching applies the current deafen state, as in a session.
-		detach, err := a.state.Audio.AttachPlayer(player)
-		if err != nil {
-			_ = recorder.Close()
-			return err
-		}
-		defer detach()
-		sink.player = player
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	pcmCh := make(chan audio.PCMFrame)
@@ -154,7 +166,7 @@ func (a *App) runPreview(ctx context.Context, devices AudioDeviceSelection, moni
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		errs <- voiceclient.EncodeLoopWithPipeline(ctx, sink, filter, detector, gate, pcmCh, audioCh, a.state)
+		errs <- voiceclient.EncodeLoopWithPipeline(ctx, previewSink{}, filter, detector, gate, pcmCh, audioCh, a.state)
 	}()
 	go func() {
 		defer wg.Done()

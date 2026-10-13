@@ -80,10 +80,10 @@ type App struct {
 	playbackDeviceID    string
 
 	// previewMu is taken before mu; see preview.go.
-	previewMu      sync.Mutex
-	previewWanted  bool
-	previewMonitor bool
-	preview        *micPreview
+	previewMu     sync.Mutex
+	previewWanted bool
+	preview       *micPreview
+	monitor       *audio.SwitchablePlayer
 
 	mu                 sync.Mutex
 	closed             bool
@@ -146,11 +146,12 @@ func (a *App) Connect(options ConnectOptions) error {
 	}
 
 	// The session owns the microphone pipeline and its meter; release the
-	// preview first and resume it if the connection does not start.
+	// preview first and resume it if the connection does not start. The
+	// monitor blocks transmission, so a new session never starts with it.
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()
 	a.stopPreviewLocked()
-	a.previewMonitor = false
+	a.stopMonitorLocked()
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
@@ -494,6 +495,7 @@ func (a *App) Close(ctx context.Context) error {
 		a.cancelLifetime()
 	}
 	a.mu.Unlock()
+	a.stopMonitor()
 	return a.Disconnect(ctx)
 }
 
