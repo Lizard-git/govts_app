@@ -714,10 +714,16 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
         void desktopAPI.setMicrophonePreview(true).catch(() => undefined);
         return () => { void desktopAPI.setMicrophonePreview(false).catch(() => undefined); };
     }, [section]);
-    // Disabling the preview also turns the monitor off on the backend.
+    // Disabling the preview also turns the monitor off on the backend, and so
+    // does starting a connection; in a session the monitor blocks sending.
     const [monitor, setMonitor] = useState(false);
-    const monitorAvailable = view.connectionStatus === "disconnected";
-    useEffect(() => { if (section !== "microphone" || !monitorAvailable) setMonitor(false); }, [section, monitorAvailable]);
+    const inSession = view.connectionStatus !== "disconnected";
+    const wasInSession = useRef(inSession);
+    useEffect(() => {
+        if (inSession && !wasInSession.current) setMonitor(false);
+        wasInSession.current = inSession;
+    }, [inSession]);
+    useEffect(() => { if (section !== "microphone") setMonitor(false); }, [section]);
     const toggleMonitor = () => {
         const next = !monitor;
         setMonitor(next);
@@ -791,12 +797,13 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                        onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
                         <div className="monitor-setting">
                             <button type="button" className={`monitor-button ${monitor ? "active" : ""}`} aria-pressed={monitor}
-                                    disabled={!monitorAvailable} onClick={toggleMonitor}>
+                                    onClick={toggleMonitor}>
                                 <Icon name="sound"/>{monitor ? "Остановить прослушивание" : "Прослушать микрофон"}
                             </button>
-                            <p className="device-hint">{monitorAvailable
-                                ? "Воспроизводит то, что услышат другие участники: после шумоподавления и порога передачи. Используйте наушники, чтобы не было эха."
-                                : "Доступно до подключения к серверу."}</p>
+                            <p className="device-hint">Воспроизводит то, что услышат другие участники: после шумоподавления и порога передачи. Используйте наушники, чтобы не было эха.</p>
+                            {inSession && <p className={`device-hint ${monitor ? "monitor-warning" : ""}`}>{monitor
+                                ? "Идёт прослушивание: ваш голос не передаётся на сервер. Передача возобновится, когда вы остановите прослушивание или закроете настройки микрофона."
+                                : "Во время прослушивания ваш голос не передаётся на сервер."}</p>}
                         </div>
                     </section>}
                 {section === "playback" &&
