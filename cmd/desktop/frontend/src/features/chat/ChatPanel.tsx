@@ -1,8 +1,16 @@
 import {useEffect, useLayoutEffect, useReducer, useRef, useState} from "react";
 import {Icon} from "../../components/Icon";
+import {errorText} from "../../locales";
+import {useLocale} from "../../locales/Locale";
+import {chatLinkParts, openConfirmedLink} from "./chatLinks";
 import {ChatStore, type ChatTarget} from "./chatStore";
 
-const messageDate = (at: number) => new Date(at).toLocaleString("ru", {day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"});
+function ChatMessageText({text}: {text: string}) {
+    return chatLinkParts(text).map((part, index) => part.href
+        ? <a key={index} href={part.href} onClick={(event) => { event.preventDefault(); openConfirmedLink(part.href!); }}>{part.text}</a>
+        : <span key={index}>{part.text}</span>);
+}
+
 const resizeComposer = (input: HTMLTextAreaElement) => {
     input.style.height = "0px";
     const contentHeight = input.scrollHeight + 2;
@@ -11,11 +19,13 @@ const resizeComposer = (input: HTMLTextAreaElement) => {
 };
 
 export function ChatPanel({store, target, title, active, connected, online, localName}: {
-    store: ChatStore; target: ChatTarget; title: string; active: boolean; connected: boolean; online?: boolean; localName: string;
+    store: ChatStore; target: ChatTarget; title: string; active: boolean; connected: boolean; online?: boolean;     localName: string;
 }) {
+    const {m, htmlLang} = useLocale();
+    const messageDate = (at: number) => new Date(at).toLocaleString(htmlLang, {day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"});
     const [, refresh] = useReducer((n: number) => n + 1, 0);
     const history = useRef<HTMLDivElement>(null);
-    const composer = useRef<HTMLTextAreaElement>(null);
+    const composer = useRef<HTMLTextAreaElement | null>(null);
     const atBottom = useRef(true);
     const previousHeight = useRef<number | null>(null);
     const previousAnchor = useRef<{id: string; top: number} | null>(null);
@@ -83,9 +93,9 @@ export function ChatPanel({store, target, title, active, connected, online, loca
         refresh();
     };
     return <section className="chat-panel" aria-label={title}>
-        {target.kind === "direct" && <header className="chat-heading"><strong>{title}</strong><span>{online ? "В сети" : "Не в сети"}</span></header>}
-        {c.error && <div className="chat-error" role="alert">{c.error}<button onClick={() => void store.sync(target)} disabled={!connected || c.loading}>Повторить</button></div>}
-        <div ref={history} className="chat-history" aria-label="История сообщений" onScroll={() => {
+        {target.kind === "direct" && <header className="chat-heading"><strong>{title}</strong><span>{online ? m.chat.online : m.chat.offline}</span></header>}
+        {c.error && <div className="chat-error" role="alert">{errorText(c.error, m)}<button onClick={() => void store.sync(target)} disabled={!connected || c.loading}>{m.chat.retry}</button></div>}
+        <div ref={history} className="chat-history" aria-label={m.chat.history} onScroll={() => {
             const node = history.current;
             if (!node) return;
             atBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
@@ -95,15 +105,15 @@ export function ChatPanel({store, target, title, active, connected, online, loca
             }
             if (active && connected && node.scrollTop < 20 && node.scrollHeight > node.clientHeight && c.hasOlder && !c.loading) void older();
         }}>
-            {c.hasOlder && <button className="chat-older" disabled={!connected || c.loading} onClick={() => void older()}>Более ранние сообщения</button>}
-            {!c.loaded && <div className="chat-placeholder"><Icon name="chat"/><p>{c.loading ? "Загрузка сообщений…" : connected ? "Откройте чат для загрузки" : "Ожидание подключения"}</p></div>}
-            {c.loaded && !c.messages.length && !c.pending.length && <div className="chat-placeholder">Сообщений пока нет</div>}
-            {c.messages.map((m) => <article key={m.id} data-message-id={m.id} className={`chat-message ${m.senderId === store.userId ? "own" : ""}`}>
-                <time dateTime={new Date(m.sentAtMs).toISOString()}>{messageDate(m.sentAtMs)}</time>{" "}<strong>{m.senderName}</strong>{": "}<span>{m.text}</span>
+            {c.hasOlder && <button className="chat-older" disabled={!connected || c.loading} onClick={() => void older()}>{m.chat.older}</button>}
+            {!c.loaded && <div className="chat-placeholder"><Icon name="chat"/><p>{c.loading ? m.chat.loading : connected ? m.chat.openToLoad : m.chat.waiting}</p></div>}
+            {c.loaded && !c.messages.length && !c.pending.length && <div className="chat-placeholder">{m.chat.empty}</div>}
+            {c.messages.map((message) => <article key={message.id} data-message-id={message.id} className={`chat-message ${message.senderId === store.userId ? "own" : ""}`}>
+                <time dateTime={new Date(message.sentAtMs).toISOString()}>{messageDate(message.sentAtMs)}</time>{" "}<strong>{message.senderName}</strong>{": "}<ChatMessageText text={message.text}/>
             </article>)}
             {c.pending.map((p) => <article key={p.clientId} className="chat-message own pending">
-                <time dateTime={new Date(p.sentAtMS).toISOString()}>{messageDate(p.sentAtMS)}</time>{" "}<strong>{localName}</strong>{": "}<span>{p.text}</span>{" "}
-                {p.state === "sending" ? <span className="chat-send-status" role="status" aria-label="Отправляется" title="Отправляется">…</span> : <button disabled={!connected} title={p.error} aria-label={`Повторить отправку: ${p.error ?? "ошибка"}`} onClick={() => void store.send(target, p.text, p)}>Повторить</button>}
+                <time dateTime={new Date(p.sentAtMS).toISOString()}>{messageDate(p.sentAtMS)}</time>{" "}<strong>{localName}</strong>{": "}<ChatMessageText text={p.text}/>{" "}
+                {p.state === "sending" ? <span className="chat-send-status" role="status" aria-label={m.chat.sending} title={m.chat.sending}>…</span> : <button disabled={!connected} title={errorText(p.error ?? "", m)} aria-label={m.chat.retrySend(errorText(p.error ?? "chat-send-failed", m))} onClick={() => void store.send(target, p.text, p)}>{m.chat.retry}</button>}
             </article>)}
         </div>
         {(newMessages || c.olderWindow || c.newMessages) && <button className="chat-new" disabled={!connected || c.loading} onClick={async () => {
@@ -112,13 +122,13 @@ export function ChatPanel({store, target, title, active, connected, online, loca
             if (history.current) history.current.scrollTop = history.current.scrollHeight;
             atBottom.current = true; setNewMessages(false);
             if (active && connected && visible) void store.markRead(target);
-        }}>К новым сообщениям ↓</button>}
+        }}>{m.chat.jump}</button>}
         <div className="chat-composer">
-            <textarea ref={composer} rows={1} maxLength={1000} aria-label="Сообщение" title="Enter — отправить, Shift+Enter — новая строка" placeholder={connected ? "Написать сообщение…" : "Черновик — ожидание подключения"} value={c.draft}
+            <textarea ref={composer} rows={1} maxLength={1000} aria-label={m.chat.message} title={m.chat.composerHint} placeholder={connected ? m.chat.placeholder : m.chat.draftWaiting} value={c.draft}
                 onChange={(event) => store.setDraft(target, event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }}/>
-            <small title="Размер сообщения в байтах UTF-8">{bytes}/1000</small>
-            <button disabled={!connected || !valid} type="button" onClick={send}>Отправить</button>
+            <small title={m.chat.bytes}>{bytes}/1000</small>
+            <button disabled={!connected || !valid} type="button" onClick={send}>{m.chat.send}</button>
         </div>
     </section>;
 }

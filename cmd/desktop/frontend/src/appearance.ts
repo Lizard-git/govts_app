@@ -1,3 +1,5 @@
+import {errorCode} from "./locales";
+
 // Применение внешнего вида. Базовые цвета совпадают с theme.css.
 // Встроенные темы только подменяют палитру. Своя тема дополнительно
 // задаёт шрифт и подложку сцены. Производные роли пересчитываются в CSS.
@@ -345,17 +347,17 @@ export function downloadThemeFile(theme: SavedTheme): void {
 }
 
 export function readThemeFile(file: File): Promise<SavedTheme> {
-    if (file.size > maxThemeFileBytes) return Promise.reject(new Error("Файл темы больше 2 МБ."));
+    if (file.size > maxThemeFileBytes) return Promise.reject(new Error(errorCode("theme-file-too-big")));
     return file.text().then((text) => {
         let parsed: unknown;
         try {
             parsed = JSON.parse(text);
         } catch {
-            throw new Error("Файл темы повреждён.");
+            throw new Error(errorCode("theme-file-corrupt"));
         }
-        if (!parsed || typeof parsed !== "object") throw new Error("Это не файл темы Sonoryx.");
+        if (!parsed || typeof parsed !== "object") throw new Error(errorCode("theme-not-sonoryx"));
         const source = parsed as {format?: unknown; version?: unknown; name?: unknown; colors?: unknown; fontFamily?: unknown; fontSize?: unknown; stageBackdrop?: unknown; stageImage?: unknown};
-        if (source.format !== themeFileFormat || source.version !== 1) throw new Error("Это не файл темы Sonoryx.");
+        if (source.format !== themeFileFormat || source.version !== 1) throw new Error(errorCode("theme-not-sonoryx"));
         const theme = normalizeSavedTheme({
             id: crypto.randomUUID(),
             name: source.name,
@@ -365,7 +367,7 @@ export function readThemeFile(file: File): Promise<SavedTheme> {
             stageBackdrop: source.stageBackdrop,
             stageImage: source.stageImage,
         });
-        if (!theme) throw new Error("В файле нет цветов темы.");
+        if (!theme) throw new Error(errorCode("theme-no-colors"));
         return theme;
     });
 }
@@ -386,7 +388,7 @@ export function saveAppearance(appearance: Appearance): Appearance {
     try {
         localStorage.setItem(storageKey, JSON.stringify(normalized));
     } catch {
-        throw new Error("Недостаточно места, чтобы сохранить тему. Выберите картинку меньше.");
+        throw new Error(errorCode("theme-storage"));
     }
     if (normalized.theme !== "custom") localStorage.setItem(legacyThemeKey, normalized.theme);
     return normalized;
@@ -416,19 +418,19 @@ export function readStageImage(file: File): Promise<string> {
     const extension = file.name.toLowerCase();
     const allowedType = file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/webp";
     const allowedName = /\.(png|jpe?g|webp)$/.test(extension);
-    if (!allowedType && !(file.type === "" && allowedName)) return Promise.reject(new Error("Подходит PNG, JPEG или WebP."));
-    if (file.size > maxStageImageBytes) return Promise.reject(new Error("Картинка больше 1,2 МБ."));
+    if (!allowedType && !(file.type === "" && allowedName)) return Promise.reject(new Error(errorCode("image-type")));
+    if (file.size > maxStageImageBytes) return Promise.reject(new Error(errorCode("image-too-big")));
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
             const result = typeof reader.result === "string" ? reader.result : "";
             if (!stageImageValue(result)) {
-                reject(new Error("Не удалось прочитать картинку."));
+                reject(new Error(errorCode("image-read")));
                 return;
             }
             resolve(result);
         };
-        reader.onerror = () => reject(new Error("Не удалось прочитать картинку."));
+        reader.onerror = () => reject(new Error(errorCode("image-read")));
         reader.readAsDataURL(file);
     });
 }

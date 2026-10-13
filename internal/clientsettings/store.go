@@ -24,8 +24,12 @@ type Settings struct {
 	VADSensitivity     float32           `json:"vadSensitivity"`
 	TrustedMediaKeys   map[string]string `json:"trustedMediaKeys,omitempty"`
 	Theme              string            `json:"theme,omitempty"`
-	CloseToTray        bool              `json:"closeToTray"`
-	RecentServers      []RecentServer    `json:"recentServers,omitempty"`
+	// Locale is the interface language: 2–8 lowercase letters, for example ru, en, ky.
+	// Empty means Russian. Unknown values are kept only if they match that shape,
+	// so a new language does not require a settings change. Version stays 1.
+	Locale        string         `json:"locale,omitempty"`
+	CloseToTray   bool           `json:"closeToTray"`
+	RecentServers []RecentServer `json:"recentServers,omitempty"`
 }
 
 type RecentServer struct {
@@ -45,6 +49,23 @@ const (
 	ThemeBrown   = "brown"
 	ThemePurple  = "purple"
 )
+
+// NormalizeLocale accepts an empty value as Russian and any 2–8 letter language id.
+// The boolean is false when the value is not a language id.
+func NormalizeLocale(value string) (string, bool) {
+	if value == "" {
+		return "ru", true
+	}
+	if len(value) < 2 || len(value) > 8 {
+		return "", false
+	}
+	for _, r := range value {
+		if r < 'a' || r > 'z' {
+			return "", false
+		}
+	}
+	return value, true
+}
 
 func NormalizeTheme(value string) string {
 	switch value {

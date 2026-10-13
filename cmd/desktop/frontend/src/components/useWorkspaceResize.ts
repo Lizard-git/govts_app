@@ -1,5 +1,6 @@
 import {useLayoutEffect, useRef, useState} from "react";
 import type {CSSProperties, KeyboardEvent, PointerEvent} from "react";
+import {useLocale} from "../locales/Locale";
 
 type Side = "browser" | "info";
 const defaults = {browser: 210, info: 245};
@@ -7,6 +8,7 @@ const dividerWidth = 6;
 const minimumCenterWidth = 520;
 
 export function useWorkspaceResize(showInfo: boolean) {
+    const {m} = useLocale();
     const layoutRef = useRef<HTMLDivElement>(null);
     const drag = useRef<{side: Side; startX: number; startWidth: number} | null>(null);
     const [resizing, setResizing] = useState(false);
@@ -47,12 +49,12 @@ export function useWorkspaceResize(showInfo: boolean) {
         role: "separator" as const,
         tabIndex: 0,
         "aria-orientation": "vertical" as const,
-        "aria-label": side === "browser" ? "Ширина списка каналов" : "Ширина информации о канале",
+        "aria-label": side === "browser" ? m.channels.resizeChannels : m.channels.resizeInfo,
         "aria-controls": side === "browser" ? "channel-browser-pane" : "channel-info-pane",
         "aria-valuemin": Math.round(minimums[side]),
         "aria-valuemax": Math.round(maximums[side]),
         "aria-valuenow": Math.round(widths[side]),
-        "aria-valuetext": `${Math.round(widths[side])} пикселей`,
+        "aria-valuetext": m.channels.pixels(Math.round(widths[side])),
         onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
             if (event.button !== 0) return;
             event.preventDefault();

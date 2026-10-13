@@ -6,6 +6,7 @@ import {desktopAPI} from "./api";
 import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
 import {ScreenSharing, ScreenStageTile, ScreenViewerWindow} from "./features/screen/ScreenViews";
+import {LinkConfirmDialog} from "./features/chat/LinkConfirm";
 import {ScreenShareDialog, useScreenSharing, type ScreenSharingState} from "./features/screen/ScreenShareDialog";
 import {AudioControls, ConnectionPage, LobbyBar, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
@@ -18,6 +19,8 @@ import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
 import {UpdateButton, UpdateDialog, UpdatesPanel, useUpdates, type UpdatesState} from "./features/updates/Updates";
 import {applyAppearance, createCustomAppearance, downloadThemeFile, loadAppearance, maxSavedThemes, normalizeTheme, readThemeFile, saveAppearance, snapshotTheme, themeColor, type Appearance, type SavedTheme, type StageBackdrop} from "./appearance";
+import {errorCode, errorText, rawError, type Messages} from "./locales";
+import {LocaleSwitch, useLocale} from "./locales/Locale";
 import {InterfaceSettings} from "./features/settings/InterfaceSettings";
 import {StageScene} from "./features/settings/StageScene";
 
@@ -47,11 +50,8 @@ const emptyView: ClientViewDTO = {
     },
 };
 
-function errorText(error: unknown): string {
-    return (error instanceof Error ? error.message : String(error)).replace(/^Error:\s*/, "");
-}
-
 function App() {
+    const {m} = useLocale();
     const [appearance, setAppearanceState] = useState(loadAppearance);
     useEffect(() => {
         applyAppearance(loadAppearance());
@@ -144,7 +144,7 @@ function App() {
             });
             return;
         }
-        if (current.savedThemes.length >= maxSavedThemes) throw new Error("Можно сохранить не больше 24 тем.");
+        if (current.savedThemes.length >= maxSavedThemes) throw new Error(errorCode("theme-limit"));
         remember({
             ...current,
             theme: "custom",
@@ -158,7 +158,7 @@ function App() {
     const importThemeFile = async (file: File) => {
         const theme = await readThemeFile(file);
         const current = loadAppearance();
-        if (current.savedThemes.length >= maxSavedThemes) throw new Error("Можно сохранить не больше 24 тем.");
+        if (current.savedThemes.length >= maxSavedThemes) throw new Error(errorCode("theme-limit"));
         remember({
             ...current,
             theme: "custom",
@@ -193,7 +193,7 @@ function App() {
     };
     const params = new URLSearchParams(window.location.search);
     const streamID = params.get("screen");
-    if (streamID) return <ScreenViewerWindow streamID={streamID} ownerName={params.get("owner") || "Участник"}/>;
+    if (streamID) return <ScreenViewerWindow streamID={streamID} ownerName={params.get("owner") || m.screen.participant}/>;
     return <MainApp appearance={appearance} setTheme={setTheme} createCustomTheme={createCustomTheme} updateAppearance={updateAppearance} openSavedTheme={openSavedTheme} saveNamedTheme={saveNamedTheme} importThemeFile={importThemeFile} deleteSavedTheme={deleteSavedTheme} exportTheme={exportTheme}/>;
 }
 
@@ -208,6 +208,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
     deleteSavedTheme: (id: string) => void;
     exportTheme: (theme: SavedTheme) => void;
 }) {
+    const {m} = useLocale();
     const [view, setView] = useState<ClientViewDTO>(emptyView);
     const [page, setPage] = useState<Page>("channels");
     const [contentTab, setContentTab] = useState<ContentTab>("chat");
@@ -237,7 +238,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         setRefreshingServers(true);
         setActionError("");
         try { await desktopAPI.refreshServerStatuses(); }
-        catch (error) { setActionError(errorText(error)); }
+        catch (error) { setActionError(rawError(error)); }
         finally { refreshingServersRef.current = false; setRefreshingServers(false); }
     }, []);
     const startupStatusesRequested = useRef(false);
@@ -254,7 +255,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
     sharingRef.current = sharing;
     useEffect(() => desktopAPI.onTrayScreenShare(() => { void sharingRef.current.toggle(); }), []);
     const updates = useUpdates(() => {
-        if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед обновлением");
+        if (sharing.pending) throw new Error(errorCode("screen-picker-update"));
         chatStore?.prepareUpdate();
     });
 
@@ -266,7 +267,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
             next.screenStreams ??= [];
             setView(next);
         } catch (error) {
-            setActionError(errorText(error));
+            setActionError(rawError(error));
         }
     }, []);
 
@@ -280,7 +281,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
             }
             setEvents((current) => mergeEventTail(current, next));
         } catch (error) {
-            setActionError(errorText(error));
+            setActionError(rawError(error));
         }
     }, []);
 
@@ -320,7 +321,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
             await operation();
             await refresh();
         } catch (error) {
-            setActionError(errorText(error));
+            setActionError(rawError(error));
         }
     }, [refresh]);
 
@@ -353,11 +354,11 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
                 />
             </> : <>
             <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
-            {actionError && <div className="error-banner" role="alert">{actionError}</div>}
+            {actionError && <div className="error-banner" role="alert">{errorText(actionError, m)}</div>}
             <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
                           stageBackdrop={appearance.theme === "custom" ? appearance.stageBackdrop : "mountains"}
                           onReconnect={(address) => invoke(async () => {
-                              if (sharing.pending) throw new Error("Завершите выбор источника демонстрации перед сменой сервера");
+                              if (sharing.pending) throw new Error(errorCode("screen-picker-switch"));
                               await screenMedia.current?.close();
                               clearEvents();
                               await desktopAPI.reconnectServer(address);
@@ -371,6 +372,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         </SettingsOverlay>}
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
+        <LinkConfirmDialog/>
     </div>;
 }
 
@@ -390,9 +392,10 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
     chatStore: ChatStore | null;
     stageBackdrop: StageBackdrop;
 }) {
+    const {m} = useLocale();
     const channels = view.channels ?? [];
     const participants = view.participants ?? [];
-    const localChatName = participants.find((p) => p.sessionId === view.sessionId)?.displayName ?? participants.find((p) => p.userId === chatStore?.userId)?.displayName ?? "Вы";
+    const localChatName = participants.find((p) => p.sessionId === view.sessionId)?.displayName ?? participants.find((p) => p.userId === chatStore?.userId)?.displayName ?? m.channels.you;
     const lastChatChannel = useRef(view.channelId);
     if (view.channelId !== "0") lastChatChannel.current = view.channelId;
     const chatChannelID = view.channelId !== "0" ? view.channelId : lastChatChannel.current;
@@ -429,7 +432,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
     }, [hasScreens, contentTab, setContentTab]);
     const openDirect = (userId: string, displayName: string) => {
         if (!chatStore || userId === "0" || userId === chatStore.userId) return;
-        if (directChats.length >= 16 && !directChats.some((chat) => chat.userId === userId)) { onError("Закройте одну из личных вкладок перед открытием новой"); return; }
+        if (directChats.length >= 16 && !directChats.some((chat) => chat.userId === userId)) { onError(errorCode("direct-chat-limit")); return; }
         setDirectChats((current) => current.some((chat) => chat.userId === userId) ? current :
             [...current, {userId, displayName}]);
         const tab: ContentTab = `direct:${userId}`;
@@ -455,9 +458,9 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
     return <section className="channels-page">
         <div ref={workspaceResize.layoutRef} style={workspaceResize.style} className={`channels-layout ${infoVisible ? "" : "info-hidden"} ${workspaceResize.resizing ? "is-resizing" : ""}`}>
             <section id="channel-browser-pane" className={`panel channel-browser ${serversExpanded ? "servers-expanded" : ""}`}>
-                <section className="sidebar-section" aria-label="Каналы сервера">
+                <section className="sidebar-section" aria-label={m.channels.browser}>
                 <div className="panel-heading">
-                    <div><h2>Каналы</h2></div>
+                    <div><h2>{m.channels.title}</h2></div>
                     <span className="count-badge">{participants.length}</span></div>
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants} screenOwners={screenOwners}
                                                              canKick={view.canKick} canBan={view.canBan}
@@ -473,17 +476,17 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
             <section className="channel-stage">{selected ? <>
-                <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || "Голосовой канал"}>{selected.topic || "Голосовой канал"}</p></div>
-                    <button className="info-toggle" aria-label="Информация о канале" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
+                <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || m.channels.voice}>{selected.topic || m.channels.voice}</p></div>
+                    <button className="info-toggle" aria-label={m.channels.info} aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
-                <div className="participants-stage" data-backdrop={stageBackdrop} role="region" tabIndex={0} aria-label="Участники канала, горизонтальная прокрутка"><StageScene backdrop={stageBackdrop}/><div className="participants-strip">
+                <div className="participants-stage" data-backdrop={stageBackdrop} role="region" tabIndex={0} aria-label={m.channels.stage}><StageScene backdrop={stageBackdrop}/><div className="participants-strip">
                     {members.length ? members.map((participant) => <div className="stage-participant-group" key={participant.sessionId}><ParticipantRow
                         participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
                         depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>
-                        {channelStreams.filter((stream) => stream.ownerSessionId === participant.sessionId).map((stream) => <ScreenStageTile key={stream.id} stream={stream} ownerName={participant.displayName} local={participant.local} connected={view.connectionStatus === "connected"} onError={onError}/>)}</div>) : <div className="stage-empty">В канале пока никого нет</div>}
+                        {channelStreams.filter((stream) => stream.ownerSessionId === participant.sessionId).map((stream) => <ScreenStageTile key={stream.id} stream={stream} ownerName={participant.displayName} local={participant.local} connected={view.connectionStatus === "connected"} onError={onError}/>)}</div>) : <div className="stage-empty">{m.channels.emptyStage}</div>}
                 </div></div>
                 <section className="channel-content">
-                    <div className="channel-tabs" role="tablist" aria-label="Содержимое канала" onKeyDown={(event) => {
+                    <div className="channel-tabs" role="tablist" aria-label={m.channels.content} onKeyDown={(event) => {
                         if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
                         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
                         event.preventDefault();
@@ -492,43 +495,43 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                         setContentTab(next);
                         document.getElementById(`${next}-tab`)?.focus();
                     }}>
-                        <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>Чат{chatStore && chatChannelID !== "0" && chatStore.conversation({kind: "channel", id: chatChannelID}).unread > 0 && <span className="count-badge">{chatStore.conversation({kind: "channel", id: chatChannelID}).unread}</span>}</button>
-                        {hasScreens && <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>Демонстрации<span className="count-badge">{channelStreams.length}</span></button>}
-                        <button id="events-tab" role="tab" tabIndex={contentTab === "events" ? 0 : -1} aria-selected={contentTab === "events"} aria-controls="events-panel" onClick={() => setContentTab("events")}>События</button>
+                        <button id="chat-tab" role="tab" tabIndex={contentTab === "chat" ? 0 : -1} aria-selected={contentTab === "chat"} aria-controls="chat-panel" onClick={() => setContentTab("chat")}><Icon name="chat"/>{m.channels.chat}{chatStore && chatChannelID !== "0" && chatStore.conversation({kind: "channel", id: chatChannelID}).unread > 0 && <span className="count-badge">{chatStore.conversation({kind: "channel", id: chatChannelID}).unread}</span>}</button>
+                        {hasScreens && <button id="screens-tab" role="tab" tabIndex={contentTab === "screens" ? 0 : -1} aria-selected={contentTab === "screens"} aria-controls="screens-panel" onClick={() => setContentTab("screens")}><Icon name="screen"/>{m.channels.screens}<span className="count-badge">{channelStreams.length}</span></button>}
+                        <button id="events-tab" role="tab" tabIndex={contentTab === "events" ? 0 : -1} aria-selected={contentTab === "events"} aria-controls="events-panel" onClick={() => setContentTab("events")}>{m.channels.events}</button>
                         {directChats.map((chat) => {
                             const tab: ContentTab = `direct:${chat.userId}`;
                             const dialog = dialogs.find((d) => d.userId === chat.userId);
                             const name = participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialog?.displayName ?? chat.displayName;
                             return <div className="direct-tab" role="presentation" key={chat.userId} data-active={contentTab === tab}>
                                 <button id={`${tab}-tab`} role="tab" tabIndex={contentTab === tab ? 0 : -1} aria-selected={contentTab === tab} aria-controls={`${tab}-panel`} title={name} onClick={() => setContentTab(tab)}><span>{name}</span>{!!dialog?.unread && <span className="count-badge">{dialog.unread}</span>}</button>
-                                <button className="close-chat-tab" type="button" aria-label={`Закрыть личный чат: ${name}`} title="Закрыть вкладку" onClick={() => closeMessage(chat.userId)}>×</button>
+                                <button className="close-chat-tab" type="button" aria-label={m.channels.closeDirect(name)} title={m.channels.closeTab} onClick={() => closeMessage(chat.userId)}>×</button>
                             </div>;
                         })}
                     </div>
-                    <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}>{chatStore && chatChannelID !== "0" ? <ChatPanel key={chatChannelID} store={chatStore} localName={localChatName} target={{kind: "channel", id: chatChannelID}} title={`Чат канала: ${channels.find((c) => c.id === chatChannelID)?.name ?? ""}`} active={contentTab === "chat"} connected={view.connectionStatus === "connected" && view.channelId === chatChannelID}/> : <div className="chat-placeholder">Ожидание подключения к каналу</div>}</div>
+                    <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}>{chatStore && chatChannelID !== "0" ? <ChatPanel key={chatChannelID} store={chatStore} localName={localChatName} target={{kind: "channel", id: chatChannelID}} title={m.channels.channelChat(channels.find((c) => c.id === chatChannelID)?.name ?? "")} active={contentTab === "chat"} connected={view.connectionStatus === "connected" && view.channelId === chatChannelID}/> : <div className="chat-placeholder">{m.channels.waitingChannel}</div>}</div>
                     {hasScreens && <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants}/></div>}
                     <div id="events-panel" role="tabpanel" aria-labelledby="events-tab" hidden={contentTab !== "events"}><EventPanel events={events} active={contentTab === "events"}/></div>
                     {directChats.map((chat) => <div key={chat.userId} id={`direct:${chat.userId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.userId}-tab`} hidden={contentTab !== `direct:${chat.userId}`}>
-                        {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={`Личные сообщения: ${participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName}`} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
+                        {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={m.channels.direct(participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName)} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
                     </div>)}
                 </section>
-            </> : <div className="empty-state">Ожидание подключения к каналу</div>}
+            </> : <div className="empty-state">{m.channels.waitingChannel}</div>}
                 <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div>
             </section>
             {infoVisible && <div className="workspace-divider info-divider" {...workspaceResize.separatorProps("info")}/>}
-            {showInfo && selected && <section id="channel-info-pane" className="panel channel-detail">{selected ? <><div className="channel-info-heading"><span>Информация о канале</span><button aria-label="Закрыть информацию о канале" onClick={() => setShowInfo(false)}>×</button></div>
+            {showInfo && selected && <section id="channel-info-pane" className="panel channel-detail">{selected ? <><div className="channel-info-heading"><span>{m.channels.info}</span><button aria-label={m.channels.closeInfo} onClick={() => setShowInfo(false)}>×</button></div>
                 <h2>{selected.name}</h2>
-                <p className="channel-topic">{selected.topic || "Голосовой канал"}</p><p
-                    className="channel-description">{selected.description || "Описание канала пока не задано."}</p>
+                <p className="channel-topic">{selected.topic || m.channels.voice}</p><p
+                    className="channel-description">{selected.description || m.channels.noDescription}</p>
                 <div className="detail-grid">
                     <div>
-                        <span>Участники</span><strong>{participants.filter((item) => item.channelId === selected.id).length}{selected.maxUsers ? ` / ${selected.maxUsers}` : ""}</strong>
+                        <span>{m.channels.members}</span><strong>{participants.filter((item) => item.channelId === selected.id).length}{selected.maxUsers ? ` / ${selected.maxUsers}` : ""}</strong>
                     </div>
-                    <div><span>Кодек</span><strong>{selected.audio.codec.toUpperCase()}</strong></div>
-                    <div><span>Частота</span><strong>{selected.audio.sampleRate / 1000} кГц</strong></div>
-                    <div><span>Битрейт</span><strong>{selected.audio.bitrate / 1000} кбит/с</strong></div>
+                    <div><span>{m.channels.codec}</span><strong>{selected.audio.codec.toUpperCase()}</strong></div>
+                    <div><span>{m.channels.rate}</span><strong>{m.channels.khz(selected.audio.sampleRate / 1000)}</strong></div>
+                    <div><span>{m.channels.bitrate}</span><strong>{m.channels.kbps(selected.audio.bitrate / 1000)}</strong></div>
                 </div>
-            </> : <div className="empty-state">Выберите канал</div>}</section>}
+            </> : <div className="empty-state">{m.channels.pickChannel}</div>}</section>}
         </div>
     </section>;
 }
@@ -546,6 +549,7 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
     onError: (message: string) => void;
     onMessage: (participant: ParticipantDTO) => void;
 }) {
+    const {m} = useLocale();
     const [draggingSessionID, setDraggingSessionID] = useState<string | null>(null);
     const [dropTargetID, setDropTargetID] = useState<string | null>(null);
     const children = useMemo(() => {
@@ -559,7 +563,7 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
             <button
                 className={`channel-row ${currentID === channel.id ? "selected current" : ""} ${canDrop && dropTargetID === channel.id ? "drop-target" : ""}`}
                 style={{paddingLeft: 14 + depth * 18}}
-                title={canDrop ? "Переместить участника в этот канал" : !channel.canJoin ? "Нет доступа к каналу" : undefined}
+                title={canDrop ? m.channels.dropHere : !channel.canJoin ? m.channels.noAccess : undefined}
                 onDragOver={(event) => {
                     if (!canDrop) return;
                     event.preventDefault();
@@ -597,22 +601,23 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
                                                           onDragEnd={() => { setDraggingSessionID(null); setDropTargetID(null); }}/>)}{renderLevel(channel.id, depth + 1)}</div>;
     });
     return <div className="channel-tree">{channels.length ? renderLevel("0", 0) :
-        <div className="empty-state">Нет доступных каналов или совпадений</div>}</div>;
+        <div className="empty-state">{m.channels.noChannels}</div>}</div>;
 }
 
 function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean}) {
+    const {m, htmlLang} = useLocale();
     const listRef = useRef<HTMLDivElement>(null);
     const stickToBottom = useRef(true);
     useEffect(() => {
         if (active && stickToBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
     }, [events, active]);
-    return <section className="panel event-panel" aria-label="Журнал событий">
+    return <section className="panel event-panel" aria-label={m.channels.eventLog}>
         <div className="event-list" ref={listRef} onScroll={(event) => {
             const element = event.currentTarget;
             stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 12;
-        }}>{events.length === 0 ? <div className="empty-event">События появятся после подключения</div> :
+        }}>{events.length === 0 ? <div className="empty-event">{m.channels.eventsEmpty}</div> :
             events.map((item) => <div className={`event-row kind-${item.kind}`} key={item.sequence}>
-                <time>{new Date(item.time).toLocaleTimeString("ru-RU", {
+                <time>{new Date(item.time).toLocaleTimeString(htmlLang, {
                     hour: "2-digit", minute: "2-digit", second: "2-digit"
                 })}</time>
                 <span className="event-marker"/><span>{item.message}</span>
@@ -620,25 +625,28 @@ function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean
     </section>;
 }
 
-const vadModeOptions: SelectOption[] = [
-    {value: "level", label: "По громкости"},
-    {value: "vad", label: "Распознавание речи"},
-    {value: "hybrid", label: "Гибридный"},
-];
-
-function deviceOptions(devices: AudioDeviceDTO[]): SelectOption[] {
+function vadModeOptions(m: Messages): SelectOption[] {
     return [
-        {value: "", label: "Системное устройство по умолчанию"},
+        {value: "level", label: m.settings.vadLevel},
+        {value: "vad", label: m.settings.vadSpeech},
+        {value: "hybrid", label: m.settings.vadHybrid},
+    ];
+}
+
+function deviceOptions(devices: AudioDeviceDTO[], m: Messages): SelectOption[] {
+    return [
+        {value: "", label: m.settings.systemDevice},
         ...devices.map((device) => ({
             value: device.id,
             label: device.name,
-            detail: device.isDefault ? "Системное по умолчанию" : undefined,
-            selectedLabel: device.isDefault ? `${device.name} — системное по умолчанию` : device.name,
+            detail: device.isDefault ? m.settings.systemDefault : undefined,
+            selectedLabel: device.isDefault ? m.settings.systemNamed(device.name) : device.name,
         })),
     ];
 }
 
 function SettingsOverlay({onClose, children}: {onClose: () => void; children: ReactNode}) {
+    const {m} = useLocale();
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -652,8 +660,8 @@ function SettingsOverlay({onClose, children}: {onClose: () => void; children: Re
     return <div className="settings-overlay" onMouseDown={(event) => {
         if (event.button === 0 && event.target === event.currentTarget) onClose();
     }}>
-        <div className="settings-window" role="dialog" aria-modal="true" aria-label="Настройки">
-            <button type="button" className="settings-close" title="Закрыть" aria-label="Закрыть" autoFocus onClick={onClose}><Icon name="close"/></button>
+        <div className="settings-window" role="dialog" aria-modal="true" aria-label={m.settings.title}>
+            <button type="button" className="settings-close" title={m.settings.close} aria-label={m.settings.close} autoFocus onClick={onClose}><Icon name="close"/></button>
             {children}
         </div>
     </div>;
@@ -673,6 +681,7 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
     exportTheme: (theme: SavedTheme) => void;
     updates: UpdatesState;
 }) {
+    const {m} = useLocale();
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
     const [rnnoiseSensitivity, setRNNoiseSensitivity] = useState(view.audio.rnnoiseSensitivity);
@@ -701,7 +710,7 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
             setDevices(next);
             setDevicesError("");
         } catch (error) {
-            setDevicesError(errorText(error));
+            setDevicesError(rawError(error));
         }
     }, []);
     useEffect(() => {
@@ -738,87 +747,92 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
             else await desktopAPI.setPlaybackDevice(id);
             await loadDevices();
         } catch (error) {
-            setDevicesError(errorText(error));
+            setDevicesError(rawError(error));
         } finally {
             setDevicePending(false);
         }
     };
     return <section className="settings-page">
-        <div className="settings-heading"><p className="eyebrow">ПАРАМЕТРЫ КЛИЕНТА</p><h2>Настройки</h2></div>
+        <div className="settings-heading"><p className="eyebrow">{m.settings.eyebrow}</p><h2>{m.settings.title}</h2></div>
         <div className="settings-layout">
-            <nav className="settings-nav" aria-label="Разделы настроек">
-                <button type="button" aria-current={section === "microphone" ? "page" : undefined} onClick={() => setSection("microphone")}>Микрофон</button>
-                <button type="button" aria-current={section === "playback" ? "page" : undefined} onClick={() => setSection("playback")}>Воспроизведение</button>
-                <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>Интерфейс</button>
-                <button type="button" aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}>Обновления</button>
+            <nav className="settings-nav" aria-label={m.settings.sections}>
+                <button type="button" aria-current={section === "microphone" ? "page" : undefined} onClick={() => setSection("microphone")}>{m.settings.microphone}</button>
+                <button type="button" aria-current={section === "playback" ? "page" : undefined} onClick={() => setSection("playback")}>{m.settings.playback}</button>
+                <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>{m.settings.interface}</button>
+                <button type="button" aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}>{m.settings.updates}</button>
             </nav>
             <div className="settings-content">
-                {(section === "microphone" || section === "playback") && devicesError && <div className="device-error" role="alert">Не удалось получить аудиоустройства: {devicesError}
-                    <button className="text-button" onClick={() => void loadDevices()}>Повторить</button>
+                {(section === "microphone" || section === "playback") && devicesError && <div className="device-error" role="alert">{m.settings.devicesFailed}: {errorText(devicesError, m)}
+                    <button className="text-button" onClick={() => void loadDevices()}>{m.settings.retry}</button>
                 </div>}
                 {section === "microphone" &&
-                    <section className="settings-card"><h3>Микрофон</h3><Select id="capture-device"
-                                                                                 label="Устройство захвата звука"
+                    <section className="settings-card"><h3>{m.settings.microphone}</h3><Select id="capture-device"
+                                                                                 label={m.settings.capture}
                                                                                  value={devices?.selectedCapture ?? ""}
                                                                                  disabled={!devices || devicePending}
-                                                                                 options={deviceOptions(devices?.capture ?? [])}
+                                                                                 options={deviceOptions(devices?.capture ?? [], m)}
                                                                                  onChange={(id) => void selectDevice("capture", id)}/>
-                        {!view.audio.captureAvailable && <p className="device-hint">Микрофон не найден. Выберите устройство, когда оно появится. Пока его нет, вы остаётесь в канале без передачи голоса.</p>}
-                        <SensitivitySlider id="microphone-gain" max={2} label="Усиление микрофона"
-                                           description="Меньше 100% — тише, больше — громче. Применяется до шумоподавления и порога передачи."
+                        {!view.audio.captureAvailable && <p className="device-hint">{m.settings.noMic}</p>}
+                        <SensitivitySlider id="microphone-gain" max={2} label={m.settings.gain}
+                                           description={m.settings.gainHint}
                                            value={microphoneGain} disabled={false}
                                            onChange={setMicrophoneGain}
                                            onCommit={(value) => invoke(() => desktopAPI.setMicrophoneGain(value))}/>
-                        <SettingToggle title="Шумоподавление"
-                                       description="Убирает постоянный фоновый шум до анализа голосовой активности."
+                        <SettingToggle title={m.settings.denoise}
+                                       description={m.settings.denoiseHint}
                                        checked={view.audio.rnnoiseEnabled}
                                        onChange={(value) => invoke(() => desktopAPI.setRNNoiseEnabled(value))}/>
-                        <SensitivitySlider label="Интенсивность шумоподавления"
-                                           description="Чем выше значение, тем сильнее подавляется фоновый шум."
+                        <SensitivitySlider label={m.settings.denoiseAmount}
+                                           description={m.settings.denoiseAmountHint}
                                            value={rnnoiseSensitivity} disabled={!view.audio.rnnoiseEnabled}
                                            onChange={setRNNoiseSensitivity}
                                            onCommit={(value) => invoke(() => desktopAPI.setRNNoiseSensitivity(value))}/>
-                        <SettingToggle title="Обнаружение голоса (VAD)"
-                                       description="Микрофон передаёт звук, когда обнаружена речь."
+                        <SettingToggle title={m.settings.vad}
+                                       description={m.settings.vadHint}
                                        checked={view.audio.vadEnabled}
                                        onChange={(value) => invoke(() => desktopAPI.setVADEnabled(value))}/>
-                        <Select id="vad-mode" className="mode-select" label="Режим" value={view.audio.vadMode}
+                        <Select id="vad-mode" className="mode-select" label={m.settings.mode} value={view.audio.vadMode}
                                 disabled={!view.audio.vadEnabled}
-                                options={vadModeOptions}
-                                labelExtra={<span className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? "Передача" : "Ожидание речи"}</span>}
+                                options={vadModeOptions(m)}
+                                labelExtra={<span className={`gate-indicator ${view.audio.vadOpen ? "open" : ""}`}>{view.audio.vadOpen ? m.settings.transmitting : m.settings.waitingSpeech}</span>}
                                 onChange={(value) => void invoke(() => desktopAPI.setVADMode(value))}/>
                         <div className="sensitivity-setting">
-                            <div><span className="setting-label">Порог передачи звука</span>
+                            <div><span className="setting-label">{m.settings.gate}</span>
                                 <output>{Math.round((1 - sensitivity) * 100)}%</output>
                             </div>
-                            <p>Чем выше значение, тем тише может быть речь, открывающая микрофон.</p></div>
+                            <p>{m.settings.gateHint}</p></div>
                         <AudioWaveform sensitivity={sensitivity} disabled={!view.audio.vadEnabled}
                                        onSensitivityChange={setSensitivity}
                                        onSensitivityCommit={(value) => invoke(() => desktopAPI.setVADSensitivity(value))}/>
                         <div className="monitor-setting">
                             <button type="button" className={`monitor-button ${monitor ? "active" : ""}`} aria-pressed={monitor}
                                     onClick={toggleMonitor}>
-                                <Icon name="sound"/>{monitor ? "Остановить прослушивание" : "Прослушать микрофон"}
+                                <Icon name="sound"/>{monitor ? m.settings.stopMonitor : m.settings.monitor}
                             </button>
-                            <p className="device-hint">Воспроизводит то, что услышат другие участники: после шумоподавления и порога передачи. Используйте наушники, чтобы не было эха.</p>
+                            <p className="device-hint">{m.settings.monitorOn}</p>
                             {inSession && <p className={`device-hint ${monitor ? "monitor-warning" : ""}`}>{monitor
-                                ? "Идёт прослушивание: ваш голос не передаётся на сервер. Передача возобновится, когда вы остановите прослушивание или закроете настройки микрофона."
-                                : "Во время прослушивания ваш голос не передаётся на сервер."}</p>}
+                                ? m.settings.monitorActive
+                                : m.settings.monitorBlocked}</p>}
                         </div>
                     </section>}
                 {section === "playback" &&
-                    <section className="settings-card compact-card"><h3>Воспроизведение</h3><Select id="playback-device"
-                                                                                                         label="Устройство вывода звука"
+                    <section className="settings-card compact-card"><h3>{m.settings.playback}</h3><Select id="playback-device"
+                                                                                                         label={m.settings.output}
                                                                                                          value={devices?.selectedPlayback ?? ""}
                                                                                                          disabled={!devices || devicePending}
-                                                                                                         options={deviceOptions(devices?.playback ?? [])}
+                                                                                                         options={deviceOptions(devices?.playback ?? [], m)}
                                                                                                          onChange={(id) => void selectDevice("playback", id)}/><SettingToggle
-                        title="Заглушить звук" description="Входящий голос продолжает обрабатываться, но не воспроизводится."
+                        title={m.settings.deafen} description={m.settings.deafenHint}
                         checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>}
-                {section === "interface" && <section className="settings-card"><h3>Интерфейс</h3>
+                {section === "interface" && <section className="settings-card"><h3>{m.settings.interface}</h3>
+                    <div className="locale-setting">
+                        <span className="setting-label" id="locale-label">{m.language.label}</span>
+                        <p>{m.language.hint}</p>
+                        <LocaleSwitch labelledBy="locale-label"/>
+                    </div>
                     <InterfaceSettings appearance={appearance} onTheme={(value) => invoke(() => setTheme(value))} onCreate={createCustomTheme} onChange={updateAppearance} onOpenSaved={openSavedTheme} onSave={saveNamedTheme} onImport={importThemeFile} onExport={exportTheme} onDelete={deleteSavedTheme}/>
-                    <SettingToggle title="Сворачивать в трей при закрытии"
-                                   description="Крестик прячет окно в трей, приложение и голос продолжают работать. Без этой настройки крестик завершает Sonoryx."
+                    <SettingToggle title={m.settings.tray}
+                                   description={m.settings.trayHint}
                                    checked={closeToTray}
                                    onChange={(value) => invoke(async () => {
                                        const previous = closeToTray;
@@ -867,6 +881,7 @@ function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivit
     onSensitivityChange: (value: number) => void;
     onSensitivityCommit: (value: number) => Promise<void>
 }) {
+    const {m} = useLocale();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const thresholdRef = useRef<HTMLDivElement>(null);
     const targetRef = useRef({input: 0, processed: 0, transmitted: 0, updatedAt: 0});
@@ -986,15 +1001,15 @@ function AudioWaveform({sensitivity, disabled, onSensitivityChange, onSensitivit
         <div className={`threshold-meter ${disabled ? "disabled" : ""}`} ref={thresholdRef}><span
             className="threshold-track"><span className="threshold-level"/></span><span className="threshold-marker"
                                                                                         aria-hidden="true"/><input
-            aria-label="Порог голосовой активности" type="range" min="0" max="1" step="0.01" value={thresholdPosition}
+            aria-label={m.settings.threshold} type="range" min="0" max="1" step="0.01" value={thresholdPosition}
             disabled={disabled} onChange={(event) => updateThreshold(Number(event.target.value), false)}
             onPointerUp={(event) => updateThreshold(Number(event.currentTarget.value), true)}
             onKeyUp={(event) => updateThreshold(Number(event.currentTarget.value), true)}/></div>
         <div className="audio-waveform">
-            <div className="audio-waveform-heading"><span className="setting-label">Активность микрофона</span><span
-                className="wave-legend"><i className="transmitted"/>Передаётся<i className="rejected"/>Отсечено</span>
+            <div className="audio-waveform-heading"><span className="setting-label">{m.settings.activity}</span><span
+                className="wave-legend"><i className="transmitted"/>{m.settings.transmitted}<i className="rejected"/>{m.settings.rejected}</span>
             </div>
-            <canvas ref={canvasRef} role="img" aria-label="Индикатор передаваемого и отсечённого звука"/>
+            <canvas ref={canvasRef} role="img" aria-label={m.settings.waveform}/>
         </div>
     </>;
 }
