@@ -60,8 +60,11 @@ func (s *Service) SetVADSensitivity(value float32) error {
 // while disconnected; a connected session already feeds the meter.
 func (s *Service) SetMicrophonePreview(enabled bool) { s.client.SetMicrophonePreview(enabled) }
 
-// SetMicrophoneMonitor plays the preview's transmitted audio back to the user.
-func (s *Service) SetMicrophoneMonitor(enabled bool) { s.client.SetMicrophoneMonitor(enabled) }
+// SetMicrophoneMonitor plays the user's processed microphone back to them; in
+// a session it also blocks transmission until it is turned off.
+func (s *Service) SetMicrophoneMonitor(enabled bool) error {
+	return s.client.SetMicrophoneMonitor(enabled)
+}
 
 func (s *Service) AudioDevices() (AudioDevicesDTO, error) {
 	devices, err := s.client.AudioDevices()

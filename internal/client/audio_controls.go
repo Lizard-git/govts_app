@@ -30,6 +30,7 @@ type AudioControlState struct {
 	epoch              uint64
 	playbackEpoch      uint64
 	player             audio.DeafenPlayer
+	monitor            func([]int16)
 	onChange           func()
 	meter              AudioMeterSample
 	participantVolumes map[uint64]float32
@@ -124,6 +125,21 @@ func clampMeterLevel(value float32) float32 {
 		return 1
 	}
 	return value
+}
+
+// SetMonitor routes the frames released by the voice gate to fn instead of
+// the encoder: the user hears themselves and nothing is sent to the server.
+// A nil fn restores transmission.
+func (a *AudioControlState) SetMonitor(fn func([]int16)) {
+	a.mu.Lock()
+	a.monitor = fn
+	a.mu.Unlock()
+}
+
+func (a *AudioControlState) Monitor() func([]int16) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.monitor
 }
 
 // MaxMicrophoneGain caps the software microphone gain at +6 dB.
@@ -369,7 +385,6 @@ func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 	return write()
 }
 
-const SpeakingRMSThreshold = 600
 const SpeakingHangover = 300 * time.Millisecond
 
 type SpeakingDetector struct{ ActiveUntil time.Time }
@@ -382,15 +397,13 @@ func (d *SpeakingDetector) Observe(samples []int16, now time.Time) bool {
 }
 func (d *SpeakingDetector) Speaking(now time.Time) bool { return now.Before(d.ActiveUntil) }
 func activePCM(samples []int16) bool {
-	if len(samples) == 0 {
-		return false
-	}
-	var sum float64
+	// Show even the quietest noise so its sender can be identified.
 	for _, sample := range samples {
-		v := float64(sample)
-		sum += v * v
+		if sample != 0 {
+			return true
+		}
 	}
-	return sum/float64(len(samples)) >= SpeakingRMSThreshold*SpeakingRMSThreshold
+	return false
 }
 
 func (s *State) ObserveSpeaking(id uint64, samples []int16, now time.Time) bool {

@@ -129,7 +129,8 @@ export function SetMicrophoneGain(value: number): $CancellablePromise<void> {
 }
 
 /**
- * SetMicrophoneMonitor plays the preview's transmitted audio back to the user.
+ * SetMicrophoneMonitor plays the user's processed microphone back to them; in
+ * a session it also blocks transmission until it is turned off.
  */
 export function SetMicrophoneMonitor(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(4113868774, enabled);

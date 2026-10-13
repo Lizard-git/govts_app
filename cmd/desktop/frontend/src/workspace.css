@@ -332,3 +332,4 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .monitor-button:hover:not(:disabled) { border-color: var(--accent-blue); }
 .monitor-button.active { border-color: var(--accent); color: var(--accent); }
 .monitor-button:disabled { opacity: .55; cursor: default; }
+.device-hint.monitor-warning { color: var(--warning); }
