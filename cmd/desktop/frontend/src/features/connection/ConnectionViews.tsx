@@ -135,6 +135,7 @@ export function AudioControls({view, invoke, sharing}: {
     sharing: ScreenSharingState;
 }) {
     const {m} = useLocale();
+    const away = (view.participants ?? []).some((participant) => participant.local && participant.away);
     return <div className="audio-control-island" role="group" aria-label={m.connection.audioGroup}>
             <button className={`voice-control ${view.audio.muted || !view.audio.captureAvailable ? "active" : ""}`}
                 aria-pressed={view.audio.muted} disabled={!view.audio.captureAvailable}
@@ -143,6 +144,13 @@ export function AudioControls({view, invoke, sharing}: {
             <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
                 title={view.audio.deafened ? m.connection.soundOn : m.connection.soundOff}
                 onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}><Icon name="sound"/>{m.connection.audio}</button>
+            <button className={`voice-control away-control ${away ? "active" : ""}`}
+                aria-pressed={away}
+                disabled={view.connectionStatus !== "connected" || view.channelId === "0"}
+                title={away ? m.connection.hereHint : m.connection.awayHint}
+                onClick={() => void invoke(() => desktopAPI.setAway(!away))}>
+                {away ? m.connection.here : m.connection.away}
+            </button>
         <button ref={sharing.buttonRef} className={`voice-control screen-share-button ${sharing.active ? "sharing" : ""}`}
             title={sharing.active ? m.connection.stopShare : m.connection.startShare} aria-pressed={sharing.active}
             aria-haspopup={sharing.active ? undefined : "dialog"} disabled={sharing.pending || !sharing.available}

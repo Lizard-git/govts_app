@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+
+	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
 )
@@ -98,6 +100,9 @@ func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 	p, err := s.client.ChatRequest(ctx, request.Context, r)
 	if err != nil {
 		return ChatPageDTO{}, err
+	}
+	if request.Operation == "send" {
+		s.client.PlayNotification(voiceclient.NotificationMessageSent)
 	}
 	dto := ChatPageDTO{UserID: strconv.FormatInt(p.UserID, 10), LatestID: strconv.FormatInt(p.LatestID, 10), ReadID: strconv.FormatInt(p.ReadID, 10), Cursor: strconv.FormatInt(p.Cursor, 10), HasMore: p.HasMore, Messages: make([]ChatMessageDTO, 0, len(p.Messages)), Dialogs: make([]ChatDialogDTO, 0, len(p.Dialogs))}
 	dto.Unread = p.Unread

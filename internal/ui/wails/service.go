@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientapp"
 	"uniclog.io/sonoryx/internal/clientsettings"
 	"uniclog.io/sonoryx/internal/domain"
@@ -168,6 +169,9 @@ func (s *Service) StopScreen(streamID string) error {
 	if err != nil {
 		return err
 	}
+	// The state event for our own stop is easy to miss, and waiting for it
+	// puts the cue after the media round trip. Play now; the event skips the owner.
+	s.client.PlayNotification(voiceclient.NotificationScreenStopped)
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
 	return s.client.StopScreen(ctx, streamID, pin)

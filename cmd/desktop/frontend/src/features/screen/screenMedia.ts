@@ -72,6 +72,10 @@ function waitForRemoteVideo(pc: RTCPeerConnection, timeoutMs = 20_000): Promise<
     });
 }
 
+function peerClosed(pc: RTCPeerConnection): boolean {
+    return pc.signalingState === "closed" || pc.connectionState === "closed";
+}
+
 async function ensureTrusted(): Promise<void> {
     const identity = await desktopAPI.mediaServerIdentity();
     if (identity.trusted) return;
@@ -125,7 +129,13 @@ export class ScreenMediaController {
             const checkCapture = () => {
                 if (captureTrack.readyState === "ended") throw new DOMException(errorCode("screen-capture-ended"), "AbortError");
             };
-            captureTrack.onended = () => pc.close();
+            let captureEnded = false;
+            captureTrack.onended = () => { captureEnded = true; };
+            const ensureCaptureOpen = () => {
+                if (captureEnded || captureTrack.readyState === "ended" || pc.signalingState === "closed" || pc.connectionState === "closed") {
+                    throw new DOMException(errorCode("screen-aborted"), "AbortError");
+                }
+            };
             captureTrack.contentHint = profile.contentHint;
             try {
                 await captureTrack.applyConstraints({
@@ -144,11 +154,20 @@ export class ScreenMediaController {
                 }).catch((error) => { logDiagnostic("screen_capture_constraints", error); });
             }
             checkCurrent();
-            const transceiver = pc.addTransceiver(captureTrack, {
-                direction: "sendonly",
-                streams: [capture],
-                sendEncodings: [{maxBitrate: profile.bitrate}],
-            });
+            ensureCaptureOpen();
+            let transceiver: RTCRtpTransceiver;
+            try {
+                transceiver = pc.addTransceiver(captureTrack, {
+                    direction: "sendonly",
+                    streams: [capture],
+                    sendEncodings: [{maxBitrate: profile.bitrate}],
+                });
+            } catch (error) {
+                if (peerClosed(pc) || captureEnded || captureTrack.readyState === "ended") {
+                    throw new DOMException(errorCode("screen-aborted"), "AbortError");
+                }
+                throw error;
+            }
             const senderParameters = transceiver.sender.getParameters();
             senderParameters.degradationPreference = profile.degradationPreference;
             await transceiver.sender.setParameters(senderParameters).catch((error) => { logDiagnostic("screen_sender_parameters", error); });
@@ -216,12 +235,18 @@ export class ScreenMediaController {
         this.pendingPublisher = undefined;
         this.publisherStats.reset();
         if (pending) {
-            pending.capture.getTracks().forEach((track) => track.stop());
-            pending.pc.close();
+            pending.capture.getTracks().forEach((track) => {
+                track.onended = null;
+                track.stop();
+            });
+            if (pending.pc.signalingState !== "closed") pending.pc.close();
         }
         if (!active) return;
-        active.capture.getTracks().forEach((track) => track.stop());
-        active.pc.close();
+        active.capture.getTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+        });
+        if (active.pc.signalingState !== "closed") active.pc.close();
         await desktopAPI.stopScreen(active.streamID);
     }
 
@@ -236,7 +261,12 @@ export class ScreenMediaController {
         // from setRemoteDescription, before the signaling call below returns.
         const remoteVideo = waitForRemoteVideo(pc);
         void remoteVideo.catch(() => undefined);
-        pc.addTransceiver("video", {direction: "recvonly"});
+        try {
+            pc.addTransceiver("video", {direction: "recvonly"});
+        } catch (error) {
+            if (peerClosed(pc)) throw new DOMException(errorCode("screen-aborted"), "AbortError");
+            throw error;
+        }
         const subscriberID = crypto.randomUUID();
         try {
             const result = await desktopAPI.subscribeScreen(streamID, subscriberID, await localOffer(pc));

@@ -80,10 +80,13 @@ type App struct {
 	playbackDeviceID    string
 
 	// previewMu is taken before mu; see preview.go.
-	previewMu     sync.Mutex
-	previewWanted bool
-	preview       *micPreview
-	monitor       *audio.SwitchablePlayer
+	previewMu          sync.Mutex
+	previewWanted      bool
+	preview            *micPreview
+	monitor            *audio.SwitchablePlayer
+	soundPreviewMu     sync.Mutex
+	soundPreviewCancel context.CancelFunc
+	soundPreviewRun    sync.Mutex
 
 	mu                 sync.Mutex
 	closed             bool
@@ -587,6 +590,55 @@ func (a *App) LastError() string {
 }
 
 func (a *App) SetMuted(value bool) error { return a.state.Audio.SetMuted(value) }
+
+func (a *App) SetSoundPack(id string) error { return a.state.Audio.SetSoundPack(id) }
+
+func (a *App) SetSoundVolume(value float32) error { return a.state.Audio.SetSoundVolume(value) }
+
+func (a *App) SetMuteOnAway(value bool) { a.state.Audio.SetMuteOnAway(value) }
+
+func (a *App) PlayNotification(kind voiceclient.NotificationSoundKind) {
+	a.state.PlayNotification(kind)
+}
+
+func (a *App) SetAway(ctx context.Context, away bool) error {
+	a.mu.Lock()
+	conn := a.currentConn
+	a.mu.Unlock()
+	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
+		return ErrNotConnected
+	}
+	if a.state.ChannelID() == 0 {
+		return errors.New("presence requires a channel")
+	}
+	// Play before the presence round trip. The acknowledgement can take a
+	// retry interval, and the click should not wait for it.
+	if away {
+		a.state.PlayNotification(voiceclient.NotificationAway)
+	} else {
+		a.state.PlayNotification(voiceclient.NotificationReturned)
+	}
+	if err := voiceclient.PublishPresence(ctx, conn, a.state, away); err != nil {
+		return err
+	}
+	if away {
+		if a.state.Audio.MuteOnAway() {
+			a.state.Audio.MuteForAway()
+		}
+		return nil
+	}
+	return a.state.Audio.UnmuteForReturn()
+}
+
+func (a *App) Wake(ctx context.Context, target uint64) error {
+	a.mu.Lock()
+	conn := a.currentConn
+	a.mu.Unlock()
+	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
+		return ErrNotConnected
+	}
+	return voiceclient.Attention(ctx, conn, a.state, target)
+}
 
 func (a *App) SetDeafened(value bool) error { return a.state.Audio.SetDeafened(value) }
 

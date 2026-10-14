@@ -29,6 +29,9 @@ type Settings struct {
 	// so a new language does not require a settings change. Version stays 1.
 	Locale        string         `json:"locale,omitempty"`
 	CloseToTray   bool           `json:"closeToTray"`
+	SoundPack     string         `json:"soundPack,omitempty"`
+	SoundVolume   float32        `json:"soundVolume"`
+	MuteOnAway    bool           `json:"muteOnAway"`
 	RecentServers []RecentServer `json:"recentServers,omitempty"`
 }
 
@@ -111,8 +114,22 @@ func (store *Store) Load() (Settings, error) {
 		if _, exists := fields["microphoneGain"]; !exists {
 			persisted.MicrophoneGain = 1
 		}
+		if _, exists := fields["soundVolume"]; !exists {
+			persisted.SoundVolume = 0.8
+		}
+		if _, exists := fields["muteOnAway"]; !exists {
+			persisted.MuteOnAway = true
+		}
 	}
 	persisted.Theme = NormalizeTheme(persisted.Theme)
+	switch persisted.SoundPack {
+	case "short", "soft", "low", "double", "signal":
+	default:
+		persisted.SoundPack = "soft"
+	}
+	if persisted.SoundVolume < 0 || persisted.SoundVolume > 1 {
+		persisted.SoundVolume = 0.8
+	}
 	return persisted.Settings, nil
 }
 

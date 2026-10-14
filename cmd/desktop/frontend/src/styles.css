@@ -102,7 +102,7 @@ h2 { margin: 0; font-size: 1.25rem; }
 .connection-stat-row span:first-child { color: var(--muted); }
 .connection-stat-row strong { font-variant-numeric: tabular-nums; font-size: 0.6875rem; white-space: nowrap; }
 .sync-pill { color: var(--warning); }
-.audio-control-island { display: grid; flex: 0 0 auto; align-items: center; grid-template-columns: repeat(2, 108px); gap: 3px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 8px 20px color-mix(in srgb, var(--shadow) 14%, transparent); }
+.audio-control-island { display: grid; flex: 0 0 auto; align-items: center; grid-template-columns: repeat(4, minmax(0, 7.6rem)); gap: 3px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 8px 20px color-mix(in srgb, var(--shadow) 14%, transparent); }
 .audio-control-island .voice-control { width: 100%; min-width: 0; padding: 6px 9px; border-radius: 8px; background: transparent; white-space: nowrap; }
 .audio-control-island .voice-control:hover { background: var(--card-strong); }
 .audio-control-island .voice-control.active { color: var(--danger-text); background: var(--danger-soft); }
@@ -133,6 +133,7 @@ h2 { margin: 0; font-size: 1.25rem; }
 .avatar { width: 22px; height: 22px; font-size: 0.625rem; }
 .participant-status { display: flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; }
 .participant-flag { display: inline-grid; width: 14px; height: 14px; color: var(--danger); }
+.participant-flag.away { color: var(--warning); }
 .participant-flag svg { width: 14px; height: 14px; }
 .speaking-ring { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .participant-row.speaking { color: var(--speaking); }
