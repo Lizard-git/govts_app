@@ -27,6 +27,16 @@ function SoundOffIcon() {
     </svg>;
 }
 
+function AwayIcon() {
+    return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="3"/>
+        <path d="M6 19v-1a4 4 0 0 1 4-4h1"/>
+        <path d="M16 16h5"/>
+        <path d="M16 20h5"/>
+    </svg>;
+}
+
 function SpeakerIcon({muted = false}: {muted?: boolean}) {
     return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" fill="none"
                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -37,16 +47,18 @@ function SpeakerIcon({muted = false}: {muted?: boolean}) {
     </svg>;
 }
 
-export function ParticipantRow({participant, canKick, canBan, canDrag, depth, onError, onDragStart, onDragEnd, onMessage, variant = "tree", sharingScreen = false}: {
+export function ParticipantRow({participant, canKick, canBan, canDrag, canWake = false, depth, onError, onDragStart, onDragEnd, onMessage, onWake, variant = "tree", sharingScreen = false}: {
     participant: ParticipantDTO;
     canKick: boolean;
     canBan: boolean;
     canDrag: boolean;
+    canWake?: boolean;
     depth: number;
     onError: (message: string) => void;
     onDragStart: (event: React.DragEvent<HTMLDivElement>, participant: ParticipantDTO) => void;
     onDragEnd: () => void;
     onMessage: (participant: ParticipantDTO) => void;
+    onWake?: (participant: ParticipantDTO) => void;
     variant?: "tree" | "list" | "stage";
     sharingScreen?: boolean;
 }) {
@@ -142,6 +154,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
             </span>
             <span className="stage-voice" aria-label={participant.muted ? m.people.micOff : participant.deafened ? m.people.soundOff : participant.speaking ? m.people.speaking : m.people.silent}>
                 {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
+                {participant.away && <span className="participant-flag away" title={m.people.away} aria-label={m.people.away}><AwayIcon/></span>}
                 {participant.muted ? <MicOffIcon/> : participant.deafened ? <SoundOffIcon/> : participant.speaking ? <span className="voice-bars"><i/><i/><i/><i/><i/></span> : null}
             </span>
             </> : <><span className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
@@ -149,6 +162,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
             </span>
             {variant !== "list" && <span className="participant-status">
                 {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
+                {participant.away && <span className="participant-flag away" title={m.people.away} aria-label={m.people.away}><AwayIcon/></span>}
                 {participant.muted && <span className="participant-flag" aria-label={m.people.micOff}><MicOffIcon/></span>}
                 {participant.deafened && <span className="participant-flag" aria-label={m.people.soundOff}><SoundOffIcon/></span>}
                 <span className="speaking-ring" aria-label={participant.speaking ? m.people.speaking : m.people.silent}/>
@@ -179,6 +193,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, depth, on
             </>}
             <div className="participant-menu-actions">
                 <button type="button" role="menuitem" onClick={() => { onMessage(participant); close(); }}><span><Icon name="chat"/></span>{m.people.message}</button>
+                {canWake && onWake && <button type="button" role="menuitem" onClick={() => { onWake(participant); close(); }}>{m.people.wake}</button>}
                 {!participant.local && <button type="button" role="menuitem" className={menu.volume === 0 ? "active" : ""}
                         onClick={() => setVolume(menu.volume === 0 ? 1 : 0, true)}>
                     <span aria-hidden="true"><SpeakerIcon muted={menu.volume !== 0}/></span>{menu.volume === 0 ? m.people.unmute : m.people.mute}

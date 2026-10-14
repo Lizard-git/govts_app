@@ -40,7 +40,11 @@ func (a *App) ChatRequest(ctx context.Context, expectedContext string, request p
 	if session.ctx.Err() != nil {
 		cancel()
 	}
-	return voiceclient.RequestChat(requestCtx, conn, a.state, request)
+	page, err := voiceclient.RequestChat(requestCtx, conn, a.state, request)
+	if err == nil && request.Operation == protocol.ChatSend {
+		a.state.PlayNotification(voiceclient.NotificationMessageSent)
+	}
+	return page, err
 }
 
 func (a *App) ChatContext() string {

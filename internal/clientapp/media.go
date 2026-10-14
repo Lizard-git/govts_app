@@ -95,6 +95,9 @@ func (a *App) SubscribeScreen(ctx context.Context, streamID, subscriberID string
 }
 
 func (a *App) StopScreen(ctx context.Context, streamID, pinnedFingerprint string) error {
+	// The state event for our own stop is easy to miss, and waiting for it
+	// puts the cue after the media round trip. Play now; the event skips the owner.
+	a.state.PlayNotification(voiceclient.NotificationScreenStopped)
 	return a.mediaRequest(ctx, "/media/stop", mediasignal.StreamRequest{StreamID: streamID}, pinnedFingerprint, nil)
 }
 

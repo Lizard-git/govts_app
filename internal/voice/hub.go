@@ -319,6 +319,56 @@ func (h *Hub) SetAudioState(id uint64, muted, deafened bool) error {
 	return nil
 }
 
+const attentionCooldown = 2 * time.Second
+
+func (h *Hub) SetPresence(id uint64, away bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	session, ok := h.sessions[id]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if session.ChannelID == 0 {
+		return errors.New("presence requires a channel")
+	}
+	if session.Away == away {
+		return nil
+	}
+	session.Away = away
+	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantPresence, SessionID: id, Away: away})
+	return nil
+}
+
+// AcceptAttention checks that from and target share a channel and that from
+// has not sent a wake within attentionCooldown. It does not consume the
+// cooldown; MarkAttention does that after the cue is sent. The returned
+// session is a copy safe to use after the lock is released.
+func (h *Hub) AcceptAttention(from, target uint64, now time.Time) (Session, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sender := h.sessions[from]
+	dest := h.sessions[target]
+	if sender == nil || dest == nil {
+		return Session{}, ErrSessionNotFound
+	}
+	if from == target || sender.ChannelID == 0 || sender.ChannelID != dest.ChannelID {
+		return Session{}, errors.New("participant is not in your channel")
+	}
+	if !sender.lastAttention.IsZero() && now.Sub(sender.lastAttention) < attentionCooldown {
+		return Session{}, errors.New("attention is too frequent")
+	}
+	return *cloneSession(dest), nil
+}
+
+func (h *Hub) MarkAttention(from uint64, now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if session := h.sessions[from]; session != nil {
+		session.lastAttention = now
+	}
+}
+
 func participantFromSession(session *Session) domain.Participant {
 	return domain.Participant{
 		SessionID:   session.ID,
@@ -327,6 +377,7 @@ func participantFromSession(session *Session) domain.Participant {
 		ChannelID:   session.ChannelID,
 		Muted:       session.Muted,
 		Deafened:    session.Deafened,
+		Away:        session.Away,
 	}
 }
 

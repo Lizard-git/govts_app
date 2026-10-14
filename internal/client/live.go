@@ -34,11 +34,16 @@ type ClientViewState struct {
 	VADSensitivity     float32
 	VADOpen            bool
 	Speaking           map[uint64]bool
+	SoundPack          string
+	SoundVolume        float32
+	MuteOnAway         bool
 }
 
 type NotificationSound struct {
 	Kind          NotificationSoundKind
 	PlaybackEpoch uint64
+	Pack          string
+	Volume        float32
 }
 
 type NotificationSoundKind uint8
@@ -46,18 +51,93 @@ type NotificationSoundKind uint8
 const (
 	NotificationJoined NotificationSoundKind = iota + 1
 	NotificationLeft
+	NotificationChannelChanged
+	NotificationMessageSent
+	NotificationMessageReceived
+	NotificationScreenStarted
+	NotificationScreenStopped
+	NotificationWake
+	NotificationAway
+	NotificationReturned
 )
 
+const minWakeVolume = float32(0.5)
+
 func (s *State) NotificationSounds() <-chan NotificationSound { return s.notificationSounds }
+
+func (s *State) PlayNotification(kind NotificationSoundKind) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queueNotificationSoundLocked(kind)
+}
 
 func (s *State) queueNotificationSoundLocked(sound NotificationSoundKind) {
 	deafened, epoch := s.Audio.PlaybackSnapshot()
 	if deafened {
 		return
 	}
+	pack, volume := s.Audio.SoundSnapshot()
+	// A wake exists to reach someone who is not listening, so a low or muted
+	// cue volume does not silence it. Deafen still does.
+	if sound == NotificationWake && volume < minWakeVolume {
+		volume = minWakeVolume
+	}
+	if volume <= 0 {
+		return
+	}
+	notice := NotificationSound{Kind: sound, PlaybackEpoch: epoch, Pack: pack, Volume: volume}
 	select {
-	case s.notificationSounds <- NotificationSound{Kind: sound, PlaybackEpoch: epoch}:
+	case s.notificationSounds <- notice:
+		return
 	default:
+	}
+	// The mixer is behind. Drop the oldest cue so the action just taken is the one that plays.
+	select {
+	case <-s.notificationSounds:
+	default:
+	}
+	select {
+	case s.notificationSounds <- notice:
+	default:
+	}
+}
+
+func screenChannel(snapshot domain.ServerSnapshot, sessionID uint64, fallback domain.ChannelID) domain.ChannelID {
+	for _, p := range snapshot.Participants {
+		if p.SessionID == sessionID {
+			if p.ChannelID != 0 {
+				return p.ChannelID
+			}
+			break
+		}
+	}
+	return fallback
+}
+
+// queueScreenDiffLocked plays start/stop cues for streams that appeared or
+// disappeared since the previous fresh snapshot. A lost state event is
+// recovered here; an unchanged resync stays silent.
+func (s *State) queueScreenDiffLocked(previous []domain.ScreenStream) {
+	if s.channelID == 0 {
+		return
+	}
+	nextIDs := make(map[domain.StreamID]struct{}, len(s.snapshot.ScreenStreams))
+	prevIDs := make(map[domain.StreamID]struct{}, len(previous))
+	for _, stream := range previous {
+		prevIDs[stream.ID] = struct{}{}
+	}
+	for _, stream := range s.snapshot.ScreenStreams {
+		nextIDs[stream.ID] = struct{}{}
+		if _, seen := prevIDs[stream.ID]; seen || stream.ChannelID != s.channelID {
+			continue
+		}
+		s.queueNotificationSoundLocked(NotificationScreenStarted)
+	}
+	for _, stream := range previous {
+		if _, seen := nextIDs[stream.ID]; seen || stream.ChannelID != s.channelID || stream.OwnerSessionID == s.sessionID {
+			continue
+		}
+		s.queueNotificationSoundLocked(NotificationScreenStopped)
 	}
 }
 
@@ -108,13 +188,15 @@ func (s *State) SnapshotView() ClientViewState {
 	rnnoiseSensitivity := s.Audio.RNNoiseSensitivity()
 	microphoneGain := s.Audio.MicrophoneGain()
 	vadSettings := s.Audio.VADSnapshot()
+	soundPack, soundVolume := s.Audio.SoundSnapshot()
 	v := ClientViewState{ConnectionStatus: s.status, ServerInfo: snapshot.Info, Revision: snapshot.Revision,
 		Channels: snapshot.Channels, Participants: snapshot.Participants, ScreenStreams: snapshot.ScreenStreams, SessionID: s.sessionID, ChannelID: s.channelID,
 		JoinLevel: s.joinLevel, Permissions: s.permissions,
 		ChatRevision:  s.chatRevision,
 		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, CaptureAvailable: captureAvailable, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity, MicrophoneGain: microphoneGain,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
-		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool)}
+		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool),
+		SoundPack: soundPack, SoundVolume: soundVolume, MuteOnAway: s.Audio.MuteOnAway()}
 	// The view's local channel belongs to the same snapshot as its participants.
 	// A newer Join ACK marks it stale until that revision is synchronized.
 	v.ChannelID = 0
@@ -263,12 +345,14 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		}
 		p := &next.Participants[index]
 		line = fmt.Sprintf("→ %s moved %s → %s", terminalText(p.DisplayName), channelName(p.ChannelID), channelName(e.ChannelID))
-		if e.SessionID != s.sessionID {
-			if oldChannel != localChannel && e.ChannelID == localChannel {
-				notification = NotificationJoined
-			} else if oldChannel == localChannel && e.ChannelID != localChannel {
-				notification = NotificationLeft
+		if e.SessionID == s.sessionID {
+			if oldChannel != 0 && e.ChannelID != 0 && oldChannel != e.ChannelID {
+				notification = NotificationChannelChanged
 			}
+		} else if oldChannel != localChannel && e.ChannelID == localChannel {
+			notification = NotificationJoined
+		} else if oldChannel == localChannel && e.ChannelID != localChannel {
+			notification = NotificationLeft
 		}
 		p.ChannelID = e.ChannelID
 	case domain.ScreenStreamStarted:
@@ -285,6 +369,9 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		next.ScreenStreams = append(next.ScreenStreams, e.ScreenStream)
 		sort.Slice(next.ScreenStreams, func(i, j int) bool { return next.ScreenStreams[i].ID < next.ScreenStreams[j].ID })
 		line = fmt.Sprintf("%d started screen sharing", e.ScreenStream.OwnerSessionID)
+		if e.ScreenStream.ChannelID == screenChannel(next, s.sessionID, localChannel) {
+			notification = NotificationScreenStarted
+		}
 	case domain.ScreenStreamStopped:
 		streamIndex := -1
 		for i, stream := range next.ScreenStreams {
@@ -297,9 +384,15 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 			s.requestResyncLocked()
 			return false
 		}
-		ownerID := next.ScreenStreams[streamIndex].OwnerSessionID
+		stopped := next.ScreenStreams[streamIndex]
+		ownerID := stopped.OwnerSessionID
 		next.ScreenStreams = append(next.ScreenStreams[:streamIndex], next.ScreenStreams[streamIndex+1:]...)
 		line = fmt.Sprintf("%d stopped screen sharing", ownerID)
+		// The owner already played this cue in Service.StopScreen, before the
+		// round trip. Playing the event too stacks a second copy on top.
+		if ownerID != s.sessionID && stopped.ChannelID == screenChannel(next, s.sessionID, localChannel) {
+			notification = NotificationScreenStopped
+		}
 	case domain.ParticipantAudio:
 		if index < 0 {
 			s.requestResyncLocked()
@@ -318,6 +411,25 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		default:
 			line = fmt.Sprintf("%s turned microphone and sound on", name)
 		}
+	case domain.ParticipantPresence:
+		if index < 0 {
+			s.requestResyncLocked()
+			return false
+		}
+		p := &next.Participants[index]
+		if e.Away {
+			line = fmt.Sprintf("%s stepped away", terminalText(p.DisplayName))
+		} else {
+			line = fmt.Sprintf("%s is back", terminalText(p.DisplayName))
+		}
+		if p.Away != e.Away && e.SessionID != s.sessionID && p.ChannelID == localChannel && localChannel != 0 {
+			if e.Away {
+				notification = NotificationAway
+			} else {
+				notification = NotificationReturned
+			}
+		}
+		p.Away = e.Away
 	}
 	next.Revision = e.Revision
 	if err := validateServerSnapshot(next); err != nil {

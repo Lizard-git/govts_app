@@ -43,7 +43,7 @@ const maxNewHandshakesPerIPPerMinute = 60
 
 // AuthInit.Sequence carries the requested protocol/server compatibility level,
 // not the desktop executable's independently incremented release version.
-const minimumSecureClientVersion appversion.Number = 2<<16 | 9 // 0.2.9: snapshot v6 and chat
+const minimumSecureClientVersion appversion.Number = 3<<16 // 0.3.0: snapshot v7 and presence
 
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.

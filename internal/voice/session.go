@@ -18,6 +18,8 @@ type Session struct {
 	ChannelID       domain.ChannelID
 	Muted           bool
 	Deafened        bool
+	Away            bool
+	lastAttention   time.Time
 	Addr            *net.UDPAddr
 	LastSeen        time.Time
 	MediaCredential [32]byte

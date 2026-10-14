@@ -60,7 +60,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <header class="hero"><div class="hero-in">
 <div class="eyebrow">Sonoryx · технический справочник</div>
 <h1>Протокол <span>Sonoryx</span></h1>
-<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.3.44, сервер 0.2.16). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
+<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.4.8, сервер 0.3.0). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
 <div class="kpis">
 <div class="kpi"><b>17 B</b><span>заголовок пакета</span></div>
 <div class="kpi"><b>1200 B</b><span>макс. payload</span></div>
@@ -111,6 +111,8 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <tr><td>Каналы</td><td>JoinChannel / JoinChannelAck</td><td>Смена канала, проверка <code>min_join_level</code> и <code>max_users</code>.</td></tr>
 <tr><td>Состояние</td><td>StateSnapshotRequest / Ack, StateEvent</td><td>Постраничный snapshot + live-события с ревизией.</td></tr>
 <tr><td>Аудио-состояние</td><td>AudioState / Ack</td><td>mute/deafen, рассылается остальным через события.</td></tr>
+<tr><td>Присутствие</td><td>Presence / Ack</td><td>C→S: 1 байт, 0 или 1 — «отошёл» / «на месте». Сервер пишет флаг в сессию и шлёт <code>ParticipantPresence</code>. Звук не едет по сети.</td></tr>
+<tr><td>Внимание</td><td>Attention / Ack</td><td>C→S: 8 байт SessionID цели в том же канале. S→цель: Attention с RequestID 0 и пустым payload. Повтор того же RequestID не шлёт сигнал второй раз. Новый запрос чаще чем раз в 2 с — отказ. Кулдаун ставится после успешной отправки цели.</td></tr>
 <tr><td>Модерация</td><td>Kick, Ban, Drag, ModerationAck, AccountPrivileges</td><td>Проверка прав <code>kick/ban/drag</code>; Privileges — пуш при изменении прав из консоли.</td></tr>
 <tr><td>Экран</td><td>MediaCredentialRequest / Ack</td><td>32-байтный bearer-токен для HTTPS-сигнализации.</td></tr>
 <tr><td>Чат</td><td>ChatRequest / ChatAck, ChatChanged</td><td>Отдельная очередь на сервере (§10).</td></tr>
@@ -127,7 +129,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <text x="40" y="18">Клиент</text><text x="545" y="18">Сервер</text>
 <line x1="70" y1="28" x2="70" y2="290" stroke="currentColor" opacity=".3"/><line x1="570" y1="28" x2="570" y2="290" stroke="currentColor" opacity=".3"/>
 <g style="color:var(--accent)"><line x1="72" y1="55" x2="566" y2="55" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
-<text x="90" y="48">AuthInit: name, clientEd25519Pub, clientX25519Eph, nonceC(16)</text><text x="90" y="70" class="m">Sequence = версия; RequestID случайный ненулевой</text>
+<text x="90" y="48">AuthInit: name, clientEd25519Pub, clientX25519Eph, nonceC(16)</text><text x="90" y="70" class="m">Sequence = минимальная версия сервера; RequestID случайный ненулевой</text>
 <g style="color:var(--srv)"><line x1="568" y1="110" x2="74" y2="110" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
 <text x="90" y="103">AuthChallenge: serverEd25519Pub, serverX25519Eph, nonceS(16), sigS(T)</text><text x="90" y="125" class="m">клиент: verify sigS, затем TOFU-pin по host:port</text>
 <g style="color:var(--accent)"><line x1="72" y1="165" x2="566" y2="165" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/></g>
@@ -139,7 +141,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <h3>Transcript T</h3>
 <pre>T = H("govts-auth-v1" ‖ RequestID ‖ version ‖ AuthInit целиком ‖
       serverEd25519Pub ‖ serverX25519Eph ‖ nonceS)</pre>
-<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. Сервер требует версию клиента не ниже <code>0.2.5</code>.</p>
+<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. В <code>Sequence</code> клиент передаёт минимальную версию сервера из <code>version/release.json</code> (сейчас <code>0.3.0</code>; <code>internal/client/request.go</code>, <code>internal/client/secure_handshake.go</code>). Если версия сервера ниже, он отвечает <code>ServerVersionTooOld</code> (<code>internal/voice/auth.go</code>, <code>internal/voice/control.go</code>). Отдельно сервер отвергает клиента, который запрашивает уровень ниже <code>0.3.0</code> (snapshot v7 и presence; <code>minimumSecureClientVersion</code> в <code>internal/voice/auth.go</code>).</p>
 <h3>Вывод ключей</h3>
 <pre>shared = X25519(eph_priv_own, eph_pub_peer)
 c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
@@ -195,7 +197,8 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
      ├─ AuthInit/Finish → Authenticator.Handle
      ├─ Kick/Ban/Drag   → HandleModeration
      └─ HandlePacket    → Voice, Heartbeat, Disconnect, JoinChannel,
-                          Snapshot, MediaCredential, AudioState</pre>
+                          Snapshot, MediaCredential, AudioState,
+                          Presence, Attention</pre>
 <p>Параллельно работают:</p>
 <ul>
 <li><code>DispatchEvents</code> — забирает события из outbox Hub (ёмкость 256) и рассылает их.</li>
@@ -205,7 +208,7 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 </ul>
 <div class="note">Узкое место: <code>policyGate</code> берётся и для голосовых пакетов, а <code>AuthFinish</code> делает SQLite-запрос под ним. См. <code>project-review.md</code> §1.1.</div>
 <h3>Hub</h3>
-<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии.</p>
+<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, away, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии. <code>AcceptAttention</code> не списывает кулдаун само: <code>MarkAttention</code> вызывается после того, как кадр Attention ушёл цели.</p>
 <h3>RequestCache</h3>
 <p><code>internal/voice/cache.go</code>. Ключ — (SessionID, RequestID). Повтор control-запроса получает сохранённый ответ, мутация не выполняется дважды. Клиент повторяет запрос до ответа или таймаута (<code>internal/client/request.go</code>).</p>
 
@@ -234,6 +237,7 @@ pre-roll 60 мс, hangover 300 мс) → Opus encode, кадр 20 мс
 → индикатор участника: любой ненулевой PCM-отсчёт, удержание 300 мс
 → громкость/mute конкретного участника (коэффициент 0..9)
 → mixer: очередь ≤ 5 кадров (100 мс) на отправителя, вытеснение старых
+→ локальные сигналы (вход, выход, смена своего канала, сообщения, экран, «разбудить», «отошёл», «на месте») синтезируются в PCM 48 кГц и вставляются как SenderID 0, один кадр за тик 20 мс (<code>client/mixer.go</code>). Очередь эффектов ≤ 90 кадров (1,8 с): сигнал, который не влезает целиком, отбрасывается. Буфер вывода — 5 кадров, 100 мс (<code>audio/malgo_player.go</code>). Громкость и пак — локальные (<code>client/sounds.go</code>, идентификаторы паков — <code>clientsettings</code>). «Разбудить» звучит не тише 0,5 даже при громкости сигналов 0, но молчит при deafen (<code>client/live.go</code>)
 → malgo playback, тик 20 мс</pre>
 <p>Индикатор входящего звука (<code>activePCM</code>, <code>State.ObserveSpeaking</code> в <code>internal/client/audio_controls.go</code>, вызов в <code>internal/client/decode.go</code>) включается при любом ненулевом отсчёте декодированного PCM, без порога RMS: тихая речь и фоновый шум показывают своего отправителя. Проверка выполняется до индивидуального усиления и проверки deafen, поэтому источник виден даже при локальной громкости 0. Полностью нулевой или пустой кадр не активирует индикатор; после последнего ненулевого кадра он удерживается 300 мс и снимается циклом <code>SpeakingLoop</code> с тиком 50 мс. Фильтры и VAD отправителя по-прежнему могут подавить звук до передачи; локальный индикатор при включённом VAD использует <code>voicegate.Active</code> (<code>internal/client/capture.go</code>).</p>
 <p>Индивидуальная громкость применяется локально после декодирования: <code>scalePCM</code> умножает PCM-отсчёты на коэффициент 0..9 с округлением и ограничением диапазоном int16; усиление может приводить к клиппингу. Интерфейс показывает условную шкалу 0–300 pt. с шагом 1: коэффициент вычисляется как <code>(level / 100)²</code>, поэтому 100 соответствует ×1 (по умолчанию), 200 — ×4, 300 — ×9. При чтении коэффициента положение ползунка восстанавливается как <code>round(sqrt(gain) × 100)</code>. Значение передаётся через 40 мс после последнего изменения и сразу при отпускании указателя или клавиши. «Заглушить» задаёт коэффициент 0, «Включить звук» — 1 (100 pt.). Значения хранятся в памяти по SessionID и очищаются при выходе участника или сбросе сессии. Источники: <code>cmd/desktop/frontend/src/features/participants/ParticipantRow.tsx</code>, <code>internal/client/audio_controls.go</code>, <code>internal/client/decode.go</code>, <code>internal/client/live.go</code>, <code>internal/client/state.go</code>.</p>
@@ -362,9 +366,9 @@ repeat frame_count:
 </section>
 <section id="state"><h2><span class="n">09</span>Синхронизация состояния</h2>
 <ol>
-<li>После AuthAck клиент запрашивает <b>snapshot</b>: постраничный (<code>internal/protocol/snapshot.go</code>, каждая страница ≤ 1200 B) — сервер, каналы, участники, потоки экрана, ревизия. Snapshot v6 содержит <code>user_id</code>.</li>
+<li>После AuthAck клиент запрашивает <b>snapshot</b>: постраничный (<code>internal/protocol/snapshot.go</code>, каждая страница ≤ 1200 B) — сервер, каналы, участники, потоки экрана, ревизия. Snapshot v7: у участника в байте флагов кроме mute/deafen есть бит away (<code>1&lt;&lt;2</code>). Пакет AudioState этот бит не несёт.</li>
 <li>Клиент атомарно заменяет своё состояние (<code>client.State</code>), UI получает глубокую копию <code>ClientViewState</code>.</li>
-<li>Далее <b>StateEvent</b> (join/move/leave, audio state, экраны, права), каждое с ревизией. Применяется, только если ревизия = текущая + 1.</li>
+<li>Далее <b>StateEvent</b> v2 (join/move/leave, audio state, экраны, <code>ParticipantPresence</code>), каждое с ревизией. Применяется, только если ревизия = текущая + 1. Presence — SessionID и 1 байт 0/1. Свой сигнал «отошёл» / «на месте» клиент ставит в микшер сразу по нажатию (<code>clientapp.SetAway</code>), не дожидаясь ack. Начало трансляции играет всем в канале, включая автора. Свой конец играет <code>clientapp.StopScreen</code> до сетевого запроса; чужой конец — из события. Если событие начала или чужого конца потеряно, следующий свежий snapshot играет сигнал только на появившийся или исчезнувший поток; первый snapshot, повтор без изменения и свой конец из snapshot молчат. Значок away snapshot восстанавливает без повторного звука.</li>
 <li>Разрыв ревизий или ошибка применения → <code>requestResync</code> → новый snapshot.</li>
 <li>События best effort. Потерю последнего события ловит проверка ревизии каждые 5 с (метаданные в heartbeat/опросе).</li>
 <li>Generation-счётчик клиента отсекает ответы и события от предыдущей сессии после reconnect.</li>
@@ -431,6 +435,8 @@ WebRTC DTLS-SRTP, VP8 / H.264 / VP9 / AV1, только видео, UDP 20000–
 <tr><td>Voice redundancy</td><td>выкл., <code>-voice-redundancy</code>; клиент ≥ 0.2.13</td><td>voice/media.go</td></tr>
 <tr><td>PLC подряд</td><td>≤ 3 кадра (60 мс)</td><td>client/jitter.go</td></tr>
 <tr><td>Очередь микшера</td><td>5 кадров на отправителя</td><td>client/mixer.go</td></tr>
+<tr><td>Очередь сигналов</td><td>8 событий, эффекты ≤ 90 кадров</td><td>client/state.go, client/mixer.go</td></tr>
+<tr><td>Attention</td><td>не чаще 2 с на отправителя</td><td>voice/hub.go</td></tr>
 <tr><td>Heartbeat / ACK</td><td>5 с / 3 с</td><td>client</td></tr>
 <tr><td>Session timeout</td><td>30 с</td><td>server</td></tr>
 <tr><td>Reconnect backoff</td><td>1, 2, 4, 4… с</td><td>clientapp</td></tr>

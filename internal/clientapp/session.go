@@ -218,11 +218,20 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			case request := <-audioDeviceChanges:
 				logger.Printf("audio device switch: old_capture=%q new_capture=%q old_playback=%q new_playback=%q", current.CaptureID, request.selection.CaptureID, current.PlaybackID, request.selection.PlaybackID)
 				var changeErr error
-				if request.selection.CaptureID != current.CaptureID || !recorder.Available() {
+				if request.selection.CaptureID != current.CaptureID {
 					changeErr = recorder.Switch(request.selection.CaptureID)
+				} else if !recorder.Available() {
+					// Retry a microphone that failed to open earlier. A machine
+					// without one, such as a Remote Desktop session, must still
+					// be able to switch playback, so this failure is only logged.
+					if err := recorder.Switch(request.selection.CaptureID); err != nil {
+						logger.Printf("audio capture retry failed: capture=%q error=%v", request.selection.CaptureID, err)
+					}
 				}
-				if changeErr == nil && request.selection.PlaybackID != current.PlaybackID {
-					changeErr = player.Switch(request.selection.PlaybackID)
+				if request.selection.PlaybackID != current.PlaybackID {
+					if playbackErr := player.Switch(request.selection.PlaybackID); playbackErr != nil {
+						changeErr = playbackErr
+					}
 				}
 				if changeErr == nil {
 					current = request.selection

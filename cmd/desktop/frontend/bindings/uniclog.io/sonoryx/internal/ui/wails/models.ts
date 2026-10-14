@@ -121,6 +121,9 @@ export interface ClientViewDTO {
     "participants": ParticipantDTO[] | null;
     "screenStreams": ScreenStreamDTO[] | null;
     "audio": AudioStateDTO;
+    "soundPack": string;
+    "soundVolume": number;
+    "muteOnAway": boolean;
 }
 
 export interface ConnectRequest {
@@ -164,6 +167,7 @@ export interface ParticipantDTO {
     "speaking": boolean;
     "muted": boolean;
     "deafened": boolean;
+    "away": boolean;
     "local": boolean;
 }
 

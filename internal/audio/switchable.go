@@ -177,8 +177,11 @@ func NewSwitchablePlayer(config CodecConfig, deviceID string) (*SwitchablePlayer
 func (p *SwitchablePlayer) Write(samples []int16) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.player == nil {
+	if p.closed {
 		return io.ErrClosedPipe
+	}
+	if p.player == nil {
+		return nil
 	}
 	return p.player.Write(samples)
 }
@@ -186,14 +189,14 @@ func (p *SwitchablePlayer) Write(samples []int16) error {
 func (p *SwitchablePlayer) SetDeafened(value bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.player == nil {
+	if p.closed {
 		return io.ErrClosedPipe
 	}
-	if err := p.player.SetDeafened(value); err != nil {
-		return err
-	}
 	p.deafened = value
-	return nil
+	if p.player == nil {
+		return nil
+	}
+	return p.player.SetDeafened(value)
 }
 
 func (p *SwitchablePlayer) Switch(deviceID string) error {
@@ -202,18 +205,57 @@ func (p *SwitchablePlayer) Switch(deviceID string) error {
 		p.mu.Unlock()
 		return io.ErrClosedPipe
 	}
-	if p.deviceID == deviceID {
+	if p.deviceID == deviceID && p.player != nil {
 		p.mu.Unlock()
 		return nil
 	}
+	previous := p.player
+	oldID := p.deviceID
 	config := p.config
-	deafened := p.deafened
 	p.mu.Unlock()
 
 	next, err := NewMalgoPlayer(config, deviceID)
+	if err != nil && previous != nil {
+		// Some endpoints, including Remote Desktop audio, accept only one
+		// client. Release the current stream and try the new device again.
+		p.mu.Lock()
+		if p.player == previous {
+			p.player = nil
+		}
+		p.mu.Unlock()
+		_ = previous.Close()
+		previous = nil
+		next, err = NewMalgoPlayer(config, deviceID)
+		if err != nil {
+			restored, restoreErr := NewMalgoPlayer(config, oldID)
+			p.mu.Lock()
+			if p.closed {
+				p.mu.Unlock()
+				if restored != nil {
+					_ = restored.Close()
+				}
+				return io.ErrClosedPipe
+			}
+			if restored != nil {
+				if deafErr := restored.SetDeafened(p.deafened); deafErr != nil {
+					log.Printf("restore playback deafen: %v", deafErr)
+				}
+				p.player = restored
+				p.deviceID = oldID
+			}
+			p.mu.Unlock()
+			if restoreErr != nil {
+				log.Printf("restore playback device %q: %v", oldID, restoreErr)
+			}
+			return err
+		}
+	}
 	if err != nil {
 		return err
 	}
+	p.mu.Lock()
+	deafened := p.deafened
+	p.mu.Unlock()
 	if err := next.SetDeafened(deafened); err != nil {
 		_ = next.Close()
 		return err
@@ -224,11 +266,13 @@ func (p *SwitchablePlayer) Switch(deviceID string) error {
 		_ = next.Close()
 		return io.ErrClosedPipe
 	}
-	previous := p.player
+	replaced := p.player
 	p.player = next
 	p.deviceID = deviceID
 	p.mu.Unlock()
-	_ = previous.Close()
+	if replaced != nil {
+		_ = replaced.Close()
+	}
 	return nil
 }
 
