@@ -51,7 +51,7 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 	if config.AdvertisedIP != "" {
 		settingEngine.SetNAT1To1IPs([]string{config.AdvertisedIP}, webrtc.ICECandidateTypeHost)
 	}
-	m := &Manager{hub: hub, meters: meters, network: network, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
+	m := &Manager{hub: hub, meters: meters, network: network, adaptive: config.AdaptiveBitrate, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
 	m.startWorker(m.reconcileLoop)
 	return m, nil
 }

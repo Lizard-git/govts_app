@@ -163,6 +163,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	// Bound both age and bytes, not just the number of frame entries.
 	bytes := frame.bytes + s.queuedBytes
 	if bytes > maxFrameBytes || s.queuedPackets+len(frame.packets) > maxFramePackets || len(s.packets) == subscriberQueueSize {
+		s.congestion.Add(1)
 		s.discardQueue()
 		s.waitingKeyframe = true
 		requestQueueRecovery(p, s)
@@ -184,6 +185,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 		default:
 		}
 	default:
+		s.congestion.Add(1)
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))
@@ -200,11 +202,16 @@ func isClosed(done <-chan struct{}) bool {
 	}
 }
 
-// A single slow viewer should not continually disturb the shared encoder.
+// A single slow viewer should not continually disturb the shared encoder; a
+// viewer excluded from the adaptive source ceiling waits longer.
 func requestQueueRecovery(p *publisher, s *subscriber) {
 	now := time.Now().UnixNano()
 	previous := s.lastQueueRecovery.Load()
-	if previous != 0 && time.Duration(now-previous) < 5*time.Second {
+	interval := queueRecoveryInterval
+	if s.slow.Load() {
+		interval = slowQueueRecovery
+	}
+	if previous != 0 && time.Duration(now-previous) < interval {
 		return
 	}
 	if s.lastQueueRecovery.CompareAndSwap(previous, now) {

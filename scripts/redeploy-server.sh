@@ -19,6 +19,7 @@ TMUX_SESSION="${TMUX_SESSION:-sonoryx-server}"
 TMUX_PANE="=$TMUX_SESSION:0.0"
 VOICE_REDUNDANCY="${VOICE_REDUNDANCY:-0}"
 PUBLIC_STATUS="${PUBLIC_STATUS:-0}"
+MEDIA_ADAPTIVE="${MEDIA_ADAPTIVE:-0}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -129,6 +130,14 @@ start_server() {
       echo "WARNING: $LIVE_BIN does not support -public-status; starting without it" >&2
     fi
   fi
+  if [[ "$MEDIA_ADAPTIVE" == "1" ]]; then
+    if binary_supports_flag media-adaptive-bitrate; then
+      extra_args+=(-media-adaptive-bitrate)
+      echo "Adaptive screen bitrate: enabled"
+    else
+      echo "WARNING: $LIVE_BIN does not support -media-adaptive-bitrate; starting without it" >&2
+    fi
+  fi
   : >>"$LOG_FILE"
   printf 'Starting server command:'
   printf ' %q' "$LIVE_BIN" \
@@ -193,6 +202,8 @@ is_positive_integer "$MEDIA_MAX_PORT" && (( MEDIA_MAX_PORT <= 65535 )) \
   || fail "VOICE_REDUNDANCY must be 0 or 1"
 [[ "$PUBLIC_STATUS" == "0" || "$PUBLIC_STATUS" == "1" ]] \
   || fail "PUBLIC_STATUS must be 0 or 1"
+[[ "$MEDIA_ADAPTIVE" == "0" || "$MEDIA_ADAPTIVE" == "1" ]] \
+  || fail "MEDIA_ADAPTIVE must be 0 or 1"
 is_positive_integer "$STOP_TIMEOUT" || fail "STOP_TIMEOUT must be positive"
 is_positive_integer "$START_TIMEOUT" || fail "START_TIMEOUT must be positive"
 [[ -d "$APP_DIR" ]] || fail "directory not found: $APP_DIR"

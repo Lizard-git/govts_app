@@ -1,0 +1,180 @@
+package media
+
+import (
+	"fmt"
+	"slices"
+	"strconv"
+	"time"
+
+	"github.com/pion/rtcp"
+)
+
+// Adaptive mode (Config.AdaptiveBitrate, off by default). Once per second the
+// reconcile worker updates a loss based rate estimate for every viewer
+// and sends the publisher a REMB with the lowest estimate among viewers that
+// are not far behind the rest. libwebrtc senders apply a received REMB as an
+// upper bound on their target rate, also when transport-cc is negotiated, so
+// the client needs no changes and its maxBitrate stays the ceiling. A viewer
+// has no estimate (no cap, no pacing) until it reports loss or a REMB; then the
+// estimate drops at once and grows by at most rateGrowth per second. Viewer
+// writers pace primary RTP to the estimate minus measured RTX. When disabled
+// nothing here runs and no REMB is sent. Transport-wide sequence numbers are
+// not used: each PeerConnection keeps its own Pion interceptor state.
+const (
+	minViewerRate     = 300_000     // bps; estimates never go below it
+	releasedRate      = 100_000_000 // bps; REMB that lifts the cap, maxBitrate still applies
+	rateBackoff       = 0.85
+	rateGrowth        = 1.08 // per second, only while the link is healthy
+	rateAppHeadroom   = 1.5  // growth stops at this multiple of the delivered rate
+	congestedLoss     = 0.10
+	healthyLoss       = 0.02
+	slowViewerShare   = 0.25 // of the median estimate; slower viewers do not cap the source
+	sourceHeadroom    = 0.9  // leaves room for RTX and RTCP on the slowest counted link
+	paceFactor        = 2.5  // as libwebrtc; lets a keyframe drain within the age budget
+	paceBurst         = 20 * time.Millisecond
+	slowQueueRecovery = 10 * time.Second
+)
+
+// Owned by the reconcile worker.
+type rateSample struct {
+	at          time.Time
+	bytes       uint64
+	repeatBytes uint64
+}
+
+func (m *Manager) adaptRates(p *publisher, subscribers []*subscriber, now time.Time) {
+	p.mu.RLock()
+	ssrc := p.ssrc
+	p.mu.RUnlock()
+	rates := make([]int64, 0, len(subscribers))
+	for _, s := range subscribers {
+		if rate := m.updateRate(s, now); rate > 0 {
+			rates = append(rates, rate)
+		}
+	}
+	ceiling := int64(releasedRate)
+	if len(rates) > 0 {
+		slices.Sort(rates)
+		// The median is at least minViewerRate, so some rate always passes.
+		threshold := max(minViewerRate, int64(float64(rates[len(rates)/2])*slowViewerShare))
+		index, _ := slices.BinarySearch(rates, threshold)
+		ceiling = max(minViewerRate, int64(float64(rates[index])*sourceHeadroom))
+		for _, s := range subscribers {
+			rate := s.rate.Load()
+			s.slow.Store(rate > 0 && rate < threshold)
+		}
+	}
+	p.ceiling.Store(ceiling)
+	if ssrc != 0 {
+		_ = p.pc.WriteRTCP([]rtcp.Packet{&rtcp.ReceiverEstimatedMaximumBitrate{Bitrate: float32(ceiling), SSRCs: []uint32{uint32(ssrc)}}})
+	}
+}
+
+// Returns the viewer's estimate in bps, or 0 until it has one.
+func (m *Manager) updateRate(s *subscriber, now time.Time) int64 {
+	if !s.connected.Load() || !s.hasFrame.Load() {
+		return 0
+	}
+	current := rateSample{at: now, bytes: s.outBytes.Load(), repeatBytes: m.repeatBytes(s)}
+	previous := s.sample
+	s.sample = current
+	elapsed := now.Sub(previous.at).Seconds()
+	if previous.at.IsZero() || elapsed <= 0 {
+		return s.rate.Load()
+	}
+	repeated := float64(current.repeatBytes-previous.repeatBytes) * 8 / elapsed
+	delivered := float64(current.bytes-previous.bytes)*8/elapsed + repeated
+	s.rtxRate.Store(int64(repeated))
+	loss, hasLoss := s.receiverLoss()
+	rate := float64(s.rate.Load())
+	remb := s.remb.Load()
+	// Only network signals (receiver report loss, the viewer's REMB) set or
+	// lower the estimate. Server queue overflows usually mean local CPU or
+	// socket pressure, and once the writer is paced it can make frames stale
+	// by itself; counting either would feed back into ever slower pacing.
+	// They stay visible as congestion_events.
+	congested := hasLoss && loss > congestedLoss
+	switch {
+	case rate == 0 && !congested && remb == 0:
+		// No evidence of a limit yet: neither cap the source nor pace.
+		return 0
+	case rate == 0 && congested:
+		rate = delivered * rateBackoff
+	case rate == 0:
+		rate = float64(remb)
+	case congested:
+		rate = min(rate, delivered) * rateBackoff
+	case !hasLoss || loss < healthyLoss:
+		// An idle screen sends little; do not grow far past what was tested.
+		rate = min(rate*rateGrowth, max(rate, delivered*rateAppHeadroom))
+	}
+	if remb > 0 {
+		rate = min(rate, float64(remb))
+	}
+	estimate := max(int64(rate), minViewerRate)
+	s.rate.Store(estimate)
+	return estimate
+}
+
+func (m *Manager) repeatBytes(s *subscriber) uint64 {
+	if value, ok := m.meters.streams.Load(transportKey{s.pc.ID(), s.ssrc}); ok {
+		return value.(*transportMeter).repeatBytes.Load()
+	}
+	return 0
+}
+
+// Latest RTCP receiver report fraction lost for the viewer's primary SSRC.
+func (s *subscriber) receiverLoss() (float64, bool) {
+	value := s.rrLoss.Load()
+	return float64(value&0xff) / 256, value&rrLossValid != 0
+}
+
+const rrLossValid = 1 << 8
+
+// Pacing rate for the writer: the estimate times paceFactor, minus the RTX the
+// NACK responder sends outside the writer. 0 disables pacing.
+func (s *subscriber) paceRate() int64 {
+	rate := s.rate.Load()
+	if rate == 0 {
+		return 0
+	}
+	return max(minViewerRate, int64(float64(rate)*paceFactor)-s.rtxRate.Load())
+}
+
+// Owned by the subscriber writer. The first paceBurst of data is sent at once;
+// after that each packet waits for its slot. The writer holds no lock while it
+// waits and still checks frame age before every packet, so pacing cannot grow
+// a second queue: frames that become stale are dropped by the existing limits.
+type pacer struct{ next time.Time }
+
+func (p *pacer) reserve(now time.Time, bytes int, rate int64) time.Duration {
+	if rate <= 0 {
+		return 0
+	}
+	if earliest := now.Add(-paceBurst); p.next.Before(earliest) {
+		p.next = earliest
+	}
+	wait := p.next.Sub(now)
+	p.next = p.next.Add(time.Duration(float64(bytes*8) / float64(rate) * float64(time.Second)))
+	return wait
+}
+
+// Suffix for the screen metrics line; empty when adaptive mode is off. Rates
+// are the latest values in kbps, na until known; congestion_events is cumulative.
+func (m *Manager) adaptiveMetrics(p *publisher, s *subscriber) string {
+	if !m.adaptive {
+		return ""
+	}
+	kbps := func(bps int64) string {
+		if bps <= 0 {
+			return "na"
+		}
+		return strconv.FormatInt(bps/1000, 10)
+	}
+	loss := "na"
+	if fraction, ok := s.receiverLoss(); ok {
+		loss = strconv.FormatFloat(fraction*100, 'f', 1, 64)
+	}
+	return fmt.Sprintf(" source_ceiling_kbps=%s estimate_kbps=%s rtx_kbps=%d rr_loss_percent=%s viewer_remb_kbps=%s slow=%t congestion_events=%d",
+		kbps(p.ceiling.Load()), kbps(s.rate.Load()), s.rtxRate.Load()/1000, loss, kbps(s.remb.Load()), s.slow.Load(), s.congestion.Load())
+}

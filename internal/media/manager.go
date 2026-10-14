@@ -38,7 +38,9 @@ const (
 	maxFramePackets     = 2048
 	nackResponderCache  = 2048
 	recoveryPLIInterval = time.Second
-	startupPLIRequests  = 5
+	// Per viewer, for queue overflow or stale frames.
+	queueRecoveryInterval = 5 * time.Second
+	startupPLIRequests    = 5
 )
 
 type Manager struct {
@@ -53,6 +55,7 @@ type Manager struct {
 	meters       *transportMeters
 	network      *bufferedMediaNet
 	process      processSampler // owned by the metrics worker
+	adaptive     bool
 	closing      atomic.Int64
 }
 
@@ -60,6 +63,8 @@ type Config struct {
 	MinUDPPort   uint16
 	MaxUDPPort   uint16
 	AdvertisedIP string
+	// Enables viewer rate estimates, the REMB source ceiling and pacing.
+	AdaptiveBitrate bool
 }
 
 type publisher struct {
@@ -100,9 +105,11 @@ type publisher struct {
 	// the last metrics log, RTP bytes.
 	keyFrames        atomic.Uint64
 	keyFrameMaxBytes atomic.Int64
-	metricsAt        time.Time
-	lastInBytes      uint64
-	lastInPackets    uint64
+	// REMB ceiling sent to the source in adaptive mode, bps.
+	ceiling       atomic.Int64
+	metricsAt     time.Time
+	lastInBytes   uint64
+	lastInPackets uint64
 }
 
 type subscriber struct {
@@ -136,6 +143,17 @@ type subscriber struct {
 	hasFrame          atomic.Bool
 	nextSequence      uint16
 	sequenceStarted   bool
+
+	// Adaptive mode (adaptive.go). ssrc is fixed before workers start;
+	// sample is owned by the reconcile worker; the rest are shared atomics.
+	ssrc       uint32
+	sample     rateSample
+	rate       atomic.Int64  // bps estimate, 0 until there is evidence of a limit
+	rtxRate    atomic.Int64  // bps of NACK resends over the last second
+	rrLoss     atomic.Uint32 // RR fraction lost, rrLossValid once received
+	remb       atomic.Int64  // bps from the viewer's own REMB, if it sends one
+	congestion atomic.Uint64 // queue overflows and frames that went stale in the queue
+	slow       atomic.Bool   // excluded from the source ceiling
 
 	lastOutBytes   uint64
 	lastOutPackets uint64
@@ -285,6 +303,9 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		return SubscribeResult{}, ErrStreamNotReady
 	}
 	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, subscriberQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
+	if encodings := sender.GetParameters().Encodings; len(encodings) > 0 {
+		s.ssrc = uint32(encodings[0].SSRC)
+	}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
 	m.startWorker(func() { drainRTCP(p, s, sender) })
@@ -416,10 +437,16 @@ func (m *Manager) reconcile() {
 			subscribers = append(subscribers, s)
 		}
 		p.mu.RUnlock()
+		allowed := subscribers[:0]
 		for _, s := range subscribers {
 			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
 				m.removeSubscriber(p, s)
+				continue
 			}
+			allowed = append(allowed, s)
+		}
+		if m.adaptive {
+			m.adaptRates(p, allowed, time.Now())
 		}
 	}
 }
