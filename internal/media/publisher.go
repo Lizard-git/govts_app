@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -31,6 +32,7 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		start, key, packetValid := frameMetadata(p.codec.MimeType, packet.Payload)
 		if frame == nil || packet.Timestamp != timestamp {
 			if frame != nil {
+				p.partialFrames.Add(1)
 				reset()
 			}
 			frame = &videoFrame{at: item.at, key: key}
@@ -52,7 +54,19 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		if !packet.Marker {
 			return
 		}
+		if time.Since(frame.at) > frameMaxAge {
+			p.expiredFrames.Add(1)
+			reset()
+			return
+		}
 		if valid {
+			frame.readyAt = time.Now()
+			assembly := frame.readyAt.Sub(frame.at).Milliseconds()
+			storeMax(&p.assemblyAge, assembly)
+			if frame.key {
+				p.keyFrames.Add(1)
+				storeMax(&p.keyFrameMaxBytes, int64(frame.bytes))
+			}
 			subscribers = subscribers[:0]
 			p.mu.RLock()
 			for _, s := range p.subscribers {
@@ -65,16 +79,21 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 			// Do not retain detached subscribers in the reused snapshot backing array.
 			clear(subscribers)
 		} else {
+			p.invalidFrames.Add(1)
 			reset()
 		}
 		frame = nil
 	}
 	var reorder rtpReorder
+	inputLoss := func() {
+		p.inputGaps.Add(1)
+		reset()
+	}
 	var deadline time.Time
 	for {
 		nextDeadline := reorder.deadline()
-		if frame != nil && (nextDeadline.IsZero() || frame.at.Add(subscriberQueueAge).Before(nextDeadline)) {
-			nextDeadline = frame.at.Add(subscriberQueueAge)
+		if frame != nil && (nextDeadline.IsZero() || frame.at.Add(frameMaxAge).Before(nextDeadline)) {
+			nextDeadline = frame.at.Add(frameMaxAge)
 		}
 		if !nextDeadline.Equal(deadline) {
 			if err := remote.SetReadDeadline(nextDeadline); err != nil {
@@ -87,8 +106,10 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		if err != nil {
 			var timeout net.Error
 			if errors.As(err, &timeout) && timeout.Timeout() && !isClosed(p.closed) {
-				reorder.expire(now, deliver, reset)
-				if frame != nil && now.Sub(frame.at) >= subscriberQueueAge {
+				reorder.expire(now, deliver, inputLoss)
+				p.inLost.Store(reorder.lost)
+				if frame != nil && now.Sub(frame.at) >= frameMaxAge {
+					p.expiredFrames.Add(1)
 					reset()
 				}
 				continue
@@ -98,8 +119,16 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		}
 		p.inBytes.Add(uint64(packet.MarshalSize()))
 		p.inPackets.Add(1)
-		reorder.expire(now, deliver, reset)
-		reorder.push(packet, now, deliver, reset)
+		reorder.expire(now, deliver, inputLoss)
+		reorder.push(packet, now, deliver, inputLoss)
+		p.inFilled.Store(reorder.filled)
+		p.inLost.Store(reorder.lost)
+	}
+}
+
+// Raise a since-last-log maximum; the metrics worker resets it with Swap(0).
+func storeMax(value *atomic.Int64, candidate int64) {
+	for previous := value.Load(); candidate > previous && !value.CompareAndSwap(previous, candidate); previous = value.Load() {
 	}
 }
 

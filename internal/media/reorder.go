@@ -17,16 +17,22 @@ type receivedPacket struct {
 // The common in-order path allocates nothing; storage is created on the first
 // gap and bounded to the cache window. Deadlines release unresolved gaps even
 // when the source stops sending. Serial arithmetic handles uint16 wraparound.
+// filled counts packets that closed a hole behind the highest received sequence
+// number (NACK repair or network reordering); lost counts sequence numbers
+// skipped after packetRepairAge. Discontinuities are not counted as loss.
 type rtpReorder struct {
 	expected    uint16
+	highest     uint16
 	initialized bool
 	pending     map[uint16]receivedPacket
 	gapAt       time.Time
+	filled      uint64
+	lost        uint64
 }
 
 func (r *rtpReorder) push(packet *rtp.Packet, at time.Time, deliver func(receivedPacket), loss func()) {
 	if !r.initialized {
-		r.expected, r.initialized = packet.SequenceNumber, true
+		r.expected, r.highest, r.initialized = packet.SequenceNumber, packet.SequenceNumber, true
 	}
 	distance := int16(packet.SequenceNumber - r.expected)
 	// A late packet is ignored only near the cursor; a larger jump in either
@@ -37,8 +43,15 @@ func (r *rtpReorder) push(packet *rtp.Packet, at time.Time, deliver func(receive
 	if distance < -maxFramePackets || distance > maxFramePackets {
 		clear(r.pending)
 		r.gapAt = time.Time{}
-		r.expected = packet.SequenceNumber
+		r.expected, r.highest = packet.SequenceNumber, packet.SequenceNumber
 		loss()
+	}
+	if ahead := int16(packet.SequenceNumber - r.highest); ahead > 0 {
+		r.highest = packet.SequenceNumber
+	} else if ahead < 0 {
+		if _, exists := r.pending[packet.SequenceNumber]; !exists {
+			r.filled++
+		}
 	}
 	if packet.SequenceNumber == r.expected {
 		deliver(receivedPacket{packet, at})
@@ -77,7 +90,7 @@ func (r *rtpReorder) deadline() time.Time {
 	if r.gapAt.IsZero() {
 		return time.Time{}
 	}
-	return r.gapAt.Add(subscriberQueueAge)
+	return r.gapAt.Add(packetRepairAge)
 }
 
 func (r *rtpReorder) expire(now time.Time, deliver func(receivedPacket), loss func()) {
@@ -92,6 +105,7 @@ func (r *rtpReorder) expire(now time.Time, deliver func(receivedPacket), loss fu
 	slices.SortFunc(sequences, func(a, b uint16) int { return int(uint16(a-base)) - int(uint16(b-base)) })
 	for _, sequence := range sequences {
 		if sequence != r.expected {
+			r.lost += uint64(uint16(sequence - r.expected))
 			loss()
 		}
 		item := r.pending[sequence]

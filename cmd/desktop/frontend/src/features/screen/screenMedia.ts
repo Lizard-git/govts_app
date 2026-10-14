@@ -1,6 +1,7 @@
 import {desktopAPI, logDiagnostic} from "../../api";
 import {errorCode, mediaKeyError} from "../../locales";
 import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
+import {ScreenStatsLog} from "./screenStatsLog";
 import {defaultScreenSettings, profileFromSettings, screenSizes, type ScreenSettings} from "./screenProfiles";
 
 type ServerCodecs = {legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]};
@@ -194,6 +195,10 @@ export class ScreenMediaController {
     private viewer?: {streamID: string; subscriberID: string; pc: RTCPeerConnection};
     private publisherStats = new ScreenStatsCollector();
     private viewerStats = new ScreenStatsCollector();
+    // Separate from the UI collectors: they keep their own baselines.
+    private publisherLog = new ScreenStatsLog();
+    private viewerLog = new ScreenStatsLog();
+    private diagnosticsTimer?: number;
     private publishGeneration = 0;
     private picking = false;
 
@@ -294,6 +299,8 @@ export class ScreenMediaController {
             this.pendingPublisher = undefined;
             const active: PublisherState = {streamID, pc, capture, settings: {...settings}};
             this.publisher = active;
+            this.publisherLog.reset();
+            this.startDiagnostics();
             let disconnectedTimer: number | undefined;
             let disconnectExpired = false;
             const connectionChanged = () => {
@@ -395,6 +402,8 @@ export class ScreenMediaController {
             this.pendingViewer = undefined;
             this.viewer = {streamID, subscriberID, pc};
             this.viewerStats.reset();
+            this.viewerLog.reset();
+            this.startDiagnostics();
             return remote;
         } catch (error) {
             if (this.pendingViewer === pc) this.pendingViewer = undefined;
@@ -443,6 +452,41 @@ export class ScreenMediaController {
         if (viewer) void desktopAPI.unsubscribeScreen(viewer.streamID, viewer.subscriberID).catch((error) => logDiagnostic("screen_dispose_cleanup", error));
         this.publisherStats.reset();
         this.viewerStats.reset();
+        this.stopDiagnostics();
+    }
+
+    // One "screen_stats" line per active direction every 10 s, aligned with the
+    // server's screen metrics interval. The timer stops when nothing is active.
+    private startDiagnostics() {
+        if (this.diagnosticsTimer !== undefined) return;
+        this.diagnosticsTimer = window.setInterval(() => void this.logStats(), 10_000);
+    }
+
+    private stopDiagnostics() {
+        window.clearInterval(this.diagnosticsTimer);
+        this.diagnosticsTimer = undefined;
+    }
+
+    private async logStats() {
+        const publisher = this.publisher;
+        const viewer = this.viewer;
+        if (!publisher && !viewer) {
+            this.stopDiagnostics();
+            return;
+        }
+        try {
+            if (publisher) {
+                const line = this.publisherLog.sample(await publisher.pc.getStats(), "outbound-rtp");
+                const {resolution, fps, codec, bitrate} = publisher.settings;
+                if (line && this.publisher === publisher) logDiagnostic("screen_stats", `stream=${publisher.streamID} selected=${resolution}/${fps}/${codec}/${bitrate / 1000}kbps ${line}`);
+            }
+            if (viewer) {
+                const line = this.viewerLog.sample(await viewer.pc.getStats(), "inbound-rtp");
+                if (line && this.viewer === viewer) logDiagnostic("screen_stats", `stream=${viewer.streamID} ${line}`);
+            }
+        } catch (error) {
+            logDiagnostic("screen_stats_failed", error);
+        }
     }
 
     async getViewerStats(): Promise<ScreenStats | null> {

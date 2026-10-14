@@ -18,8 +18,24 @@ import (
 type videoFrame struct {
 	packets []*rtp.Packet
 	at      time.Time
+	readyAt time.Time
 	bytes   int
 	key     bool
+}
+
+// at is the first received packet and readyAt the completed assembly. Queue
+// age starts at readyAt, but readyAt never resets the frame's total age: a
+// frame is stale once either budget is exceeded. Frames constructed without
+// readyAt retain their original age semantics.
+func (f *videoFrame) queueTime() time.Time {
+	if !f.readyAt.IsZero() {
+		return f.readyAt
+	}
+	return f.at
+}
+
+func (f *videoFrame) stale(now time.Time) bool {
+	return now.Sub(f.at) > frameMaxAge || now.Sub(f.queueTime()) > subscriberQueueAge
 }
 
 func frameStart(codec string, payload []byte) (start, key bool) {
@@ -137,7 +153,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	default:
 	}
 	// Invalid input cannot become a recovery frame merely because it is a keyframe.
-	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || time.Since(frame.at) > subscriberQueueAge {
+	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now()) {
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))

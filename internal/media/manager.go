@@ -24,6 +24,16 @@ var (
 const (
 	subscriberQueueSize = 8
 	subscriberQueueAge  = 250 * time.Millisecond
+	// A frame is useful only while its total age, from its first received
+	// packet to the last subscriber write, stays within frameMaxAge. It is an
+	// explicit compromise over the original 250 ms so upstream NACK repair
+	// (packetRepairAge) still leaves room for queueing; revisit after baseline.
+	frameMaxAge     = 400 * time.Millisecond
+	packetRepairAge = 200 * time.Millisecond
+	// One NACK per interval, stopped once repair could no longer arrive in time.
+	nackInterval        = 50 * time.Millisecond
+	nackMaxPerPacket    = uint16(packetRepairAge / nackInterval)
+	mediaReadBuffer     = 4 * 1024 * 1024
 	maxFrameBytes       = 4 * 1024 * 1024
 	maxFramePackets     = 2048
 	nackResponderCache  = 2048
@@ -41,6 +51,8 @@ type Manager struct {
 	closeOnce    sync.Once
 	workers      sync.WaitGroup
 	meters       *transportMeters
+	network      *bufferedMediaNet
+	process      processSampler // owned by the metrics worker
 	closing      atomic.Int64
 }
 
@@ -51,26 +63,46 @@ type Config struct {
 }
 
 type publisher struct {
-	id            domain.StreamID
-	ownerID       uint64
-	pc            *webrtc.PeerConnection
-	mu            sync.RWMutex
-	codec         webrtc.RTPCodecCapability
-	ssrc          webrtc.SSRC
-	ready         bool
-	starting      bool
-	subscribers   map[string]*subscriber
-	closed        chan struct{}
-	closeOnce     sync.Once
-	createdAt     time.Time
-	recovery      chan struct{}
-	pliSent       atomic.Uint64
-	pliMerged     atomic.Uint64
-	inBytes       atomic.Uint64
-	inPackets     atomic.Uint64
-	metricsAt     time.Time
-	lastInBytes   uint64
-	lastInPackets uint64
+	id          domain.StreamID
+	ownerID     uint64
+	pc          *webrtc.PeerConnection
+	mu          sync.RWMutex
+	codec       webrtc.RTPCodecCapability
+	ssrc        webrtc.SSRC
+	ready       bool
+	starting    bool
+	subscribers map[string]*subscriber
+	closed      chan struct{}
+	closeOnce   sync.Once
+	createdAt   time.Time
+	recovery    chan struct{}
+	pliSent     atomic.Uint64
+	pliMerged   atomic.Uint64
+	inBytes     atomic.Uint64
+	inPackets   atomic.Uint64
+	// Cumulative event counts (not packets). inputGaps: sequence gaps still
+	// unrepaired after packetRepairAge, or sequence discontinuities.
+	// invalidFrames: frames ended by a marker without a valid start, with a
+	// malformed payload or over frame limits. expiredFrames: frames not
+	// completed within frameMaxAge. partialFrames: frames abandoned because a
+	// new RTP timestamp arrived before their marker.
+	inputGaps     atomic.Uint64
+	invalidFrames atomic.Uint64
+	expiredFrames atomic.Uint64
+	partialFrames atomic.Uint64
+	// Largest first-packet-to-completion time since the last metrics log, ms.
+	assemblyAge atomic.Int64
+	// Cumulative input packets: filled holes (repair or reordering) and
+	// sequence numbers given up after packetRepairAge (rtpReorder).
+	inFilled atomic.Uint64
+	inLost   atomic.Uint64
+	// Completed keyframes forwarded (cumulative) and the largest one since
+	// the last metrics log, RTP bytes.
+	keyFrames        atomic.Uint64
+	keyFrameMaxBytes atomic.Int64
+	metricsAt        time.Time
+	lastInBytes      uint64
+	lastInPackets    uint64
 }
 
 type subscriber struct {
@@ -87,7 +119,9 @@ type subscriber struct {
 	waitingKeyframe   bool
 	connected         atomic.Bool
 	queueAge          atomic.Int64
+	totalAge          atomic.Int64
 	writingAt         atomic.Int64
+	writingFrameAt    atomic.Int64
 	lastQueueRecovery atomic.Int64
 	firs              atomic.Uint64
 	closed            chan struct{}
