@@ -41,7 +41,8 @@ valid_server_pid() {
   kill -0 "$pid" 2>/dev/null || return 1
   exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
   cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
-  [[ "$exe" == "$APP_DIR"/sonoryx-server* && "$cwd" == "$APP_DIR" ]]
+  [[ "$cwd" == "$APP_DIR" ]] || return 1
+  [[ "$exe" == "$APP_DIR"/sonoryx-server* || "$exe" == "$APP_DIR"/govts-server* ]]
 }
 
 current_pid() {
@@ -64,7 +65,7 @@ current_pid() {
     rm -f "$PID_FILE"
   fi
 
-  # Compatibility with the old manually started sonoryx-server-N process.
+  # Compatibility with old sonoryx-server-N and pre-rename govts-server processes.
   candidates="$(listener_pid)"
   [[ "$(wc -w <<<"$candidates")" -le 1 ]] \
     || fail "multiple processes listen on UDP :$VOICE_PORT: $candidates"

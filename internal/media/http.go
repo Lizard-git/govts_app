@@ -58,6 +58,21 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
+	case "/media/capabilities":
+		var request struct{}
+		if !decodeJSON(w, r, &request) {
+			return
+		}
+		type codecInfo struct {
+			MimeType    string `json:"mimeType"`
+			Fmtp        string `json:"sdpFmtpLine"`
+			PayloadType uint8  `json:"payloadType"`
+		}
+		codecs := make([]codecInfo, 0)
+		for _, c := range screenCodecs() {
+			codecs = append(codecs, codecInfo{c.MimeType, c.SDPFmtpLine, uint8(c.PayloadType)})
+		}
+		writeJSON(w, map[string]any{"codecs": codecs})
 	case "/media/publish":
 		h.publish(w, r, sessionID)
 	case "/media/subscribe":

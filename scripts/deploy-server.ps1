@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$')]
-    [string]$Target = 'admin@82.25.190.126',
+    [string]$Target = 'admin@193.187.92.89',
 
     [ValidatePattern('^/[A-Za-z0-9._/-]+$')]
     [string]$RemoteDir = '/opt/sonoryx',
@@ -10,7 +10,7 @@ param(
     [string]$ConfigPath = '',
 
     [ValidatePattern('^[0-9A-Fa-f:.]+$')]
-    [string]$PublicIp = '82.25.190.126',
+    [string]$PublicIp = '193.187.92.89',
 
     [ValidateRange(1, 65535)]
     [int]$VoicePort = 9000,
@@ -55,6 +55,13 @@ if ($MediaMinPort -gt $MediaMaxPort) {
 }
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
     throw "server binary not found: $binary. Run .\scripts\build-server.ps1 first"
+}
+
+# Check the existing installation before uploading or stopping anything.
+$preflightCommand = "test -d '$RemoteDir' && test -w '$RemoteDir' && test -f '$ConfigPath'"
+& ssh -- $Target $preflightCommand
+if ($LASTEXITCODE -ne 0) {
+    throw "remote installation missing or not writable: $RemoteDir (config: $ConfigPath). For a legacy installation, pass -RemoteDir /opt/govts -TmuxSession govts-server."
 }
 
 & scp -- $binary "${Target}:$remoteBinary"

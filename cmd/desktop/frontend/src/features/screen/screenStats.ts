@@ -1,4 +1,7 @@
 export type ScreenStats = {
+    codec?: string;
+    implementation?: string;
+    selected?: string;
     bitrate: number;
     fps: number;
     width: number;
@@ -27,7 +30,10 @@ export class ScreenStatsCollector {
         let media: any;
         let rttMs = 0;
         report.forEach((stat: any) => {
-            if (stat.type === direction && stat.kind === "video") media = stat;
+            if (stat.type === direction && stat.kind === "video") {
+                const codec: any = stat.codecId ? report.get(stat.codecId) : undefined;
+                if (!/\/(rtx|red|ulpfec|flexfec-03)$/i.test(codec?.mimeType ?? "")) media = stat;
+            }
             if ((stat.type === "candidate-pair" && (stat.nominated || stat.selected)) || stat.type === "remote-inbound-rtp") {
                 if (typeof stat.currentRoundTripTime === "number") rttMs = Math.max(rttMs, stat.currentRoundTripTime * 1000);
                 if (typeof stat.roundTripTime === "number") rttMs = Math.max(rttMs, stat.roundTripTime * 1000);
@@ -48,7 +54,10 @@ export class ScreenStatsCollector {
         const elapsed = previous ? (now.timestamp - previous.timestamp) / 1000 : 0;
         const packetDelta = previous ? Math.max(0, now.packets - previous.packets) : 0;
         const lostDelta = previous ? Math.max(0, now.lost - previous.lost) : 0;
+        const codec: any = media.codecId ? report.get(media.codecId) : undefined;
         return {
+            codec: codec?.mimeType ?? "",
+            implementation: media.encoderImplementation ?? media.decoderImplementation ?? "",
             bitrate: elapsed > 0 ? Math.max(0, now.bytes - previous!.bytes) * 8 / elapsed : 0,
             fps: elapsed > 0 ? Math.max(0, now.frames - previous!.frames) / elapsed : 0,
             width: media.frameWidth ?? 0,

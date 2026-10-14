@@ -1,31 +1,72 @@
 package media
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
-func requestKeyframe(p *publisher) {
-	p.mu.RLock()
-	ssrc := p.ssrc
-	p.mu.RUnlock()
-	if ssrc != 0 {
-		_ = p.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(ssrc)}})
+// One bounded worker per publisher coalesces all recovery sources. Closing the
+// PeerConnection unblocks RTCP I/O; closed cancels the pending timer.
+func requestRecoveryKeyframe(p *publisher, s *subscriber) {
+	select {
+	case <-p.closed:
+		return
+	case <-s.closed:
+		return
+	default:
+	}
+	select {
+	case p.recovery <- struct{}{}:
+	default:
+		p.pliMerged.Add(1)
 	}
 }
 
-func requestRecoveryKeyframe(p *publisher, s *subscriber) {
-	now := time.Now().UnixNano()
-	previous := s.lastRecoveryPLI.Load()
-	if previous != 0 && time.Duration(now-previous) < recoveryPLIInterval {
-		return
+func runRecovery(p *publisher) {
+	runRecoveryLoop(p.closed, p.recovery, recoveryPLIInterval, &p.pliMerged, func() {
+		p.mu.RLock()
+		ssrc := p.ssrc
+		p.mu.RUnlock()
+		if ssrc != 0 {
+			if err := p.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(ssrc)}}); err == nil {
+				p.pliSent.Add(1)
+			}
+		}
+	})
+}
+
+func runRecoveryLoop(closed <-chan struct{}, requests <-chan struct{}, interval time.Duration, merged *atomic.Uint64, send func()) {
+	var last time.Time
+	for {
+		select {
+		case <-closed:
+			return
+		case <-requests:
+		}
+		if delay := time.Until(last.Add(interval)); delay > 0 {
+			merged.Add(1)
+			timer := time.NewTimer(delay)
+			select {
+			case <-closed:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		select {
+		case <-requests:
+			merged.Add(1)
+		default:
+		}
+		if isClosed(closed) {
+			return
+		}
+		send()
+		last = time.Now()
 	}
-	if !s.lastRecoveryPLI.CompareAndSwap(previous, now) {
-		return
-	}
-	requestKeyframe(p)
 }
 
 func requestStartupKeyframes(p *publisher, s *subscriber) {
@@ -38,6 +79,9 @@ func requestStartupKeyframes(p *publisher, s *subscriber) {
 		case <-s.closed:
 			return
 		case <-ticker.C:
+			if s.hasFrame.Load() {
+				return
+			}
 			requestRecoveryKeyframe(p, s)
 		}
 	}
@@ -50,14 +94,20 @@ func drainRTCP(p *publisher, s *subscriber, sender *webrtc.RTPSender) {
 			return
 		}
 		for _, packet := range packets {
-			switch packet.(type) {
-			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-				s.plis.Add(1)
-				requestRecoveryKeyframe(p, s)
-			case *rtcp.TransportLayerNack:
-				s.nacks.Add(1)
-				requestRecoveryKeyframe(p, s)
-			}
+			handleFeedback(p, s, packet)
 		}
+	}
+}
+
+func handleFeedback(p *publisher, s *subscriber, packet rtcp.Packet) {
+	switch packet.(type) {
+	case *rtcp.FullIntraRequest:
+		s.firs.Add(1)
+		requestRecoveryKeyframe(p, s)
+	case *rtcp.PictureLossIndication:
+		s.plis.Add(1)
+		requestRecoveryKeyframe(p, s)
+	case *rtcp.TransportLayerNack:
+		s.nacks.Add(1) // NACK is handled by Pion, not converted into PLI.
 	}
 }

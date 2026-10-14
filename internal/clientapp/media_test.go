@@ -2,6 +2,7 @@ package clientapp
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -15,6 +16,28 @@ func TestMediaEndpointErrorExplainsServerConfiguration(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error %q does not contain %q", message, want)
 		}
+	}
+}
+
+func TestLegacyScreenCapabilitiesRequireActualHTTP404(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		legacy bool
+	}{
+		{"success", nil, false},
+		{"old endpoint", &mediaHTTPError{statusCode: 404, status: "404 Not Found", body: "missing endpoint"}, true},
+		{"wrapped 404", fmt.Errorf("capabilities: %w", &mediaHTTPError{statusCode: 404, status: "404 Not Found"}), true},
+		{"500 containing misleading text", &mediaHTTPError{statusCode: 500, status: "500 Internal Server Error", body: "media signaling: 404 Not Found:"}, false},
+		{"TLS failure", errors.New("media server identity changed"), false},
+		{"transport error containing status text", errors.New("upstream error: media signaling: 404 Not Found:"), false},
+		{"authorization failure", &mediaHTTPError{statusCode: 401, status: "401 Unauthorized"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := legacyMediaServer(test.err); got != test.legacy {
+				t.Fatalf("legacy=%v want=%v", got, test.legacy)
+			}
+		})
 	}
 }
 

@@ -25,6 +25,21 @@ import (
 
 const maxMediaResponse = 256 * 1024
 
+type mediaHTTPError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func (e *mediaHTTPError) Error() string {
+	return fmt.Sprintf("media signaling: %s: %s", e.status, e.body)
+}
+
+func legacyMediaServer(err error) bool {
+	var response *mediaHTTPError
+	return errors.As(err, &response) && response.statusCode == http.StatusNotFound
+}
+
 type MediaPublishResult struct {
 	StreamID string                         `json:"streamId"`
 	Answer   mediasignal.SessionDescription `json:"answer"`
@@ -54,6 +69,17 @@ func (a *App) MediaServerFingerprint(ctx context.Context) (string, error) {
 		return "", errors.New("media server provided no certificate")
 	}
 	return certificateFingerprint(certificates[0]), nil
+}
+
+// Only a missing endpoint means an old VP8-only server. Transport and trust
+// failures must remain errors rather than silently masking them as legacy mode.
+func (a *App) ScreenCapabilities(ctx context.Context, pin string) (json.RawMessage, error) {
+	var result json.RawMessage
+	err := a.mediaRequest(ctx, "/media/capabilities", struct{}{}, pin, &result)
+	if legacyMediaServer(err) {
+		return json.RawMessage("{\"legacy\":true}"), nil
+	}
+	return result, err
 }
 
 func (a *App) PublishScreen(ctx context.Context, offer mediasignal.SessionDescription, pinnedFingerprint string) (MediaPublishResult, error) {
@@ -133,7 +159,7 @@ func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pi
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("media signaling: %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return &mediaHTTPError{statusCode: response.StatusCode, status: response.Status, body: strings.TrimSpace(string(body))}
 	}
 	if responseBody == nil || response.StatusCode == http.StatusNoContent {
 		return nil

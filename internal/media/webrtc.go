@@ -3,13 +3,14 @@ package media
 import (
 	"context"
 	"errors"
+	"strings"
 
-	"uniclog.io/sonoryx/internal/domain"
-	"uniclog.io/sonoryx/internal/mediasignal"
-	"uniclog.io/sonoryx/internal/voice"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/webrtc/v4"
+	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/mediasignal"
+	"uniclog.io/sonoryx/internal/voice"
 )
 
 func NewManager(hub *voice.Hub) (*Manager, error) { return NewManagerWithConfig(hub, Config{}) }
@@ -19,11 +20,14 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 		return nil, errors.New("hub is required")
 	}
 	mediaEngine := &webrtc.MediaEngine{}
-	codec := webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "goog-remb"}}}, PayloadType: 96}
-	if err := mediaEngine.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
-		return nil, err
+	for _, codec := range screenCodecs() {
+		if err := mediaEngine.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
 	}
 	registry := &interceptor.Registry{}
+	meters := &transportMeters{}
+	registry.Add(meters)
 	if err := webrtc.RegisterDefaultInterceptorsWithOptions(mediaEngine, registry, webrtc.WithNackResponderOptions(nack.ResponderSize(nackResponderCache))); err != nil {
 		return nil, err
 	}
@@ -39,8 +43,8 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 	if config.AdvertisedIP != "" {
 		settingEngine.SetNAT1To1IPs([]string{config.AdvertisedIP}, webrtc.ICECandidateTypeHost)
 	}
-	m := &Manager{hub: hub, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
-	go m.reconcileLoop()
+	m := &Manager{hub: hub, meters: meters, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
+	m.startWorker(m.reconcileLoop)
 	return m, nil
 }
 
@@ -67,6 +71,9 @@ func acceptOffer(ctx context.Context, pc *webrtc.PeerConnection, offer mediasign
 	local := pc.LocalDescription()
 	if local == nil {
 		return mediasignal.SessionDescription{}, errors.New("missing local description")
+	}
+	if strings.Contains(local.SDP, "m=video 0 ") || !strings.Contains(local.SDP, "m=video ") {
+		return mediasignal.SessionDescription{}, errors.New("no compatible video codec/profile in the offer")
 	}
 	return mediasignal.SessionDescription{Type: "answer", SDP: local.SDP}, nil
 }

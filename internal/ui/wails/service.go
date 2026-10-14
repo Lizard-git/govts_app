@@ -2,6 +2,7 @@ package wailsui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/url"
@@ -142,6 +143,16 @@ func (s *Service) TrustMediaServer(fingerprint string) error {
 	s.trustedMediaKeys[s.serverAddress] = actual
 	s.settingsMu.Unlock()
 	return s.saveSettings()
+}
+
+func (s *Service) ScreenCapabilities() (json.RawMessage, error) {
+	pin, err := s.mediaPin()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return s.client.ScreenCapabilities(ctx, pin)
 }
 
 func (s *Service) PublishScreen(offer mediasignal.SessionDescription) (clientapp.MediaPublishResult, error) {
