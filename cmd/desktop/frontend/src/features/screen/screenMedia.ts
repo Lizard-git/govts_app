@@ -1,9 +1,14 @@
 import {desktopAPI, logDiagnostic} from "../../api";
 import {errorCode, mediaKeyError} from "../../locales";
 import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
-import {defaultScreenSettings, profileFromSettings, type ScreenSettings} from "./screenProfiles";
+import {defaultScreenSettings, profileFromSettings, screenSizes, type ScreenSettings} from "./screenProfiles";
 
 type ServerCodecs = {legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]};
+export class ScreenCodecLimitError extends Error {
+    constructor(public readonly level: number) {
+        super("H.264 profile/level cannot share this capture at the selected resolution and FPS.");
+    }
+}
 type PublisherState = {streamID: string; pc: RTCPeerConnection; capture: MediaStream; settings: ScreenSettings; cleanup?: () => void};
 const fmtp = (line = "") => Object.fromEntries(line.split(";").map((part) => part.trim().split("=")));
 const h264Limits: Record<number, [number, number]> = {
@@ -15,6 +20,35 @@ function h264Fits(level: number, actual: MediaTrackSettings, fps: number): boole
     if (!limit || !actual.width || !actual.height) return false;
     const blocks = Math.ceil(actual.width / 16) * Math.ceil(actual.height / 16);
     return blocks <= limit[0] && blocks * Math.min(fps, actual.frameRate ?? fps) <= limit[1];
+}
+export function senderH264Level(server?: ServerCodecs): number {
+    if (typeof RTCRtpSender === "undefined" || server?.legacy) return 0;
+    const local = RTCRtpSender.getCapabilities?.("video")?.codecs ?? [];
+    let best = 0;
+    for (const codec of local.filter((c) => /h264$/i.test(c.mimeType))) {
+        const parameters = fmtp(codec.sdpFmtpLine);
+        const level = parseInt(parameters["profile-level-id"]?.slice(4) ?? "0", 16);
+        if (!h264Limits[level]) continue;
+        if (!server) { best = Math.max(best, level); continue; }
+        for (const remote of server.codecs ?? []) {
+            const peer = fmtp(remote.sdpFmtpLine);
+            if (!/h264$/i.test(remote.mimeType) || parameters["packetization-mode"] !== peer["packetization-mode"] || parameters["profile-level-id"]?.slice(0,4).toLowerCase() !== peer["profile-level-id"]?.slice(0,4).toLowerCase()) continue;
+            const combined = Math.min(level, parseInt(peer["profile-level-id"]?.slice(4) ?? "0", 16));
+            if (h264Limits[combined]) best = Math.max(best, combined);
+        }
+    }
+    return best;
+}
+export function h264SettingsFit(settings: ScreenSettings, level: number): boolean | null {
+    if (settings.resolution === "native") return level ? null : false;
+    const [width, height] = screenSizes[settings.resolution];
+    return h264Fits(level, {width, height}, settings.fps);
+}
+export function h264SupportedSettings(level: number): {resolution: ScreenSettings["resolution"]; fps: ScreenSettings["fps"]}[] {
+    return (["720p", "1080p", "1440p", "2160p"] as const).flatMap((resolution) => {
+        const fps = ([60,30,15,10] as const).find((fps) => h264SettingsFit({...defaultScreenSettings, resolution, fps}, level));
+        return fps ? [{resolution, fps}] : [];
+    });
 }
 export function senderCodecAvailable(name: string): boolean {
     return Boolean(RTCRtpSender.getCapabilities?.("video")?.codecs.some((c) => c.mimeType.toLowerCase() === `video/${name.toLowerCase()}`));
@@ -50,7 +84,7 @@ function preferCodecs(transceiver: RTCRtpTransceiver, settings: ScreenSettings, 
                 return h264Fits(Math.min(level, peerLevel), actual, settings.fps);
             });
         });
-        if (!valid.length) throw new Error("H.264 profile/level cannot support the captured resolution and FPS. Lower them or choose VP8, VP9 or AV1.");
+        if (!valid.length) throw new ScreenCodecLimitError(senderH264Level(server));
         selected.splice(0,selected.length,...valid);
     }
     transceiver.setCodecPreferences([...selected, ...capabilities.codecs.filter((c) => /rtx$/i.test(c.mimeType))]);
@@ -63,7 +97,7 @@ function verifyNegotiatedCodec(sdp: string, settings: ScreenSettings, actual: Me
     if (settings.codec !== "auto" && codec.toLowerCase() !== settings.codec.toLowerCase()) throw new Error(`Requested ${settings.codec}, negotiated ${codec}. Choose a supported codec.`);
     const parameters = fmtp(video?.match(new RegExp(`a=fmtp:${payload} ([^\r\n]+)`, "i"))?.[1]);
     if (codec.toLowerCase() === "h264" && !h264Fits(parseInt(parameters["profile-level-id"]?.slice(4) ?? "0", 16), actual, settings.fps)) {
-        throw new Error("Negotiated H.264 profile/level cannot support the captured resolution and FPS.");
+        throw new ScreenCodecLimitError(parseInt(parameters["profile-level-id"]?.slice(4) ?? "0", 16));
     }
     logDiagnostic("screen_codec_negotiated", codec);
 }

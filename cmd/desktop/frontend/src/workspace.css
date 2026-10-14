@@ -332,3 +332,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .screen-settings label { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr); align-items: center; gap: 12px; }
 .screen-settings select { width: 100%; min-width: 0; padding: 8px 40px 8px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background-color: var(--card); }
 .screen-capability-note { font-size: .85rem; }
+.screen-codec-help { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background-color: var(--window); font-size: .85rem; line-height: 1.5; }
+.screen-codec-help p { margin: 0; overflow-wrap: anywhere; }
+.screen-codec-help p + p { margin-top: 8px; color: var(--muted); }
+.screen-codec-warning { border-color: var(--warning); }
+.screen-codec-warning [role="alert"] { color: var(--warning); }
+.screen-codec-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.screen-codec-actions button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background-color: var(--card-strong); cursor: pointer; }
