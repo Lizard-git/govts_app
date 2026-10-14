@@ -60,7 +60,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <header class="hero"><div class="hero-in">
 <div class="eyebrow">Sonoryx · технический справочник</div>
 <h1>Протокол <span>Sonoryx</span></h1>
-<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.4.8, сервер 0.2.19). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
+<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.4.8, сервер 0.3.0). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
 <div class="kpis">
 <div class="kpi"><b>17 B</b><span>заголовок пакета</span></div>
 <div class="kpi"><b>1200 B</b><span>макс. payload</span></div>
@@ -141,7 +141,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <h3>Transcript T</h3>
 <pre>T = H("govts-auth-v1" ‖ RequestID ‖ version ‖ AuthInit целиком ‖
       serverEd25519Pub ‖ serverX25519Eph ‖ nonceS)</pre>
-<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. В <code>Sequence</code> клиент передаёт минимальную версию сервера из <code>version/release.json</code> (сейчас <code>0.2.19</code>; <code>internal/client/request.go</code>, <code>internal/client/secure_handshake.go</code>). Если версия сервера ниже, он отвечает <code>ServerVersionTooOld</code> (<code>internal/voice/auth.go</code>, <code>internal/voice/control.go</code>). Отдельно сервер отвергает клиента, который запрашивает уровень ниже <code>0.2.19</code> (snapshot v7 и presence; <code>minimumSecureClientVersion</code> в <code>internal/voice/auth.go</code>).</p>
+<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. В <code>Sequence</code> клиент передаёт минимальную версию сервера из <code>version/release.json</code> (сейчас <code>0.3.0</code>; <code>internal/client/request.go</code>, <code>internal/client/secure_handshake.go</code>). Если версия сервера ниже, он отвечает <code>ServerVersionTooOld</code> (<code>internal/voice/auth.go</code>, <code>internal/voice/control.go</code>). Отдельно сервер отвергает клиента, который запрашивает уровень ниже <code>0.3.0</code> (snapshot v7 и presence; <code>minimumSecureClientVersion</code> в <code>internal/voice/auth.go</code>).</p>
 <h3>Вывод ключей</h3>
 <pre>shared = X25519(eph_priv_own, eph_pub_peer)
 c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
