@@ -218,11 +218,13 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 			case request := <-audioDeviceChanges:
 				logger.Printf("audio device switch: old_capture=%q new_capture=%q old_playback=%q new_playback=%q", current.CaptureID, request.selection.CaptureID, current.PlaybackID, request.selection.PlaybackID)
 				var changeErr error
-				if request.selection.CaptureID != current.CaptureID || !recorder.Available() {
+				if request.selection.CaptureID != current.CaptureID {
 					changeErr = recorder.Switch(request.selection.CaptureID)
 				}
-				if changeErr == nil && request.selection.PlaybackID != current.PlaybackID {
-					changeErr = player.Switch(request.selection.PlaybackID)
+				if request.selection.PlaybackID != current.PlaybackID {
+					if playbackErr := player.Switch(request.selection.PlaybackID); playbackErr != nil {
+						changeErr = playbackErr
+					}
 				}
 				if changeErr == nil {
 					current = request.selection

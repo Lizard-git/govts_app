@@ -20,6 +20,15 @@ type DeviceList struct {
 }
 
 func ListDevices() (DeviceList, error) {
+	var list DeviceList
+	var err error
+	withAudioThread(func() {
+		list, err = listDevicesOnThread()
+	})
+	return list, err
+}
+
+func listDevicesOnThread() (DeviceList, error) {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return DeviceList{}, fmt.Errorf("initialize audio device context: %w", err)
