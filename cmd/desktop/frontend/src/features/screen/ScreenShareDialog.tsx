@@ -1,8 +1,8 @@
 import {useEffect, useRef, useState} from "react";
 import type {ClientViewDTO} from "../../api";
 import {logDiagnostic} from "../../api";
-import {ScreenMediaController} from "./screenMedia";
-import {defaultScreenProfile, screenProfiles, type ScreenProfileID} from "./screenProfiles";
+import {ScreenMediaController, senderCodecAvailable} from "./screenMedia";
+import {loadScreenSettings, screenBitrates, type ScreenSettings} from "./screenProfiles";
 import {errorText} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 
@@ -11,12 +11,12 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
     const [pending, setPending] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState("");
-    const [profileID, setProfileID] = useState<ScreenProfileID>(() => {
-        try {
-            const saved = localStorage.getItem("sonoryx.screenProfile");
-            return screenProfiles.find((item) => item.id === saved)?.id ?? defaultScreenProfile.id;
-        } catch { return defaultScreenProfile.id; }
-    });
+    const [settings, setSettings] = useState<ScreenSettings>(loadScreenSettings);
+    const updateSettings = (next: ScreenSettings) => {
+        setSettings(next);
+        try { localStorage.setItem("sonoryx.screenSettings", JSON.stringify(next)); } catch { /* Session choice survives. */ }
+    };
+    useEffect(() => { try { localStorage.setItem("sonoryx.screenSettings", JSON.stringify(settings)); } catch { /* Storage may be disabled. */ } }, [settings]);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const busy = useRef(false);
     const context = `${view.sessionId}:${view.channelId}:${view.connectionStatus}`;
@@ -25,7 +25,6 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
     const available = view.connectionStatus === "connected" && view.channelId !== "0";
     const own = (view.screenStreams ?? []).some((stream) => stream.ownerSessionId === view.sessionId);
     const active = publishing || own;
-    const profile = screenProfiles.find((item) => item.id === profileID) ?? defaultScreenProfile;
 
     useEffect(() => {
         setOpen(false);
@@ -40,16 +39,13 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
         setOpen(false);
         if (busy.current) void controller.stopPublishing().catch((reason) => logDiagnostic("screen_cancel_cleanup", reason));
     };
-    const selectProfile = (id: ScreenProfileID) => {
-        setProfileID(id);
-        try { localStorage.setItem("sonoryx.screenProfile", id); } catch { /* Keep the choice for this session. */ }
-    };
+    const selectSettings = updateSettings;
     const start = async () => {
         if (busy.current || !available) return;
         busy.current = true; setPending(true); setError(""); setOpen(false);
         const startedIn = context;
         try {
-            await controller.publish(() => { if (currentContext.current === startedIn) setPublishing(false); }, profile, () => currentContext.current === startedIn);
+            await controller.publish(() => { if (currentContext.current === startedIn) setPublishing(false); }, settings, () => currentContext.current === startedIn);
             if (currentContext.current === startedIn) { setPublishing(true); setOpen(false); }
         } catch (reason) {
             const cancelled = reason instanceof DOMException && ["NotAllowedError", "AbortError"].includes(reason.name)
@@ -68,7 +64,7 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
         catch (reason) { onError(reason instanceof Error ? reason.message : String(reason)); }
         finally { setPublishing(false); busy.current = false; setPending(false); }
     };
-    return {open, pending, active, available, profile, profileID, error, buttonRef, close, selectProfile, start, toggle};
+    return {open, pending, active, available, settings, selectSettings, error, buttonRef, close, start, toggle};
 }
 
 export type ScreenSharingState = ReturnType<typeof useScreenSharing>;
@@ -94,14 +90,24 @@ export function ScreenShareDialog({sharing}: {sharing: ScreenSharingState}) {
         onCancel={(event) => { event.preventDefault(); sharing.close(); }}>
         <h2 id="screen-share-title">{m.screen.title}</h2>
         <p>{m.screen.pick}</p>
-        <fieldset disabled={sharing.pending}>
-            <legend>{m.screen.quality}</legend>
-            {screenProfiles.map((profile) => <label className="screen-quality-option" key={profile.id}>
-                <input type="radio" name="screen-quality" value={profile.id} checked={sharing.profileID === profile.id}
-                    onChange={() => sharing.selectProfile(profile.id)}/>
-                <span><strong>{m.screen.profiles[profile.id]}</strong><small>{m.screen.profileDetail[profile.id]}</small></span>
-            </label>)}
+        <fieldset className="screen-settings" disabled={sharing.pending}>
+            <label>FPS <select value={sharing.settings.fps} onChange={(e) => sharing.selectSettings({...sharing.settings, fps: Number(e.target.value) as ScreenSettings["fps"]})}>
+                {[10,15,30,60].map((fps) => <option key={fps}>{fps}</option>)}
+            </select></label>
+            <label>{m.connection.resolution} <select value={sharing.settings.resolution} onChange={(e) => sharing.selectSettings({...sharing.settings, resolution: e.target.value as ScreenSettings["resolution"]})}>
+                {["720p","1080p","1440p","2160p","native"].map((size) => <option key={size} value={size}>{size === "native" ? m.screen.settings.native : size}</option>)}
+            </select></label>
+            <label>{m.screen.settings.codec} <select value={sharing.settings.codec} onChange={(e) => sharing.selectSettings({...sharing.settings, codec: e.target.value as ScreenSettings["codec"]})}>
+                {["auto","VP8","H264","VP9","AV1"].map((codec) => <option key={codec} value={codec} disabled={codec !== "auto" && !senderCodecAvailable(codec)}>{codec === "auto" ? m.screen.settings.auto : codec === "H264" ? "H.264" : codec}{codec !== "auto" && !senderCodecAvailable(codec) ? ` (${m.screen.settings.unavailable})` : ""}</option>)}
+            </select></label>
+            <label>{m.screen.settings.content} <select value={sharing.settings.content} onChange={(e) => sharing.selectSettings({...sharing.settings, content: e.target.value as ScreenSettings["content"]})}>
+                <option value="detail">{m.screen.settings.detail}</option><option value="motion">{m.screen.settings.motion}</option>
+            </select></label>
+            <label>{m.connection.bitrate} <select value={sharing.settings.bitrate} onChange={(e) => sharing.selectSettings({...sharing.settings, bitrate: Number(e.target.value)})}>
+                {screenBitrates.map((bitrate) => <option key={bitrate} value={bitrate}>{bitrate / 1_000_000} Mbps</option>)}
+            </select></label>
         </fieldset>
+        <p className="screen-capability-note">{m.screen.settings.capabilities}</p>
         {sharing.error && <p className="screen-error" role="alert">{errorText(sharing.error, m)}</p>}
         <div className="screen-dialog-actions">
             <button type="button" onClick={sharing.close}>{m.screen.cancel}</button>

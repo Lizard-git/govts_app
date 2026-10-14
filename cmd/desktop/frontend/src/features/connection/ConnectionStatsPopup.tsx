@@ -96,11 +96,13 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
             <div className="connection-stat-row"><span>{m.connection.ping}</span><strong>{ping}</strong></div>
             {sharing.active && status === "connected" && <section className="connection-screen-stats" aria-label={m.connection.shareStats}>
                 <h2>{m.connection.shareTitle}</h2>
-                <div className="connection-stat-row"><span>{m.connection.quality}</span><strong>{m.screen.profiles[sharing.profile.id]}</strong></div>
+                <div className="connection-stat-row"><span>{m.connection.quality}</span><strong>{screenStats?.selected ?? `${sharing.settings.resolution} / ${sharing.settings.fps} FPS / ${sharing.settings.codec}`}</strong></div>
                 <div className="connection-stat-row"><span>{m.connection.resolution}</span><strong>{screenStats?.width && screenStats.height ? `${screenStats.width}×${screenStats.height}` : "—"}</strong></div>
                 <div className="connection-stat-row"><span>FPS</span><strong>{screenStats ? screenStats.fps.toFixed(0) : "—"}</strong></div>
                 <div className="connection-stat-row"><span>{m.connection.bitrate}</span><strong>{screenStats ? m.connection.mbps((screenStats.bitrate / 1_000_000).toFixed(2)) : "—"}</strong></div>
                 <div className="connection-stat-row"><span>{m.connection.framesKeys}</span><strong>{screenStats ? `${screenStats.frames} / ${screenStats.keyFrames}` : "—"}</strong></div>
+                <div className="connection-stat-row"><span>{m.screen.settings.codec}</span><strong>{screenStats?.codec || "?"}</strong></div>
+                {screenStats?.implementation && <div className="connection-stat-row"><span>{m.screen.settings.encoder}</span><strong>{screenStats.implementation}</strong></div>}
                 {screenStats?.qualityLimitation && <div className="connection-stat-row"><span>{m.connection.qualityLimit}</span><strong>{screenStats.qualityLimitation}</strong></div>}
             </section>}
         </div>}

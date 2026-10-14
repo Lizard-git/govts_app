@@ -237,11 +237,6 @@
 .screen-share-dialog > p { color: var(--muted); line-height: 1.5; }
 .screen-share-dialog fieldset { display: grid; gap: 8px; min-width: 0; margin: 18px 0; padding: 0; border: 0; }
 .screen-share-dialog legend { margin-bottom: 10px; font-weight: 600; }
-.screen-quality-option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
-.screen-quality-option:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
-.screen-quality-option input { accent-color: var(--accent); }
-.screen-quality-option span { display: grid; gap: 4px; }
-.screen-quality-option small { color: var(--muted); }
 .screen-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .screen-dialog-actions button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--card-strong); cursor: pointer; }
 .screen-dialog-actions .primary-button { color: var(--window); border-color: var(--accent); background: var(--accent); }
@@ -333,3 +328,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .monitor-button.active { border-color: var(--accent); color: var(--accent); }
 .monitor-button:disabled { opacity: .55; cursor: default; }
 .device-hint.monitor-warning { color: var(--warning); }
+
+.screen-settings label { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr); align-items: center; gap: 12px; }
+.screen-settings select { width: 100%; min-width: 0; padding: 8px 40px 8px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background-color: var(--card); }
+.screen-capability-note { font-size: .85rem; }

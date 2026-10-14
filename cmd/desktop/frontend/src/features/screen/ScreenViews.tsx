@@ -79,7 +79,7 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
     const statsText = stats ? m.screen.viewerLine(stats.fps.toFixed(0), bitrateText(stats.bitrate, m), stats.packetsLost, stats.lossSampleAvailable ? `${stats.lossPercent.toFixed(1)}%` : m.screen.lossUnknown, stats.rttMs.toFixed(0), stats.jitterMs.toFixed(0), stats.frames, stats.framesDropped) + (stats.freezeCount ? m.screen.freezes(stats.freezeCount, (stats.freezeDurationMs / 1000).toFixed(1)) : "") : "";
     return <main className="screen-viewer-window">
         <header className="screen-viewer-toolbar">
-            <div><strong>{ownerName}</strong><span>{statusText}{resolution ? ` · ${resolution}` : ""}{statsText}</span></div>
+            <div><strong>{ownerName}</strong><span>{statusText}{resolution ? ` · ${resolution}` : ""}{statsText}{stats?.codec ? ` ? ${stats.codec}` : ""}{stats?.implementation ? ` ? ${stats.implementation}` : ""}</span></div>
             <button onClick={() => void toggleFullscreen()}>{fullscreen ? m.screen.restore : m.screen.fullscreen}</button>
             <button onClick={() => void close()}>{m.screen.close}</button>
         </header>

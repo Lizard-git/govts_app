@@ -162,6 +162,7 @@ export const en = {
         banConfirm: (name: string) => `Ban ${name}?`,
     },
     screen: {
+        settings: {"codec":"Codec","content":"Content","detail":"Text and desktop","motion":"Motion and video","native":"Source size","auto":"Auto","unavailable":"Unavailable in client","capabilities":"Codec compatibility with the server is checked when starting.","encoder":"Encoder"},
         title: "Screen share",
         pick: "Choose the quality, then choose a screen or window to share.",
         quality: "Quality",

@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/mediasignal"
@@ -23,7 +22,10 @@ var (
 )
 
 const (
-	subscriberQueueSize = 256
+	subscriberQueueSize = 8
+	subscriberQueueAge  = 250 * time.Millisecond
+	maxFrameBytes       = 4 * 1024 * 1024
+	maxFramePackets     = 2048
 	nackResponderCache  = 2048
 	recoveryPLIInterval = time.Second
 	startupPLIRequests  = 5
@@ -37,6 +39,9 @@ type Manager struct {
 	ownerStreams map[uint64]domain.StreamID
 	done         chan struct{}
 	closeOnce    sync.Once
+	workers      sync.WaitGroup
+	meters       *transportMeters
+	closing      atomic.Int64
 }
 
 type Config struct {
@@ -58,6 +63,9 @@ type publisher struct {
 	closed        chan struct{}
 	closeOnce     sync.Once
 	createdAt     time.Time
+	recovery      chan struct{}
+	pliSent       atomic.Uint64
+	pliMerged     atomic.Uint64
 	inBytes       atomic.Uint64
 	inPackets     atomic.Uint64
 	metricsAt     time.Time
@@ -66,22 +74,37 @@ type publisher struct {
 }
 
 type subscriber struct {
-	id              string
-	sessionID       uint64
-	pc              *webrtc.PeerConnection
-	track           *webrtc.TrackLocalStaticRTP
-	packets         chan *rtp.Packet
-	closed          chan struct{}
-	closeOnce       sync.Once
-	outBytes        atomic.Uint64
-	outPackets      atomic.Uint64
-	drops           atomic.Uint64
-	plis            atomic.Uint64
-	nacks           atomic.Uint64
-	recoveryOnce    sync.Once
-	lastRecoveryPLI atomic.Int64
-	lastOutBytes    uint64
-	lastOutPackets  uint64
+	id                string
+	sessionID         uint64
+	pc                *webrtc.PeerConnection
+	track             *webrtc.TrackLocalStaticRTP
+	sender            *webrtc.RTPSender
+	packets           chan *videoFrame
+	queueMu           sync.Mutex
+	queuedBytes       int
+	queuedPackets     int
+	wake              chan struct{}
+	waitingKeyframe   bool
+	connected         atomic.Bool
+	queueAge          atomic.Int64
+	writingAt         atomic.Int64
+	lastQueueRecovery atomic.Int64
+	firs              atomic.Uint64
+	closed            chan struct{}
+	closeOnce         sync.Once
+	closingGauge      *atomic.Int64
+	outBytes          atomic.Uint64
+	outPackets        atomic.Uint64
+	drops             atomic.Uint64
+	plis              atomic.Uint64
+	nacks             atomic.Uint64
+	recoveryOnce      sync.Once
+	hasFrame          atomic.Bool
+	nextSequence      uint16
+	sequenceStarted   bool
+
+	lastOutBytes   uint64
+	lastOutPackets uint64
 }
 
 type PublishResult struct {
@@ -98,6 +121,10 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		return PublishResult{}, voice.ErrSessionNotInChannel
 	}
 	m.mu.Lock()
+	if isClosed(m.done) {
+		m.mu.Unlock()
+		return PublishResult{}, errors.New("media manager closed")
+	}
 	if _, exists := m.ownerStreams[ownerID]; exists {
 		m.mu.Unlock()
 		return PublishResult{}, ErrPublisherExists
@@ -112,10 +139,12 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		m.mu.Unlock()
 		return PublishResult{}, err
 	}
-	p := &publisher{id: streamID, ownerID: ownerID, pc: pc, subscribers: make(map[string]*subscriber), closed: make(chan struct{}), createdAt: time.Now()}
+	p := &publisher{id: streamID, ownerID: ownerID, pc: pc, subscribers: make(map[string]*subscriber), closed: make(chan struct{}), createdAt: time.Now(), recovery: make(chan struct{}, 1)}
+
 	m.publishers[streamID] = p
 	m.ownerStreams[ownerID] = streamID
 	m.mu.Unlock()
+	m.startWorker(func() { runRecovery(p) })
 
 	cleanup := func() { m.StopPublisher(ownerID, streamID) }
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
@@ -125,6 +154,10 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		}
 	})
 	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if !supportedScreenCodec(remote.Codec().RTPCodecCapability) {
+			cleanup()
+			return
+		}
 		p.mu.Lock()
 		if p.ready || p.starting {
 			p.mu.Unlock()
@@ -135,15 +168,28 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		p.starting = true
 		p.mu.Unlock()
 		log.Printf("screen publisher track: stream=%d owner=%d codec=%s ssrc=%d", streamID, ownerID, remote.Codec().MimeType, remote.SSRC())
-		if _, startErr := m.hub.StartScreenShare(ownerID, streamID); startErr != nil {
+		// Serialize Hub publication with removal from the manager to prevent
+		// a late OnTrack callback from resurrecting metadata after StopPublisher.
+		m.mu.Lock()
+		if m.publishers[streamID] != p || isClosed(m.done) {
+			m.mu.Unlock()
+			return
+		}
+		_, startErr := m.hub.StartScreenShare(ownerID, streamID)
+		m.mu.Unlock()
+		if startErr != nil {
 			cleanup()
 			return
 		}
 		p.mu.Lock()
+		if isClosed(p.closed) {
+			p.mu.Unlock()
+			return
+		}
 		p.ready = true
 		p.starting = false
 		p.mu.Unlock()
-		go m.forward(p, remote)
+		m.startWorker(func() { m.forward(p, remote) })
 	})
 	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
 		cleanup()
@@ -171,7 +217,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		return SubscribeResult{}, ErrStreamNotReady
 	}
 	p.mu.Lock()
-	if !p.ready {
+	if !p.ready || isClosed(p.closed) {
 		p.mu.Unlock()
 		return SubscribeResult{}, ErrStreamNotReady
 	}
@@ -179,44 +225,53 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		p.mu.Unlock()
 		return SubscribeResult{}, errors.New("subscriber already exists")
 	}
+	codec := p.codec
+	p.mu.Unlock()
+	if !offerSupportsCodec(offer.SDP, codec) {
+		return SubscribeResult{}, fmt.Errorf("viewer does not support stream codec/profile %s (%s); ask the sender to restart with VP8", codec.MimeType, codec.SDPFmtpLine)
+	}
 	pc, err := m.api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
-		p.mu.Unlock()
 		return SubscribeResult{}, err
 	}
-	track, err := webrtc.NewTrackLocalStaticRTP(p.codec, "screen", fmt.Sprintf("screen-%d", streamID))
+	track, err := webrtc.NewTrackLocalStaticRTP(codec, "screen", fmt.Sprintf("screen-%d", streamID))
 	if err != nil {
-		p.mu.Unlock()
 		_ = pc.Close()
 		return SubscribeResult{}, err
 	}
 	sender, err := pc.AddTrack(track)
 	if err != nil {
-		p.mu.Unlock()
 		_ = pc.Close()
 		return SubscribeResult{}, err
 	}
-	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, packets: make(chan *rtp.Packet, subscriberQueueSize), closed: make(chan struct{})}
+	p.mu.Lock()
+	if !p.ready || isClosed(p.closed) || p.subscribers[subscriberID] != nil {
+		p.mu.Unlock()
+		_ = pc.Close()
+		return SubscribeResult{}, ErrStreamNotReady
+	}
+	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, subscriberQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
-	go drainRTCP(p, s, sender)
-	go m.runSubscriber(p, s)
+	m.startWorker(func() { drainRTCP(p, s, sender) })
+	m.startWorker(func() { m.runSubscriber(p, s) })
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("screen subscriber state: stream=%d session=%d subscriber=%q state=%s", streamID, sessionID, subscriberID, state)
 		if state == webrtc.PeerConnectionStateConnected {
+			s.connected.Store(true)
 			s.recoveryOnce.Do(func() {
 				requestRecoveryKeyframe(p, s)
-				go requestStartupKeyframes(p, s)
+				m.startWorker(func() { requestStartupKeyframes(p, s) })
 			})
 		}
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			m.Unsubscribe(sessionID, streamID, subscriberID)
+			m.removeSubscriber(p, s)
 		}
 	})
 	answer, err := acceptOffer(ctx, pc, offer)
 	if err != nil {
-		m.Unsubscribe(sessionID, streamID, subscriberID)
-		return SubscribeResult{}, err
+		m.removeSubscriber(p, s)
+		return SubscribeResult{}, fmt.Errorf("viewer cannot negotiate stream codec %s: %w", p.codec.MimeType, err)
 	}
 	return SubscribeResult{Answer: answer}, nil
 }
@@ -228,17 +283,21 @@ func (m *Manager) Unsubscribe(sessionID uint64, streamID domain.StreamID, subscr
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
+	p.mu.RLock()
 	s := p.subscribers[subscriberID]
+	p.mu.RUnlock()
 	if s != nil && s.sessionID == sessionID {
-		delete(p.subscribers, subscriberID)
-	} else {
-		s = nil
+		m.removeSubscriber(p, s)
+	}
+}
+
+func (m *Manager) removeSubscriber(p *publisher, s *subscriber) {
+	p.mu.Lock()
+	if p.subscribers[s.id] == s {
+		delete(p.subscribers, s.id)
 	}
 	p.mu.Unlock()
-	if s != nil {
-		s.close()
-	}
+	s.close()
 }
 
 func (m *Manager) StopPublisher(ownerID uint64, streamID domain.StreamID) {
@@ -250,16 +309,19 @@ func (m *Manager) StopPublisher(ownerID uint64, streamID domain.StreamID) {
 	}
 	delete(m.publishers, streamID)
 	delete(m.ownerStreams, ownerID)
+	stopErr := m.hub.StopScreenShare(ownerID, streamID)
 	m.mu.Unlock()
 	p.close()
-	if err := m.hub.StopScreenShare(ownerID, streamID); err != nil {
+	if err := stopErr; err != nil {
 		log.Printf("stop screen state failed: stream_id=%d owner_session_id=%d error=%v", streamID, ownerID, err)
 	}
 	log.Printf("screen publisher stopped: stream_id=%d owner_session_id=%d", streamID, ownerID)
 }
 
 func (m *Manager) Close() {
+	m.mu.Lock()
 	m.closeOnce.Do(func() { close(m.done) })
+	m.mu.Unlock()
 	m.mu.RLock()
 	ids := make([]domain.StreamID, 0, len(m.publishers))
 	owners := make([]uint64, 0, len(m.publishers))
@@ -271,6 +333,7 @@ func (m *Manager) Close() {
 	for i := range ids {
 		m.StopPublisher(owners[i], ids[i])
 	}
+	m.workers.Wait()
 }
 
 func (m *Manager) reconcileLoop() {
@@ -314,15 +377,15 @@ func (m *Manager) reconcile() {
 			continue
 		}
 		p.mu.RLock()
-		invalid := make([]*subscriber, 0)
+		subscribers := make([]*subscriber, 0, len(p.subscribers))
 		for _, s := range p.subscribers {
-			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
-				invalid = append(invalid, s)
-			}
+			subscribers = append(subscribers, s)
 		}
 		p.mu.RUnlock()
-		for _, s := range invalid {
-			m.Unsubscribe(s.sessionID, p.id, s.id)
+		for _, s := range subscribers {
+			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
+				m.removeSubscriber(p, s)
+			}
 		}
 	}
 }
@@ -330,4 +393,18 @@ func (m *Manager) reconcile() {
 func (m *Manager) sessionInChannel(id uint64) bool {
 	session, ok := m.hub.Get(id)
 	return ok && session.ChannelID != 0
+}
+
+// Add is serialized with closing done, so Wait cannot race new workers.
+// Never invoke this while holding Manager.mu. Workers stop through done or the
+// publisher/subscriber signal plus PeerConnection.Close to unblock Pion I/O.
+func (m *Manager) startWorker(run func()) {
+	m.mu.RLock()
+	if isClosed(m.done) {
+		m.mu.RUnlock()
+		return
+	}
+	m.workers.Add(1)
+	m.mu.RUnlock()
+	go func() { defer m.workers.Done(); run() }()
 }
