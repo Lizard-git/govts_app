@@ -5,17 +5,18 @@ import (
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
+	"uniclog.io/sonoryx/internal/clientsettings"
 )
 
 const (
-	SoundPackShort  = "short"
-	SoundPackSoft   = "soft"
-	SoundPackLow    = "low"
-	SoundPackDouble = "double"
-	SoundPackSignal = "signal"
+	SoundPackShort  = clientsettings.SoundPackShort
+	SoundPackSoft   = clientsettings.SoundPackSoft
+	SoundPackLow    = clientsettings.SoundPackLow
+	SoundPackDouble = clientsettings.SoundPackDouble
+	SoundPackSignal = clientsettings.SoundPackSignal
 
-	DefaultSoundPack   = SoundPackSoft
-	DefaultSoundVolume = float32(0.8)
+	DefaultSoundPack   = clientsettings.DefaultSoundPack
+	DefaultSoundVolume = clientsettings.DefaultSoundVolume
 )
 
 type soundPack struct {
