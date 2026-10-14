@@ -61,6 +61,8 @@ const (
 	NotificationReturned
 )
 
+const minWakeVolume = float32(0.5)
+
 func (s *State) NotificationSounds() <-chan NotificationSound { return s.notificationSounds }
 
 func (s *State) PlayNotification(kind NotificationSoundKind) {
@@ -75,6 +77,11 @@ func (s *State) queueNotificationSoundLocked(sound NotificationSoundKind) {
 		return
 	}
 	pack, volume := s.Audio.SoundSnapshot()
+	// A wake exists to reach someone who is not listening, so a low or muted
+	// cue volume does not silence it. Deafen still does.
+	if sound == NotificationWake && volume < minWakeVolume {
+		volume = minWakeVolume
+	}
 	if volume <= 0 {
 		return
 	}
