@@ -1,9 +1,51 @@
 package wailsui
 
 import (
+	"context"
 	"log"
 	"strings"
 )
+
+func (s *Service) SetSoundPack(id string) error {
+	if err := s.client.SetSoundPack(id); err != nil {
+		return err
+	}
+	return s.saveSettings()
+}
+
+func (s *Service) SetSoundVolume(value float32) error {
+	if err := s.client.SetSoundVolume(value); err != nil {
+		return err
+	}
+	return s.saveSettings()
+}
+
+func (s *Service) SetMuteOnAway(value bool) error {
+	s.client.SetMuteOnAway(value)
+	return s.saveSettings()
+}
+
+func (s *Service) SetAway(away bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+	return s.client.SetAway(ctx, away)
+}
+
+func (s *Service) Wake(sessionID string) error {
+	id, err := parseUint64(sessionID, "sessionId", false)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+	return s.client.Wake(ctx, id)
+}
+
+func (s *Service) MessageReceived() { s.client.MessageReceived() }
+
+func (s *Service) PreviewSoundPack() error { return s.client.PreviewSoundPack() }
+
+func (s *Service) StopSoundPreview() { s.client.StopSoundPreview() }
 
 func (s *Service) SetMuted(value bool) {
 	if err := s.client.SetMuted(value); err != nil {

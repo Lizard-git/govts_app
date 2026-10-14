@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -274,6 +275,69 @@ func HandleAudioStatePacket(conn *udp.ServerPacketConn, hub *Hub, cache *Request
 		RequestID: packet.RequestID,
 		Payload:   protocol.EncodeAudioState(muted, deafened),
 	}
+	cache.Put(packet.SessionID, packet.RequestID, ack)
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+	return SendToSession(conn, session, ack)
+}
+
+func HandlePresencePacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		return err
+	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, packet.SessionID, 0, "presence request ID is required")
+	}
+	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
+		return conn.WritePacket(packet.SessionID, addr, response)
+	}
+	away, err := protocol.DecodePresence(packet.Payload)
+	if err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("invalid presence: %v", err))
+	}
+	if err := hub.SetPresence(packet.SessionID, away); err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+	}
+	ack := protocol.VoicePacket{
+		Type:      protocol.PacketPresenceAck,
+		SessionID: packet.SessionID,
+		RequestID: packet.RequestID,
+		Payload:   protocol.EncodePresence(away),
+	}
+	cache.Put(packet.SessionID, packet.RequestID, ack)
+	session, ok := hub.Get(packet.SessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+	return SendToSession(conn, session, ack)
+}
+
+func HandleAttentionPacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
+	if err := ValidateSessionAddr(hub, packet.SessionID, addr); err != nil {
+		return err
+	}
+	if packet.RequestID == 0 {
+		return SendError(conn, addr, packet.SessionID, 0, "attention request ID is required")
+	}
+	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
+		return conn.WritePacket(packet.SessionID, addr, response)
+	}
+	if len(packet.Payload) != 8 {
+		return cacheAndSendSessionError(conn, cache, packet, addr, "invalid attention payload")
+	}
+	targetID := binary.BigEndian.Uint64(packet.Payload)
+	now := time.Now()
+	target, err := hub.AcceptAttention(packet.SessionID, targetID, now)
+	if err != nil {
+		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+	}
+	if err := SendToSession(conn, target, protocol.VoicePacket{Type: protocol.PacketAttention, SessionID: target.ID}); err != nil {
+		return err
+	}
+	hub.MarkAttention(packet.SessionID, now)
+	ack := protocol.VoicePacket{Type: protocol.PacketAttentionAck, SessionID: packet.SessionID, RequestID: packet.RequestID}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	session, ok := hub.Get(packet.SessionID)
 	if !ok {

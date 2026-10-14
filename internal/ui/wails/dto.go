@@ -44,6 +44,7 @@ type ParticipantDTO struct {
 	Speaking    bool   `json:"speaking"`
 	Muted       bool   `json:"muted"`
 	Deafened    bool   `json:"deafened"`
+	Away        bool   `json:"away"`
 	Local       bool   `json:"local"`
 }
 
@@ -124,6 +125,9 @@ type ClientViewDTO struct {
 	Participants     []ParticipantDTO  `json:"participants"`
 	ScreenStreams    []ScreenStreamDTO `json:"screenStreams"`
 	Audio            AudioStateDTO     `json:"audio"`
+	SoundPack        string            `json:"soundPack"`
+	SoundVolume      float32           `json:"soundVolume"`
+	MuteOnAway       bool              `json:"muteOnAway"`
 }
 
 type ClientEventDTO struct {
@@ -165,6 +169,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 			Speaking:    view.Speaking[participant.SessionID],
 			Muted:       muted,
 			Deafened:    deafened,
+			Away:        participant.Away,
 			Local:       participant.SessionID == view.SessionID,
 		})
 	}
@@ -200,6 +205,9 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 			VADSensitivity:     view.VADSensitivity,
 			VADOpen:            view.VADOpen,
 		},
+		SoundPack:   view.SoundPack,
+		SoundVolume: view.SoundVolume,
+		MuteOnAway:  view.MuteOnAway,
 	}
 }
 

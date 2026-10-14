@@ -65,7 +65,7 @@ func NewState(sessionID uint64, name string) *State {
 		resync:             make(chan struct{}, 1),
 		subscribers:        make(map[chan struct{}]struct{}),
 		notices:            make(chan string, 64),
-		notificationSounds: make(chan NotificationSound, 4),
+		notificationSounds: make(chan NotificationSound, 8),
 		speaking:           make(map[uint64]time.Time),
 	}
 	s.Audio = NewAudioControlState(func() { s.audioChanged() })
@@ -260,6 +260,11 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 		s.requestResyncLocked()
 		return true
 	}
+	previousFresh := s.snapshotFresh && s.syncedGeneration == generation
+	var previousStreams []domain.ScreenStream
+	if previousFresh {
+		previousStreams = append([]domain.ScreenStream(nil), s.snapshot.ScreenStreams...)
+	}
 	s.resetIncomingForSnapshotLocked(snapshot)
 	s.snapshot = snapshot.Clone()
 	s.syncedGeneration = generation
@@ -269,6 +274,9 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 		if p.SessionID == s.sessionID {
 			s.channelID = p.ChannelID
 		}
+	}
+	if previousFresh && s.snapshotFresh {
+		s.queueScreenDiffLocked(previousStreams)
 	}
 	if !s.snapshotFresh {
 		s.requestResyncLocked()

@@ -29,6 +29,10 @@ type AudioControlState struct {
 	vadOpen            bool
 	epoch              uint64
 	playbackEpoch      uint64
+	soundPack          string
+	soundVolume        float32
+	muteOnAway         bool
+	awayMuted          bool
 	player             audio.DeafenPlayer
 	monitor            func([]int16)
 	onChange           func()
@@ -55,6 +59,9 @@ func NewAudioControlState(onChange func()) *AudioControlState {
 		microphoneGain:     1,
 		vadMode:            voicegate.ModeHybrid,
 		vadSensitivity:     voicegate.DefaultSensitivity,
+		soundPack:          DefaultSoundPack,
+		soundVolume:        DefaultSoundVolume,
+		muteOnAway:         true,
 		participantVolumes: make(map[uint64]float32),
 	}
 }
@@ -317,6 +324,7 @@ func (a *AudioControlState) SetMuted(value bool) error {
 		a.sendMu.Unlock()
 		return errors.New("microphone is unavailable")
 	}
+	a.awayMuted = false
 	if a.muted != value {
 		a.muted = value
 		a.epoch++
@@ -369,6 +377,111 @@ func (a *AudioControlState) Send(epoch uint64, send func() error) error {
 		return nil
 	}
 	return send()
+}
+
+func (a *AudioControlState) SoundSnapshot() (string, float32) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	pack := a.soundPack
+	if pack == "" {
+		pack = DefaultSoundPack
+	}
+	return pack, a.soundVolume
+}
+
+func (a *AudioControlState) SetSoundPack(id string) error {
+	pack, ok := NormalizeSoundPack(id)
+	if !ok {
+		return errors.New("unknown sound pack")
+	}
+	a.mu.Lock()
+	changed := a.soundPack != pack
+	a.soundPack = pack
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
+}
+
+func (a *AudioControlState) SetSoundVolume(value float32) error {
+	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
+		return errors.New("sound volume must be between 0 and 1")
+	}
+	a.mu.Lock()
+	changed := a.soundVolume != value
+	a.soundVolume = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
+}
+
+func (a *AudioControlState) MuteOnAway() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.muteOnAway
+}
+
+func (a *AudioControlState) SetMuteOnAway(value bool) {
+	a.mu.Lock()
+	changed := a.muteOnAway != value
+	a.muteOnAway = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+}
+
+// MuteForAway mutes the microphone and remembers that this transition did it.
+// A microphone that was already off is left to the user.
+func (a *AudioControlState) MuteForAway() {
+	a.sendMu.Lock()
+	a.mu.Lock()
+	changed := false
+	if !a.muted {
+		a.muted = true
+		a.epoch++
+		a.vadOpen = false
+		a.awayMuted = true
+		changed = true
+	}
+	a.mu.Unlock()
+	a.sendMu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+}
+
+// UnmuteForReturn turns the microphone back on only when Away muted it.
+func (a *AudioControlState) UnmuteForReturn() error {
+	a.sendMu.Lock()
+	a.mu.Lock()
+	if !a.awayMuted {
+		a.mu.Unlock()
+		a.sendMu.Unlock()
+		return nil
+	}
+	if !a.captureAvailable {
+		a.awayMuted = false
+		a.mu.Unlock()
+		a.sendMu.Unlock()
+		return errors.New("microphone is unavailable")
+	}
+	a.awayMuted = false
+	changed := false
+	if a.muted {
+		a.muted = false
+		a.epoch++
+		changed = true
+	}
+	a.mu.Unlock()
+	a.sendMu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return nil
 }
 
 func (a *AudioControlState) PlaybackSnapshot() (bool, uint64) {

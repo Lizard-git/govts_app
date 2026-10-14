@@ -50,6 +50,10 @@ const (
 	PacketVoiceBundle
 	PacketServerStatusRequest
 	PacketServerStatusAck
+	PacketPresence
+	PacketPresenceAck
+	PacketAttention
+	PacketAttentionAck
 
 	PacketEnd
 )

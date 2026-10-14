@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion      uint8  = 6
+	SnapshotSchemaVersion      uint8  = 7
 	SnapshotRequestSize               = 16
 	SnapshotResponseHeaderSize        = 18
 	MaxSnapshotPageItems       uint16 = 32
@@ -375,7 +375,7 @@ func appendParticipant(dst []byte, p domain.Participant) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(dst, audioStateFlags(p.Muted, p.Deafened)), nil
+	return append(dst, participantStateFlags(p.Muted, p.Deafened, p.Away)), nil
 }
 func takeParticipant(p []byte) (domain.Participant, []byte, error) {
 	if len(p) < 24 {
@@ -391,7 +391,7 @@ func takeParticipant(p []byte) (domain.Participant, []byte, error) {
 		err = errors.New("participant item too short")
 	}
 	if err == nil {
-		v.Muted, v.Deafened, err = audioStateFromFlags(p[0])
+		v.Muted, v.Deafened, v.Away, err = participantStateFromFlags(p[0])
 		p = p[1:]
 	}
 	if err == nil {

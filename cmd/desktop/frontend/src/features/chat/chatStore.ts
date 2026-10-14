@@ -49,6 +49,7 @@ export class ChatStore {
     private dismissedDialogs = new Map<string, string>();
     private timer: number;
     private restoredDrafts: Record<string, string> = {};
+    private onMessageReceived: () => void = () => undefined;
 
     constructor(context: string, userId: string) {
         this.context = context; this.userId = userId;
@@ -61,6 +62,7 @@ export class ChatStore {
         } catch { /* A corrupt backup does not block chat startup. */ }
         this.timer = window.setInterval(() => void this.reconcile(), 1000);
     }
+    setMessageReceivedHandler(handler: () => void) { this.onMessageReceived = handler; }
     dispose() { this.disposed = true; this.lifecycle.abort(); window.clearInterval(this.timer); this.listeners.clear(); }
     prepareUpdate() {
         if ([...this.conversations.values()].some((c) => c.pending.length > 0)) throw new Error(errorCode("chat-pending-refresh"));
@@ -167,10 +169,14 @@ export class ChatStore {
         const confirmed = new Set((page.messages ?? []).filter((m) => m.senderId === this.userId).map((m) => m.clientId));
         c.pending = c.pending.filter((p) => !confirmed.has(p.clientId));
         const frozen = c.olderWindow && !older;
+        let received = false;
         for (const m of page.messages ?? []) {
+            const fresh = !messages.has(m.id);
+            if (fresh && c.loaded && !older && m.senderId !== this.userId && compare(m.id, c.cursor) > 0) received = true;
             if (!frozen || messages.has(m.id)) messages.set(m.id, m);
             else c.newMessages = true;
         }
+        if (received) this.onMessageReceived();
         const sorted = [...messages.values()].sort((a, b) => compare(a.id, b.id));
         if (older && sorted.length > 500) { c.messages = sorted.slice(0, 500); c.olderWindow = true; }
         else c.messages = sorted.slice(-500);
@@ -256,7 +262,10 @@ export class ChatStore {
         pending.state = "sending"; pending.error = undefined;
         if (!retry) { c.pending.push(pending); c.draft = ""; }
         this.notify();
-        try { this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text})); c.error = ""; }
+        try {
+            this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text}));
+            c.error = "";
+        }
         catch (e) { if (!this.disposed) { pending.state = "error"; pending.error = chatError(e); } }
         finally { this.notify(); }
         this.invalidate();

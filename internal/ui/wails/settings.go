@@ -50,6 +50,13 @@ func (s *Service) enableSettings(path string) error {
 	}
 	s.client.SetRNNoiseEnabled(settings.RNNoiseEnabled)
 	s.client.SetVADEnabled(settings.VADEnabled)
+	if err := s.client.SetSoundPack(settings.SoundPack); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
+	if err := s.client.SetSoundVolume(settings.SoundVolume); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
+	s.client.SetMuteOnAway(settings.MuteOnAway)
 	if err := s.client.SetDeafened(settings.Deafened); err != nil {
 		restoreErrors = append(restoreErrors, err)
 	}
@@ -103,6 +110,9 @@ func (s *Service) saveSettings() (saveErr error) {
 		Theme:              theme,
 		Locale:             locale,
 		CloseToTray:        closeToTray,
+		SoundPack:          view.SoundPack,
+		SoundVolume:        view.SoundVolume,
+		MuteOnAway:         view.MuteOnAway,
 		RecentServers:      recentServers,
 	})
 }

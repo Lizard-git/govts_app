@@ -41,6 +41,10 @@ func HandlePacket(
 		return HandleMediaCredentialPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketAudioState:
 		return HandleAudioStatePacket(conn, hub, cache, packet, addr)
+	case protocol.PacketPresence:
+		return HandlePresencePacket(conn, hub, cache, packet, addr)
+	case protocol.PacketAttention:
+		return HandleAttentionPacket(conn, hub, cache, packet, addr)
 	default:
 		return fmt.Errorf("invalid packet type: %d", packet.Type)
 	}

@@ -29,6 +29,9 @@ type Settings struct {
 	// so a new language does not require a settings change. Version stays 1.
 	Locale        string         `json:"locale,omitempty"`
 	CloseToTray   bool           `json:"closeToTray"`
+	SoundPack     string         `json:"soundPack,omitempty"`
+	SoundVolume   float32        `json:"soundVolume"`
+	MuteOnAway    bool           `json:"muteOnAway"`
 	RecentServers []RecentServer `json:"recentServers,omitempty"`
 }
 
@@ -49,6 +52,28 @@ const (
 	ThemeBrown   = "brown"
 	ThemePurple  = "purple"
 )
+
+// Notification sound packs. internal/client renders them; this package owns
+// the ids so stored settings and the renderer cannot drift apart.
+const (
+	SoundPackShort  = "short"
+	SoundPackSoft   = "soft"
+	SoundPackLow    = "low"
+	SoundPackDouble = "double"
+	SoundPackSignal = "signal"
+
+	DefaultSoundPack   = SoundPackSoft
+	DefaultSoundVolume = float32(0.8)
+)
+
+func NormalizeSoundPack(value string) string {
+	switch value {
+	case SoundPackShort, SoundPackSoft, SoundPackLow, SoundPackDouble, SoundPackSignal:
+		return value
+	default:
+		return DefaultSoundPack
+	}
+}
 
 // NormalizeLocale accepts an empty value as Russian and any 2–8 letter language id.
 // The boolean is false when the value is not a language id.
@@ -111,8 +136,18 @@ func (store *Store) Load() (Settings, error) {
 		if _, exists := fields["microphoneGain"]; !exists {
 			persisted.MicrophoneGain = 1
 		}
+		if _, exists := fields["soundVolume"]; !exists {
+			persisted.SoundVolume = DefaultSoundVolume
+		}
+		if _, exists := fields["muteOnAway"]; !exists {
+			persisted.MuteOnAway = true
+		}
 	}
 	persisted.Theme = NormalizeTheme(persisted.Theme)
+	persisted.SoundPack = NormalizeSoundPack(persisted.SoundPack)
+	if persisted.SoundVolume < 0 || persisted.SoundVolume > 1 {
+		persisted.SoundVolume = DefaultSoundVolume
+	}
 	return persisted.Settings, nil
 }
 

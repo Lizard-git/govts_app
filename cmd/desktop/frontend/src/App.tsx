@@ -48,6 +48,9 @@ const emptyView: ClientViewDTO = {
         vadSensitivity: 0.5,
         vadOpen: false
     },
+    soundPack: "soft",
+    soundVolume: 0.8,
+    muteOnAway: true,
 };
 
 function App() {
@@ -220,6 +223,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         if (chatStoreRef.current?.context === view.chatContext) return;
         chatStoreRef.current?.dispose();
         const store = new ChatStore(view.chatContext, view.userId);
+        store.setMessageReceivedHandler(() => { void desktopAPI.messageReceived(); });
         chatStoreRef.current = store;
         setChatStore(store); setDirectChats([]); setContentTab("chat");
     }, [view.chatContext, view.userId, view.connectionStatus]);
@@ -465,8 +469,11 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                 <div className="channel-scroll"><ChannelTree channels={channels} participants={participants} screenOwners={screenOwners}
                                                              canKick={view.canKick} canBan={view.canBan}
                                                              canDrag={view.canDrag && view.connectionStatus === "connected"}
+                                                             wakeEnabled={view.connectionStatus === "connected"}
                                                              currentID={view.channelId}
-                                                             onError={onError} onMessage={openMessage} onJoin={(id) => {
+                                                             onError={onError} onMessage={openMessage}
+                                                             onWake={(participant) => { void invoke(() => desktopAPI.wake(participant.sessionId)); }}
+                                                             onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }} onMoveParticipant={(sessionID, channelID) => {
                     void invoke(() => desktopAPI.drag(sessionID, channelID));
@@ -482,6 +489,8 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                 <div className="participants-stage" data-backdrop={stageBackdrop} role="region" tabIndex={0} aria-label={m.channels.stage}><StageScene backdrop={stageBackdrop}/><div className="participants-strip">
                     {members.length ? members.map((participant) => <div className="stage-participant-group" key={participant.sessionId}><ParticipantRow
                         participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
+                        canWake={view.connectionStatus === "connected" && participant.channelId === view.channelId}
+                        onWake={(person) => { void invoke(() => desktopAPI.wake(person.sessionId)); }}
                         depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>
                         {channelStreams.filter((stream) => stream.ownerSessionId === participant.sessionId).map((stream) => <ScreenStageTile key={stream.id} stream={stream} ownerName={participant.displayName} local={participant.local} connected={view.connectionStatus === "connected"} onError={onError}/>)}</div>) : <div className="stage-empty">{m.channels.emptyStage}</div>}
                 </div></div>
@@ -536,18 +545,20 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
     </section>;
 }
 
-function ChannelTree({channels, participants, screenOwners, canKick, canBan, canDrag, currentID, onJoin, onMoveParticipant, onError, onMessage}: {
+function ChannelTree({channels, participants, screenOwners, canKick, canBan, canDrag, wakeEnabled, currentID, onJoin, onMoveParticipant, onError, onMessage, onWake}: {
     channels: ChannelDTO[];
     participants: ParticipantDTO[];
     screenOwners: Set<string>;
     canKick: boolean;
     canBan: boolean;
     canDrag: boolean;
+    wakeEnabled: boolean;
     currentID: string;
     onJoin: (id: string) => void
     onMoveParticipant: (sessionID: string, channelID: string) => void;
     onError: (message: string) => void;
     onMessage: (participant: ParticipantDTO) => void;
+    onWake: (participant: ParticipantDTO) => void;
 }) {
     const {m} = useLocale();
     const [draggingSessionID, setDraggingSessionID] = useState<string | null>(null);
@@ -588,6 +599,8 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
             {members.map((participant) => <ParticipantRow key={participant.sessionId} participant={participant}
                                                           sharingScreen={screenOwners.has(participant.sessionId)}
                                                           canKick={canKick} canBan={canBan} canDrag={canDrag}
+                                                          canWake={wakeEnabled && participant.channelId === currentID}
+                                                          onWake={onWake}
                                                           depth={depth} onError={onError} onMessage={onMessage}
                                                           onDragStart={(event, source) => {
                                                               if (!canDrag) {
@@ -691,7 +704,9 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
     const [devices, setDevices] = useState<AudioDevicesDTO | null>(null);
     const [devicesError, setDevicesError] = useState("");
     const [devicePending, setDevicePending] = useState(false);
-    const [section, setSection] = useState<"microphone" | "playback" | "interface" | "updates">("microphone");
+    const [section, setSection] = useState<"microphone" | "playback" | "interface" | "behavior" | "updates">("microphone");
+    const [soundVolume, setSoundVolume] = useState(view.soundVolume);
+    useEffect(() => setSoundVolume(view.soundVolume), [view.soundVolume]);
     const [closeToTray, setCloseToTrayState] = useState(false);
     useEffect(() => {
         let active = true;
@@ -759,6 +774,7 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                 <button type="button" aria-current={section === "microphone" ? "page" : undefined} onClick={() => setSection("microphone")}>{m.settings.microphone}</button>
                 <button type="button" aria-current={section === "playback" ? "page" : undefined} onClick={() => setSection("playback")}>{m.settings.playback}</button>
                 <button type="button" aria-current={section === "interface" ? "page" : undefined} onClick={() => setSection("interface")}>{m.settings.interface}</button>
+                <button type="button" aria-current={section === "behavior" ? "page" : undefined} onClick={() => setSection("behavior")}>{m.settings.behavior}</button>
                 <button type="button" aria-current={section === "updates" ? "page" : undefined} onClick={() => setSection("updates")}>{m.settings.updates}</button>
             </nav>
             <div className="settings-content">
@@ -824,7 +840,7 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                                                                                          onChange={(id) => void selectDevice("playback", id)}/><SettingToggle
                         title={m.settings.deafen} description={m.settings.deafenHint}
                         checked={view.audio.deafened} onChange={(value) => invoke(() => desktopAPI.setDeafened(value))}/></section>}
-                {section === "interface" && <section className="settings-card"><h3>{m.settings.interface}</h3>
+                {section === "interface" && <><section className="settings-card"><h3>{m.settings.interface}</h3>
                     <div className="locale-setting">
                         <span className="setting-label" id="locale-label">{m.language.label}</span>
                         <p>{m.language.hint}</p>
@@ -844,11 +860,66 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                            throw error;
                                        }
                                    })}/>
+                </section>
+                <section className="settings-card"><h3>{m.settings.sounds}</h3>
+                    <Select id="sound-pack" label={m.settings.soundPack} hint={m.settings.soundPackHint}
+                            value={view.soundPack || "soft"}
+                            options={[
+                                {value: "short", label: m.settings.packShort},
+                                {value: "soft", label: m.settings.packSoft},
+                                {value: "low", label: m.settings.packLow},
+                                {value: "double", label: m.settings.packDouble},
+                                {value: "signal", label: m.settings.packSignal},
+                            ]}
+                            onChange={(id) => invoke(() => desktopAPI.setSoundPack(id))}/>
+                    <SensitivitySlider id="sound-volume" max={1} label={m.settings.soundVolume}
+                                       description={m.settings.soundVolumeHint}
+                                       value={soundVolume} disabled={false}
+                                       onChange={setSoundVolume}
+                                       onCommit={(value) => invoke(() => desktopAPI.setSoundVolume(value))}/>
+                    <SoundPackPreview/>
+                </section></>}
+                {section === "behavior" && <section className="settings-card"><h3>{m.settings.behavior}</h3>
+                    <SettingToggle title={m.settings.muteOnAway} description={m.settings.muteOnAwayHint}
+                                   checked={view.muteOnAway}
+                                   onChange={(value) => invoke(() => desktopAPI.setMuteOnAway(value))}/>
                 </section>}
                 {section === "updates" && <UpdatesPanel updates={updates}/>}
             </div>
         </div>
     </section>;
+}
+
+function SoundPackPreview() {
+    const {m} = useLocale();
+    const [playing, setPlaying] = useState(false);
+    const [error, setError] = useState("");
+    const generation = useRef(0);
+    const play = async () => {
+        if (playing) {
+            generation.current += 1;
+            setPlaying(false);
+            await desktopAPI.stopSoundPreview().catch(() => undefined);
+            return;
+        }
+        const token = ++generation.current;
+        setPlaying(true);
+        setError("");
+        try {
+            await desktopAPI.previewSoundPack();
+        } catch (cause) {
+            if (generation.current === token) setError(rawError(cause));
+        } finally {
+            if (generation.current === token) setPlaying(false);
+        }
+    };
+    return <div className="monitor-setting">
+        <button type="button" className={`monitor-button ${playing ? "active" : ""}`} aria-pressed={playing} onClick={() => void play()}>
+            <Icon name="sound"/>{playing ? m.settings.previewPackStop : m.settings.previewPack}
+        </button>
+        <p className="device-hint">{m.settings.previewPackHint}</p>
+        {error && <p className="device-hint" role="alert">{error}</p>}
+    </div>;
 }
 
 function SensitivitySlider({id = "rnnoise-sensitivity", max = 1, label, description, value, disabled, onChange, onCommit}: {

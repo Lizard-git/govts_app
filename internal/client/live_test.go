@@ -104,10 +104,8 @@ func TestParticipantChannelNotificationSounds(t *testing.T) {
 	if !self.ApplyEvent(self.Generation(), domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 1, ChannelID: 2}) {
 		t.Fatal("self move was not applied")
 	}
-	select {
-	case sound := <-self.NotificationSounds():
-		t.Fatalf("self move emitted sound %v", sound.Kind)
-	default:
+	if sound := <-self.NotificationSounds(); sound.Kind != NotificationChannelChanged {
+		t.Fatalf("self move sound = %v", sound.Kind)
 	}
 }
 

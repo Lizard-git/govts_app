@@ -20,38 +20,15 @@ type MalgoPlayer struct {
 }
 
 func NewMalgoPlayer(config CodecConfig, deviceID string) (*MalgoPlayer, error) {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	if err != nil {
-		return nil, fmt.Errorf("initialize playback context: %w", err)
-	}
-	fail := func(err error) (*MalgoPlayer, error) {
-		_ = ctx.Uninit()
-		ctx.Free()
-		return nil, err
-	}
-
 	buffer := &playbackBuffer{limit: config.SamplesPerFrame * config.Channels * 2 * 5}
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
-	deviceConfig.Playback.Format = malgo.FormatS16
-	deviceConfig.Playback.Channels = uint32(config.Channels)
-	deviceConfig.SampleRate = uint32(config.SampleRate)
-	releaseDeviceID, err := configureDeviceID(&deviceConfig.Playback.DeviceID, deviceID)
-	if err != nil {
-		return fail(err)
-	}
-	defer releaseDeviceID()
 	callbacks := malgo.DeviceCallbacks{Data: func(output, _ []byte, _ uint32) {
 		buffer.read(output)
 	}}
-	device, err := malgo.InitDevice(ctx.Context, deviceConfig, callbacks)
+	context, device, err := openMalgoStream(malgo.Playback, config, deviceID, callbacks)
 	if err != nil {
-		return fail(fmt.Errorf("initialize playback device: %w", err))
+		return nil, err
 	}
-	if err := device.Start(); err != nil {
-		device.Uninit()
-		return fail(fmt.Errorf("start playback device: %w", err))
-	}
-	return &MalgoPlayer{context: ctx, device: device, buffer: buffer}, nil
+	return &MalgoPlayer{context: context, device: device, buffer: buffer}, nil
 }
 
 func (p *MalgoPlayer) Write(samples []int16) error {

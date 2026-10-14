@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
@@ -10,6 +9,9 @@ import (
 
 // At the fixed 20 ms audio profile, keep at most 100 ms per sender.
 const maxMixerFramesPerSender = 5
+
+// maxEffectFrames is 1.8 s, enough for the longest wake cue.
+const maxEffectFrames = 90
 
 type pcmMixer struct {
 	bySender      map[uint64][]audio.MediaPCMFrame
@@ -125,10 +127,44 @@ func MixLoop(
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	mixer := newPCMMixer()
-	effects := make([]audio.MediaPCMFrame, 0, 14)
+	effects := make([]audio.MediaPCMFrame, 0, maxEffectFrames)
 	var notificationCh <-chan NotificationSound
 	if len(notifications) > 0 {
 		notificationCh = notifications[0]
+	}
+	enqueue := func(sound NotificationSound) {
+		frames := notificationFrames(sound)
+		if len(frames) == 0 || len(frames) > maxEffectFrames {
+			return
+		}
+		if len(effects)+len(frames) > maxEffectFrames {
+			effects = effects[:0]
+		}
+		effects = append(effects, frames...)
+	}
+	drainNotifications := func() {
+		for {
+			select {
+			case sound := <-notificationCh:
+				enqueue(sound)
+			default:
+				return
+			}
+		}
+	}
+	// One mixed frame per tick. A cue longer than 20 ms spreads across later
+	// ticks and stays on the same clock as voice.
+	mixOnce := func() error {
+		drainNotifications()
+		if len(effects) > 0 {
+			mixer.Push(effects[0])
+			effects = effects[1:]
+		}
+		frame, ok := mixer.Mix()
+		if !ok {
+			return nil
+		}
+		return sendMixedFrame(ctx, mixedCh, frame)
 	}
 
 	for {
@@ -140,52 +176,21 @@ func MixLoop(
 				return drainMixer(ctx, mixer, mixedCh)
 			}
 			mixer.Push(frame)
+			select {
+			case <-ticker.C:
+				if err := mixOnce(); err != nil {
+					return err
+				}
+			default:
+			}
 		case sound := <-notificationCh:
-			frames := notificationFrames(sound)
-			available := 14 - len(effects)
-			if available > len(frames) {
-				available = len(frames)
-			}
-			effects = append(effects, frames[:available]...)
+			enqueue(sound)
 		case <-ticker.C:
-			if len(effects) > 0 {
-				mixer.Push(effects[0])
-				effects = effects[1:]
-			}
-			frame, ok := mixer.Mix()
-			if !ok {
-				continue
-			}
-			if err := sendMixedFrame(ctx, mixedCh, frame); err != nil {
+			if err := mixOnce(); err != nil {
 				return err
 			}
 		}
 	}
-}
-
-func notificationFrames(sound NotificationSound) []audio.MediaPCMFrame {
-	const sampleRate = 48000
-	frequencies := []float64{520, 700}
-	if sound.Kind == NotificationLeft {
-		frequencies = []float64{620, 420}
-	}
-	const (
-		frameSamples   = sampleRate * 20 / 1000
-		segmentSamples = sampleRate * 60 / 1000
-	)
-	samples := make([]int16, segmentSamples*len(frequencies))
-	for segment, frequency := range frequencies {
-		for i := 0; i < segmentSamples; i++ {
-			envelope := math.Sin(math.Pi * float64(i) / float64(segmentSamples))
-			samples[segment*segmentSamples+i] = int16(math.Sin(2*math.Pi*frequency*float64(i)/sampleRate) * envelope * 5200)
-		}
-	}
-	frames := make([]audio.MediaPCMFrame, 0, len(samples)/frameSamples)
-	for offset := 0; offset < len(samples); offset += frameSamples {
-		chunk := samples[offset:min(offset+frameSamples, len(samples))]
-		frames = append(frames, audio.MediaPCMFrame{PlaybackEpoch: sound.PlaybackEpoch, SenderID: 0, Samples: chunk, Duration: 20 * time.Millisecond})
-	}
-	return frames
 }
 
 func drainMixer(
