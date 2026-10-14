@@ -271,7 +271,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	answer, err := acceptOffer(ctx, pc, offer)
 	if err != nil {
 		m.removeSubscriber(p, s)
-		return SubscribeResult{}, fmt.Errorf("viewer cannot negotiate stream codec %s: %w", p.codec.MimeType, err)
+		return SubscribeResult{}, fmt.Errorf("viewer cannot negotiate stream codec %s: %w", codec.MimeType, err)
 	}
 	return SubscribeResult{Answer: answer}, nil
 }

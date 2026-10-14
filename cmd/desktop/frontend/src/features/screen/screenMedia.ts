@@ -51,12 +51,13 @@ export function h264SupportedSettings(level: number): {resolution: ScreenSetting
     });
 }
 export function senderCodecAvailable(name: string): boolean {
+    if (typeof RTCRtpSender === "undefined") return false;
     return Boolean(RTCRtpSender.getCapabilities?.("video")?.codecs.some((c) => c.mimeType.toLowerCase() === `video/${name.toLowerCase()}`));
 }
 function preferCodecs(transceiver: RTCRtpTransceiver, settings: ScreenSettings, server: ServerCodecs, actual: MediaTrackSettings) {
     const capabilities = RTCRtpSender.getCapabilities?.("video");
     if (!capabilities || !transceiver.setCodecPreferences) {
-        if (settings.codec !== "auto" && settings.codec !== "VP8") throw new Error("Codec selection unavailable. Choose VP8 or auto.");
+        if (settings.codec !== "auto" && settings.codec !== "VP8") throw new Error(errorCode("screen-codec-selection-unavailable"));
         return;
     }
     const supported = server.legacy ? [{mimeType: "video/VP8", sdpFmtpLine: ""}] : server.codecs ?? [];
@@ -71,7 +72,7 @@ function preferCodecs(transceiver: RTCRtpTransceiver, settings: ScreenSettings, 
     const selected = compatible.filter((c) => settings.codec === "auto" || c.mimeType.toLowerCase() === `video/${settings.codec.toLowerCase()}`);
     // Keep VP8 first in auto until quality and CPU comparisons are available.
     selected.sort((a,b) => Number(!/vp8$/i.test(a.mimeType))-Number(!/vp8$/i.test(b.mimeType)));
-    if (!selected.length) throw new Error(`${settings.codec} is unavailable in this client/server. Choose VP8 or auto.`);
+    if (!selected.length) throw new Error(errorCode("screen-codec-unavailable"));
     if (selected.some((c) => /h264$/i.test(c.mimeType))) {
         const valid = selected.filter((c) => {
             if (!/h264$/i.test(c.mimeType)) return true;
@@ -93,7 +94,7 @@ function verifyNegotiatedCodec(sdp: string, settings: ScreenSettings, actual: Me
     const video = sdp.split(/(?=m=)/).find((section) => section.startsWith("m=video "));
     const payload = video?.split(/\r?\n/)[0]?.split(" ")[3];
     const codec = video?.match(new RegExp(`a=rtpmap:${payload} ([^/]+)/`, "i"))?.[1];
-    if (!codec || video?.startsWith("m=video 0 ")) throw new Error("Server rejected the video codec. Choose VP8 or auto.");
+    if (!codec || video?.startsWith("m=video 0 ")) throw new Error(errorCode("screen-codec-rejected"));
     if (settings.codec !== "auto" && codec.toLowerCase() !== settings.codec.toLowerCase()) throw new Error(`Requested ${settings.codec}, negotiated ${codec}. Choose a supported codec.`);
     const parameters = fmtp(video?.match(new RegExp(`a=fmtp:${payload} ([^\r\n]+)`, "i"))?.[1]);
     if (codec.toLowerCase() === "h264" && !h264Fits(parseInt(parameters["profile-level-id"]?.slice(4) ?? "0", 16), actual, settings.fps)) {

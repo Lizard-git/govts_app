@@ -19,7 +19,6 @@ export function useScreenSharing(view: ClientViewDTO, controller: ScreenMediaCon
         setCodecLimit(null);
         try { localStorage.setItem("sonoryx.screenSettings", JSON.stringify(next)); } catch { /* Session choice survives. */ }
     };
-    useEffect(() => { try { localStorage.setItem("sonoryx.screenSettings", JSON.stringify(settings)); } catch { /* Storage may be disabled. */ } }, [settings]);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const busy = useRef(false);
     const context = `${view.sessionId}:${view.channelId}:${view.connectionStatus}`;

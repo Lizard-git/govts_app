@@ -396,5 +396,8 @@ export const ru = {
         "screen-already-starting": "Демонстрация уже запускается",
         "screen-no-track": "Источник не предоставил видеотрек",
         "screen-capture-ended": "Захват завершён",
+        "screen-codec-selection-unavailable": "Выбор кодека недоступен в этом клиенте. Выберите VP8 или авто.",
+        "screen-codec-unavailable": "Выбранный кодек недоступен в клиенте или на сервере. Выберите VP8 или авто.",
+        "screen-codec-rejected": "Сервер отклонил видеокодек. Выберите VP8 или авто.",
     },
 };

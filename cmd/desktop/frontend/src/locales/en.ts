@@ -395,5 +395,8 @@ export const en = {
         "screen-already-starting": "Screen sharing is already starting",
         "screen-no-track": "The source did not provide a video track",
         "screen-capture-ended": "Capture ended",
+        "screen-codec-selection-unavailable": "Codec selection is unavailable in this client. Choose VP8 or auto.",
+        "screen-codec-unavailable": "The selected codec is unavailable in this client or on the server. Choose VP8 or auto.",
+        "screen-codec-rejected": "The server rejected the video codec. Choose VP8 or auto.",
     },
 } satisfies Messages;

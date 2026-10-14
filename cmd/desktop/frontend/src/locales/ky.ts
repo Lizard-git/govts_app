@@ -395,5 +395,8 @@ export const ky = {
         "screen-already-starting": "Көрсөтүү мурунтан башталууда",
         "screen-no-track": "Булак видео трек берген жок",
         "screen-capture-ended": "Тартуу бүттү",
+        "screen-codec-selection-unavailable": "Бул клиентте кодек тандоо жеткиликсиз. VP8 же авто тандаңыз.",
+        "screen-codec-unavailable": "Тандалган кодек клиентте же серверде жеткиликсиз. VP8 же авто тандаңыз.",
+        "screen-codec-rejected": "Сервер видео кодекти четке какты. VP8 же авто тандаңыз.",
     },
 } satisfies Messages;

@@ -29,10 +29,12 @@ func (r *rtpReorder) push(packet *rtp.Packet, at time.Time, deliver func(receive
 		r.expected, r.initialized = packet.SequenceNumber, true
 	}
 	distance := int16(packet.SequenceNumber - r.expected)
-	if distance < 0 {
+	// A late packet is ignored only near the cursor; a larger jump in either
+	// direction is a sequence discontinuity and must not stall forwarding.
+	if distance < 0 && distance >= -maxFramePackets {
 		return
 	}
-	if distance > maxFramePackets {
+	if distance < -maxFramePackets || distance > maxFramePackets {
 		clear(r.pending)
 		r.gapAt = time.Time{}
 		r.expected = packet.SequenceNumber
