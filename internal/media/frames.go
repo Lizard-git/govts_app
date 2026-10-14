@@ -34,8 +34,23 @@ func (f *videoFrame) queueTime() time.Time {
 	return f.at
 }
 
+// A keyframe can be many times larger than a delta frame; the publisher's own
+// pacer and the viewer's pacer both spread it over time. Dropping it on the
+// delta budget would only trigger another keyframe of the same size, so a
+// keyframe has keyFrameMaxAge for assembly, queueing and writing.
+func (f *videoFrame) maxAge() time.Duration {
+	if f.key {
+		return keyFrameMaxAge
+	}
+	return frameMaxAge
+}
+
 func (f *videoFrame) stale(now time.Time) bool {
-	return now.Sub(f.at) > frameMaxAge || now.Sub(f.queueTime()) > subscriberQueueAge
+	queueAge := subscriberQueueAge
+	if f.key {
+		queueAge = keyFrameMaxAge
+	}
+	return now.Sub(f.at) > f.maxAge() || now.Sub(f.queueTime()) > queueAge
 }
 
 func frameStart(codec string, payload []byte) (start, key bool) {

@@ -15,8 +15,9 @@ import (
 // are not far behind the rest. libwebrtc senders apply a received REMB as an
 // upper bound on their target rate, also when transport-cc is negotiated, so
 // the client needs no changes and its maxBitrate stays the ceiling. A viewer
-// has no estimate (no cap, no pacing) until it reports loss or a REMB; then the
-// estimate drops at once and grows by at most rateGrowth per second. Viewer
+// has no estimate (no cap, no pacing) until it reports loss over enough packets
+// or a fresh REMB; then the estimate drops at once and grows by at most
+// rateGrowth per second. Viewer
 // writers pace primary RTP to the estimate minus measured RTX. When disabled
 // nothing here runs and no REMB is sent. Transport-wide sequence numbers are
 // not used: each PeerConnection keeps its own Pion interceptor state.
@@ -33,6 +34,9 @@ const (
 	paceFactor        = 2.5  // as libwebrtc; lets a keyframe drain within the age budget
 	paceBurst         = 20 * time.Millisecond
 	slowQueueRecovery = 10 * time.Second
+	minLossPackets    = 100 // packets a loss measurement must cover
+	maxLossWindow     = 5 * time.Second
+	rembMaxAge        = 5 * time.Second // a viewer REMB older than this is ignored
 )
 
 // Owned by the reconcile worker.
@@ -85,9 +89,12 @@ func (m *Manager) updateRate(s *subscriber, now time.Time) int64 {
 	repeated := float64(current.repeatBytes-previous.repeatBytes) * 8 / elapsed
 	delivered := float64(current.bytes-previous.bytes)*8/elapsed + repeated
 	s.rtxRate.Store(int64(repeated))
-	loss, hasLoss := s.receiverLoss()
+	loss, hasLoss := s.intervalLoss(now)
 	rate := float64(s.rate.Load())
 	remb := s.remb.Load()
+	if now.Sub(time.Unix(0, s.rembAt.Load())) > rembMaxAge {
+		remb = 0
+	}
 	// Only network signals (receiver report loss, the viewer's REMB) set or
 	// lower the estimate. Server queue overflows usually mean local CPU or
 	// socket pressure, and once the writer is paced it can make frames stale
@@ -123,13 +130,47 @@ func (m *Manager) repeatBytes(s *subscriber) uint64 {
 	return 0
 }
 
-// Latest RTCP receiver report fraction lost for the viewer's primary SSRC.
-func (s *subscriber) receiverLoss() (float64, bool) {
-	value := s.rrLoss.Load()
-	return float64(value&0xff) / 256, value&rrLossValid != 0
+// Cumulative counters from the viewer's latest RTCP receiver report for the
+// primary SSRC: extended highest sequence number and packets lost.
+type receiverStats struct{ highest, lost uint32 }
+
+// Owned by the reconcile worker: the report counters at the window start.
+type lossBase struct {
+	at      time.Time
+	highest uint32
+	lost    uint32
 }
 
-const rrLossValid = 1 << 8
+// Loss over the packets the viewer reported since the window started, rather
+// than the RR fraction of one report: a signal needs minLossPackets, so a
+// quiet stream with a few lost packets gives none, and a window that cannot
+// collect them within maxLossWindow restarts. Each report is counted once
+// because the window advances past it.
+func (s *subscriber) intervalLoss(now time.Time) (float64, bool) {
+	report := s.rr.Load()
+	if report == nil {
+		return 0, false
+	}
+	base := &s.lossBase
+	expected := report.highest - base.highest
+	if base.at.IsZero() || int32(expected) < 0 {
+		*base = lossBase{now, report.highest, report.lost}
+		return 0, false
+	}
+	if expected < minLossPackets {
+		if now.Sub(base.at) > maxLossWindow {
+			*base = lossBase{now, report.highest, report.lost}
+		}
+		return 0, false
+	}
+	// RR cumulative lost is a signed 24-bit counter and may decrease after
+	// duplicates; take the sign-extended difference and clamp it.
+	lost := int32((report.lost-base.lost)<<8) >> 8
+	*base = lossBase{now, report.highest, report.lost}
+	loss := min(1, max(0, float64(lost)/float64(expected)))
+	s.lastLoss.Store(int32(loss*1000) + 1)
+	return loss, true
+}
 
 // Pacing rate for the writer: the estimate times paceFactor, minus the RTX the
 // NACK responder sends outside the writer. 0 disables pacing.
@@ -172,9 +213,13 @@ func (m *Manager) adaptiveMetrics(p *publisher, s *subscriber) string {
 		return strconv.FormatInt(bps/1000, 10)
 	}
 	loss := "na"
-	if fraction, ok := s.receiverLoss(); ok {
-		loss = strconv.FormatFloat(fraction*100, 'f', 1, 64)
+	if permille := s.lastLoss.Load(); permille > 0 {
+		loss = strconv.FormatFloat(float64(permille-1)/10, 'f', 1, 64)
+	}
+	remb := s.remb.Load()
+	if time.Since(time.Unix(0, s.rembAt.Load())) > rembMaxAge {
+		remb = 0
 	}
 	return fmt.Sprintf(" source_ceiling_kbps=%s estimate_kbps=%s rtx_kbps=%d rr_loss_percent=%s viewer_remb_kbps=%s slow=%t congestion_events=%d",
-		kbps(p.ceiling.Load()), kbps(s.rate.Load()), s.rtxRate.Load()/1000, loss, kbps(s.remb.Load()), s.slow.Load(), s.congestion.Load())
+		kbps(p.ceiling.Load()), kbps(s.rate.Load()), s.rtxRate.Load()/1000, loss, kbps(remb), s.slow.Load(), s.congestion.Load())
 }

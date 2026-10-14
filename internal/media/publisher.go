@@ -54,7 +54,7 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 		if !packet.Marker {
 			return
 		}
-		if time.Since(frame.at) > frameMaxAge {
+		if time.Since(frame.at) > frame.maxAge() {
 			p.expiredFrames.Add(1)
 			reset()
 			return
@@ -92,8 +92,8 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 	var deadline time.Time
 	for {
 		nextDeadline := reorder.deadline()
-		if frame != nil && (nextDeadline.IsZero() || frame.at.Add(frameMaxAge).Before(nextDeadline)) {
-			nextDeadline = frame.at.Add(frameMaxAge)
+		if frame != nil && (nextDeadline.IsZero() || frame.at.Add(frame.maxAge()).Before(nextDeadline)) {
+			nextDeadline = frame.at.Add(frame.maxAge())
 		}
 		if !nextDeadline.Equal(deadline) {
 			if err := remote.SetReadDeadline(nextDeadline); err != nil {
@@ -108,7 +108,7 @@ func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 			if errors.As(err, &timeout) && timeout.Timeout() && !isClosed(p.closed) {
 				reorder.expire(now, deliver, inputLoss)
 				p.inLost.Store(reorder.lost)
-				if frame != nil && now.Sub(frame.at) >= frameMaxAge {
+				if frame != nil && now.Sub(frame.at) >= frame.maxAge() {
 					p.expiredFrames.Add(1)
 					reset()
 				}

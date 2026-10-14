@@ -29,6 +29,7 @@ const (
 	// explicit compromise over the original 250 ms so upstream NACK repair
 	// (packetRepairAge) still leaves room for queueing; revisit after baseline.
 	frameMaxAge     = 400 * time.Millisecond
+	keyFrameMaxAge  = time.Second
 	packetRepairAge = 200 * time.Millisecond
 	// One NACK per interval, stopped once repair could no longer arrive in time.
 	nackInterval        = 50 * time.Millisecond
@@ -148,12 +149,15 @@ type subscriber struct {
 	// sample is owned by the reconcile worker; the rest are shared atomics.
 	ssrc       uint32
 	sample     rateSample
-	rate       atomic.Int64  // bps estimate, 0 until there is evidence of a limit
-	rtxRate    atomic.Int64  // bps of NACK resends over the last second
-	rrLoss     atomic.Uint32 // RR fraction lost, rrLossValid once received
-	remb       atomic.Int64  // bps from the viewer's own REMB, if it sends one
-	congestion atomic.Uint64 // queue overflows and frames that went stale in the queue
-	slow       atomic.Bool   // excluded from the source ceiling
+	lossBase   lossBase                      // owned by the reconcile worker
+	rate       atomic.Int64                  // bps estimate, 0 until there is evidence of a limit
+	rtxRate    atomic.Int64                  // bps of NACK resends over the last second
+	rr         atomic.Pointer[receiverStats] // latest RR for the primary SSRC
+	lastLoss   atomic.Int32                  // last interval loss in permille + 1, 0 = none yet
+	remb       atomic.Int64                  // bps from the viewer's own REMB, if it sends one
+	rembAt     atomic.Int64                  // unix nanoseconds of that REMB
+	congestion atomic.Uint64                 // queue overflows and frames that went stale in the queue
+	slow       atomic.Bool                   // excluded from the source ceiling
 
 	lastOutBytes   uint64
 	lastOutPackets uint64
