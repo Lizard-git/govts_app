@@ -103,6 +103,7 @@ type Participant struct {
 	ChannelID   ChannelID
 	Muted       bool
 	Deafened    bool
+	Away        bool
 }
 
 type ServerInfo struct {

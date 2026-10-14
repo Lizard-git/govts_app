@@ -16,10 +16,12 @@ const (
 	ScreenStreamStarted
 	ScreenStreamStopped
 	ParticipantAudio
+	ParticipantPresence
 )
 
 // Participant is populated only for Joined. SessionID/ChannelID are used for
 // Left/Moved. Muted and Deafened are used only for ParticipantAudio.
+// Away is used only for ParticipantPresence.
 type StateEvent struct {
 	Kind         StateEventKind
 	Revision     StateRevision
@@ -29,6 +31,7 @@ type StateEvent struct {
 	ScreenStream ScreenStream
 	Muted        bool
 	Deafened     bool
+	Away         bool
 }
 
 func (e StateEvent) Validate() error {
@@ -37,6 +40,9 @@ func (e StateEvent) Validate() error {
 	}
 	if e.Kind != ParticipantAudio && (e.Muted || e.Deafened) {
 		return errors.New("audio flags on non-audio event")
+	}
+	if e.Kind != ParticipantPresence && e.Away {
+		return errors.New("presence flag on non-presence event")
 	}
 	switch e.Kind {
 	case ParticipantJoined:
@@ -60,6 +66,10 @@ func (e StateEvent) Validate() error {
 	case ParticipantAudio:
 		if e.Participant != (Participant{}) || e.SessionID == 0 || e.ChannelID != 0 || e.ScreenStream != (ScreenStream{}) {
 			return errors.New("invalid audio event")
+		}
+	case ParticipantPresence:
+		if e.Participant != (Participant{}) || e.SessionID == 0 || e.ChannelID != 0 || e.ScreenStream != (ScreenStream{}) {
+			return errors.New("invalid presence event")
 		}
 	default:
 		return errors.New("unknown event kind")

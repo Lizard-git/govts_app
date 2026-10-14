@@ -30,6 +30,9 @@ func EncodeStateEvent(e domain.StateEvent) ([]byte, error) {
 	case domain.ParticipantAudio:
 		b = binary.BigEndian.AppendUint64(b, e.SessionID)
 		b = append(b, audioStateFlags(e.Muted, e.Deafened))
+	case domain.ParticipantPresence:
+		b = binary.BigEndian.AppendUint64(b, e.SessionID)
+		b = append(b, EncodePresence(e.Away)...)
 	}
 	return b, nil
 }
@@ -80,6 +83,17 @@ func DecodeStateEvent(b []byte) (domain.StateEvent, error) {
 		e.SessionID = binary.BigEndian.Uint64(b[:8])
 		var err error
 		e.Muted, e.Deafened, err = audioStateFromFlags(b[8])
+		if err != nil {
+			return e, err
+		}
+		b = nil
+	case domain.ParticipantPresence:
+		if len(b) != 9 {
+			return e, errors.New("invalid presence payload")
+		}
+		e.SessionID = binary.BigEndian.Uint64(b[:8])
+		away, err := DecodePresence(b[8:9])
+		e.Away = away
 		if err != nil {
 			return e, err
 		}
