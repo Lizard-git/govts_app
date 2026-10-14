@@ -74,6 +74,7 @@ export const desktopAPI = {
     closeToTray: (): Promise<boolean> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.CloseToTray"),
     setCloseToTray: (value: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetCloseToTray", value),
     mediaServerIdentity: () => Service.MediaServerIdentity(),
+    screenCapabilities: () => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.ScreenCapabilities") as Promise<{legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]}>,
     trustMediaServer: (fingerprint: string) => Service.TrustMediaServer(fingerprint),
     publishScreen: (offer: {type: string; sdp: string}) => Service.PublishScreen(offer),
     subscribeScreen: (streamID: string, subscriberID: string, offer: {type: string; sdp: string}) =>

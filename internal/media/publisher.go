@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"log"
+	"net"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 	"uniclog.io/sonoryx/internal/domain"
@@ -12,47 +14,110 @@ import (
 
 func (m *Manager) forward(p *publisher, remote *webrtc.TrackRemote) {
 	defer m.StopPublisher(p.ownerID, p.id)
+	var frame *videoFrame
+	var timestamp uint32
+	valid := false
+	var subscribers []*subscriber
+	reset := func() {
+		frame = nil
+		valid = false
+		m.invalidateFrame(p)
+	}
+	deliver := func(item receivedPacket) {
+		packet := item.packet
+		if len(packet.Payload) == 0 {
+			return
+		}
+		start, key, packetValid := frameMetadata(p.codec.MimeType, packet.Payload)
+		if frame == nil || packet.Timestamp != timestamp {
+			if frame != nil {
+				reset()
+			}
+			frame = &videoFrame{at: item.at, key: key}
+			timestamp = packet.Timestamp
+			valid = start && packetValid
+		}
+		valid = valid && packetValid
+		frame.key = frame.key || key
+		if item.at.Before(frame.at) {
+			frame.at = item.at
+		}
+		frame.bytes += packet.MarshalSize()
+		if frame.bytes > maxFrameBytes || len(frame.packets) >= maxFramePackets {
+			valid = false
+		}
+		if valid {
+			frame.packets = append(frame.packets, packet)
+		}
+		if !packet.Marker {
+			return
+		}
+		if valid {
+			subscribers = subscribers[:0]
+			p.mu.RLock()
+			for _, s := range p.subscribers {
+				subscribers = append(subscribers, s)
+			}
+			p.mu.RUnlock()
+			for _, s := range subscribers {
+				s.enqueue(p, frame)
+			}
+			// Do not retain detached subscribers in the reused snapshot backing array.
+			clear(subscribers)
+		} else {
+			reset()
+		}
+		frame = nil
+	}
+	var reorder rtpReorder
+	var deadline time.Time
 	for {
+		nextDeadline := reorder.deadline()
+		if frame != nil && (nextDeadline.IsZero() || frame.at.Add(subscriberQueueAge).Before(nextDeadline)) {
+			nextDeadline = frame.at.Add(subscriberQueueAge)
+		}
+		if !nextDeadline.Equal(deadline) {
+			if err := remote.SetReadDeadline(nextDeadline); err != nil {
+				return
+			}
+			deadline = nextDeadline
+		}
 		packet, _, err := remote.ReadRTP()
+		now := time.Now()
 		if err != nil {
-			log.Printf("screen publisher RTP ended: stream_id=%d owner_session_id=%d error=%v", p.id, p.ownerID, err)
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() && !isClosed(p.closed) {
+				reorder.expire(now, deliver, reset)
+				if frame != nil && now.Sub(frame.at) >= subscriberQueueAge {
+					reset()
+				}
+				continue
+			}
+			log.Printf("screen publisher RTP ended: stream=%d error=%v", p.id, err)
 			return
 		}
 		p.inBytes.Add(uint64(packet.MarshalSize()))
 		p.inPackets.Add(1)
-		var needsRecovery []*subscriber
-		p.mu.RLock()
-		for _, s := range p.subscribers {
-			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
-				continue
-			}
-			clone := packet.Clone()
-			select {
-			case s.packets <- clone:
-			default:
-				s.drops.Add(1)
-				needsRecovery = append(needsRecovery, s)
-			}
-		}
-		p.mu.RUnlock()
-		for _, s := range needsRecovery {
-			requestRecoveryKeyframe(p, s)
-		}
+		reorder.expire(now, deliver, reset)
+		reorder.push(packet, now, deliver, reset)
 	}
 }
 
 func (p *publisher) close() {
-	p.closeOnce.Do(func() {
-		close(p.closed)
-		p.mu.Lock()
-		subscribers := p.subscribers
-		p.subscribers = make(map[string]*subscriber)
-		p.mu.Unlock()
-		for _, s := range subscribers {
-			s.close()
-		}
-		_ = p.pc.Close()
-	})
+	first := false
+	p.closeOnce.Do(func() { close(p.closed); first = true })
+	if !first {
+		return
+	}
+	p.mu.Lock()
+	subscribers := p.subscribers
+	p.subscribers = make(map[string]*subscriber)
+	p.ready = false
+	p.mu.Unlock()
+	for _, s := range subscribers {
+		s.close()
+	}
+	_ = p.pc.Close()
 }
 
 func newStreamID(existing map[domain.StreamID]*publisher) (domain.StreamID, error) {
@@ -69,4 +134,23 @@ func newStreamID(existing map[domain.StreamID]*publisher) (domain.StreamID, erro
 		}
 	}
 	return 0, errors.New("cannot allocate screen stream ID")
+}
+
+func (m *Manager) invalidateFrame(p *publisher) {
+	p.mu.RLock()
+	subscribers := make([]*subscriber, 0, len(p.subscribers))
+	for _, s := range p.subscribers {
+		subscribers = append(subscribers, s)
+	}
+	p.mu.RUnlock()
+	for _, s := range subscribers {
+		if !s.connected.Load() {
+			continue
+		}
+		s.queueMu.Lock()
+		s.discardQueue()
+		s.waitingKeyframe = true
+		s.queueMu.Unlock()
+		requestRecoveryKeyframe(p, s)
+	}
 }

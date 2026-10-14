@@ -7,6 +7,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as json$0 from "../../../../../encoding/json/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as clientapp$0 from "../../clientapp/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -106,6 +109,10 @@ export function RefreshServerStatuses(): $CancellablePromise<void> {
 
 export function SavedDisplayName(): $CancellablePromise<string> {
     return $Call.ByID(2450449032);
+}
+
+export function ScreenCapabilities(): $CancellablePromise<json$0.RawMessage> {
+    return $Call.ByID(558545818);
 }
 
 export function SetCaptureDevice(id: string): $CancellablePromise<void> {
