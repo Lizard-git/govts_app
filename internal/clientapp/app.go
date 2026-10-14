@@ -597,8 +597,10 @@ func (a *App) SetSoundVolume(value float32) error { return a.state.Audio.SetSoun
 
 func (a *App) SetMuteOnAway(value bool) { a.state.Audio.SetMuteOnAway(value) }
 
-func (a *App) PlayNotification(kind voiceclient.NotificationSoundKind) {
-	a.state.PlayNotification(kind)
+// MessageReceived plays the incoming message cue. New messages are detected
+// by the chat store in the UI, so the trigger comes from there.
+func (a *App) MessageReceived() {
+	a.state.PlayNotification(voiceclient.NotificationMessageReceived)
 }
 
 func (a *App) SetAway(ctx context.Context, away bool) error {

@@ -49,7 +49,7 @@ export class ChatStore {
     private dismissedDialogs = new Map<string, string>();
     private timer: number;
     private restoredDrafts: Record<string, string> = {};
-    private onSound: (kind: "messageSent" | "messageReceived") => void = () => undefined;
+    private onMessageReceived: () => void = () => undefined;
 
     constructor(context: string, userId: string) {
         this.context = context; this.userId = userId;
@@ -62,7 +62,7 @@ export class ChatStore {
         } catch { /* A corrupt backup does not block chat startup. */ }
         this.timer = window.setInterval(() => void this.reconcile(), 1000);
     }
-    setSound(handler: (kind: "messageSent" | "messageReceived") => void) { this.onSound = handler; }
+    setMessageReceivedHandler(handler: () => void) { this.onMessageReceived = handler; }
     dispose() { this.disposed = true; this.lifecycle.abort(); window.clearInterval(this.timer); this.listeners.clear(); }
     prepareUpdate() {
         if ([...this.conversations.values()].some((c) => c.pending.length > 0)) throw new Error(errorCode("chat-pending-refresh"));
@@ -176,7 +176,7 @@ export class ChatStore {
             if (!frozen || messages.has(m.id)) messages.set(m.id, m);
             else c.newMessages = true;
         }
-        if (received) this.onSound("messageReceived");
+        if (received) this.onMessageReceived();
         const sorted = [...messages.values()].sort((a, b) => compare(a.id, b.id));
         if (older && sorted.length > 500) { c.messages = sorted.slice(0, 500); c.olderWindow = true; }
         else c.messages = sorted.slice(-500);

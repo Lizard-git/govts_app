@@ -223,7 +223,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         if (chatStoreRef.current?.context === view.chatContext) return;
         chatStoreRef.current?.dispose();
         const store = new ChatStore(view.chatContext, view.userId);
-        store.setSound((kind) => { void desktopAPI.playSound(kind); });
+        store.setMessageReceivedHandler(() => { void desktopAPI.messageReceived(); });
         chatStoreRef.current = store;
         setChatStore(store); setDirectChats([]); setContentTab("chat");
     }, [view.chatContext, view.userId, view.connectionStatus]);

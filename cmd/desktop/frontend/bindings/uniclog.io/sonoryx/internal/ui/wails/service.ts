@@ -83,16 +83,16 @@ export function MediaServerIdentity(): $CancellablePromise<$models.MediaTrustDTO
     return $Call.ByID(2250923377);
 }
 
+export function MessageReceived(): $CancellablePromise<void> {
+    return $Call.ByID(809214544);
+}
+
 export function OpenScreenWindow(streamID: string, ownerName: string): $CancellablePromise<void> {
     return $Call.ByID(1190706568, streamID, ownerName);
 }
 
 export function ParticipantVolume(sessionID: string): $CancellablePromise<number> {
     return $Call.ByID(1368900975, sessionID);
-}
-
-export function PlaySound(kind: string): $CancellablePromise<void> {
-    return $Call.ByID(3484770113, kind);
 }
 
 export function PreviewSoundPack(): $CancellablePromise<void> {

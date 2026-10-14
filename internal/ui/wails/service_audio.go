@@ -4,8 +4,6 @@ import (
 	"context"
 	"log"
 	"strings"
-
-	voiceclient "uniclog.io/sonoryx/internal/client"
 )
 
 func (s *Service) SetSoundPack(id string) error {
@@ -43,14 +41,7 @@ func (s *Service) Wake(sessionID string) error {
 	return s.client.Wake(ctx, id)
 }
 
-func (s *Service) PlaySound(kind string) {
-	switch kind {
-	case "messageSent":
-		s.client.PlayNotification(voiceclient.NotificationMessageSent)
-	case "messageReceived":
-		s.client.PlayNotification(voiceclient.NotificationMessageReceived)
-	}
-}
+func (s *Service) MessageReceived() { s.client.MessageReceived() }
 
 func (s *Service) PreviewSoundPack() error { return s.client.PreviewSoundPack() }
 
