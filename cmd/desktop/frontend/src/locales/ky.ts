@@ -221,6 +221,7 @@ export const ky = {
         participant: "Катышуучу",
         card: (name: string) => `${name} көрсөтүүсү`,
         cardKind: "Экранды көрсөтүү",
+        selfPreview: "Экраныңыздын алдын ала көрүнүшү",
         showing: "экран көрсөтүүдө",
         nobody: "Азыр эч ким экран көрсөтпөйт.",
         mediaKeyChanged: (fingerprint: string) => `Media сервердин ачкычы өзгөрдү. Жаңы из: ${fingerprint}`,

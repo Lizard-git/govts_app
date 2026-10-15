@@ -359,7 +359,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
             </> : <>
             <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{errorText(actionError, m)}</div>}
-            <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
+            <ChannelsPage view={view} screenMedia={screenMedia.current} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
                           stageBackdrop={appearance.theme === "custom" ? appearance.stageBackdrop : "mountains"}
                           onReconnect={(address) => invoke(async () => {
                               if (sharing.pending) throw new Error(errorCode("screen-picker-switch"));
@@ -380,7 +380,8 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers, stageBackdrop}: {
+function ChannelsPage({view, events, invoke, sharing, screenMedia, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers, stageBackdrop}: {
+    screenMedia: ScreenMediaController;
     refreshingServers: boolean;
     onRefreshServers: () => void;
     onReconnect: (address: string) => Promise<void>;
@@ -518,7 +519,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                         })}
                     </div>
                     <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab" hidden={contentTab !== "chat"}>{chatStore && chatChannelID !== "0" ? <ChatPanel key={chatChannelID} store={chatStore} localName={localChatName} target={{kind: "channel", id: chatChannelID}} title={m.channels.channelChat(channels.find((c) => c.id === chatChannelID)?.name ?? "")} active={contentTab === "chat"} connected={view.connectionStatus === "connected" && view.channelId === chatChannelID}/> : <div className="chat-placeholder">{m.channels.waitingChannel}</div>}</div>
-                    {hasScreens && <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants}/></div>}
+                    {hasScreens && <div id="screens-panel" role="tabpanel" aria-labelledby="screens-tab" hidden={contentTab !== "screens"}><ScreenSharing view={view} channelID={selected.id} participants={participants} screenMedia={screenMedia}/></div>}
                     <div id="events-panel" role="tabpanel" aria-labelledby="events-tab" hidden={contentTab !== "events"}><EventPanel events={events} active={contentTab === "events"}/></div>
                     {directChats.map((chat) => <div key={chat.userId} id={`direct:${chat.userId}-panel`} role="tabpanel" aria-labelledby={`direct:${chat.userId}-tab`} hidden={contentTab !== `direct:${chat.userId}`}>
                         {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={m.channels.direct(participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName)} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
