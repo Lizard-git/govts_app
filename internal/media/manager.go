@@ -163,10 +163,15 @@ type subscriber struct {
 	congestion atomic.Uint64                 // queue overflows and frames that went stale in the queue
 	slow       atomic.Bool                   // excluded from the source ceiling
 
-	// Guarded by queueMu. Set when a keyframe is queued and cleared when the
-	// writer finds the queue empty or the queue is discarded: frames queued in
-	// between wait for that keyframe and get its age budget.
-	keyBacklog bool
+	// Keyframe backlog, guarded by queueMu. keysPending counts keyframes queued
+	// or being written. Frames are numbered by queuedTotal on enqueue and by
+	// takenTotal on dequeue or discard; a frame queued while keysPending > 0
+	// waits for that keyframe's write, so numbers up to backlogUntil get the
+	// keyframe age budget. Frames queued after the write keep the normal one.
+	keysPending  int
+	queuedTotal  uint64
+	takenTotal   uint64
+	backlogUntil uint64
 
 	lastOutBytes   uint64
 	lastOutPackets uint64

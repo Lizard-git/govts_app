@@ -39,23 +39,25 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 		for {
 			s.queueMu.Lock()
 			var frame *videoFrame
+			var backlog bool
 			select {
 			case frame = <-s.packets:
 				s.queuedBytes -= frame.bytes
 				s.queuedPackets -= len(frame.packets)
+				backlog = s.taken()
 			default:
 			}
 			if frame == nil {
-				// Caught up: later frames no longer wait for a keyframe write.
-				s.keyBacklog = false
 				s.queueMu.Unlock()
 				break
 			}
-			backlog := s.keyBacklog
 			now := time.Now()
 			s.queueAge.Store(now.Sub(frame.queueTime()).Milliseconds())
 			s.totalAge.Store(now.Sub(frame.at).Milliseconds())
 			if frame.stale(now, backlog) {
+				if frame.key {
+					s.keyWritten()
+				}
 				s.congestion.Add(1)
 				s.drops.Add(uint64(len(frame.packets)))
 				s.discardQueue()
@@ -123,6 +125,12 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 			}
 			s.writingAt.Store(0)
 			s.writingFrameAt.Store(0)
+			if frame.key {
+				// Frames queued from now on no longer wait for this keyframe.
+				s.queueMu.Lock()
+				s.keyWritten()
+				s.queueMu.Unlock()
+			}
 			if sent {
 				s.hasFrame.Store(true)
 			}

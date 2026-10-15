@@ -47,7 +47,7 @@ func (f *videoFrame) maxAge() time.Duration {
 
 // expiresAt is the moment the frame becomes stale: the earlier of its total
 // and queue budgets. backlog gives a delta frame queued behind a keyframe the
-// keyframe budget (subscriber.keyBacklog): it waited for that keyframe's write,
+// keyframe budget (subscriber.backlogUntil): it waited for that keyframe's write,
 // and dropping it would only request another keyframe of the same size.
 func (f *videoFrame) expiresAt(backlog bool) time.Time {
 	maxAge, queueAge := f.maxAge(), subscriberQueueAge
@@ -160,10 +160,13 @@ func (s *subscriber) discardQueue() {
 		select {
 		case frame := <-s.packets:
 			s.drops.Add(uint64(len(frame.packets)))
+			s.taken()
+			if frame.key {
+				s.keyWritten()
+			}
 		default:
 			s.queuedBytes = 0
 			s.queuedPackets = 0
-			s.keyBacklog = false
 			return
 		}
 	}
@@ -181,7 +184,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	default:
 	}
 	// Invalid input cannot become a recovery frame merely because it is a keyframe.
-	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now(), s.keyBacklog) {
+	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now(), s.keysPending > 0) {
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))
@@ -208,8 +211,12 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	case s.packets <- frame:
 		s.queuedBytes += frame.bytes
 		s.queuedPackets += len(frame.packets)
+		s.queuedTotal++
 		if frame.key {
-			s.keyBacklog = true
+			s.keysPending++
+		}
+		if s.keysPending > 0 {
+			s.backlogUntil = s.queuedTotal
 		}
 		select {
 		case s.wake <- struct{}{}:
@@ -252,8 +259,20 @@ func requestQueueRecovery(p *publisher, s *subscriber) {
 
 // Frame entries the queue may hold; caller holds queueMu.
 func (s *subscriber) queueLimit() int {
-	if s.keyBacklog {
+	if s.keysPending > 0 || s.backlogUntil > s.takenTotal {
 		return backlogQueueSize
 	}
 	return subscriberQueueSize
+}
+
+// Records a frame leaving the queue and reports whether it was queued behind a
+// keyframe write; caller holds queueMu.
+func (s *subscriber) taken() (backlog bool) {
+	s.takenTotal++
+	return s.takenTotal <= s.backlogUntil
+}
+
+// A keyframe left the backlog: its write ended or it was dropped; caller holds queueMu.
+func (s *subscriber) keyWritten() {
+	s.keysPending = max(0, s.keysPending-1)
 }
