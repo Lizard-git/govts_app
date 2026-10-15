@@ -85,6 +85,12 @@ func (p soundPack) ms(base int) int {
 	return v
 }
 
+// gap is a pause a cue already has, widened by half the pack's own gap.
+// Legato cues pass 0 directly and stay legato in every pack.
+func (p soundPack) gap(base int) int {
+	return p.ms(base) + p.gapMS/2
+}
+
 func (p soundPack) notes(kind NotificationSoundKind) []cueNote {
 	switch kind {
 	case NotificationJoined:
@@ -92,22 +98,22 @@ func (p soundPack) notes(kind NotificationSoundKind) []cueNote {
 		return []cueNote{{1, p.ms(40), 1, 0}, {1.26, p.ms(40), 1, 0}, {1.5, p.ms(40), 1, 0}}
 	case NotificationLeft:
 		// Slow fall of a fifth. The second note is held.
-		return []cueNote{{1.5, p.ms(70), 0.95, p.ms(36)}, {1, p.ms(150), 0.85, 0}}
+		return []cueNote{{1.5, p.ms(70), 0.95, p.gap(36)}, {1, p.ms(150), 0.85, 0}}
 	case NotificationChannelChanged:
 		// Two staccato notes a fourth apart, with a gap. Not a triad.
-		return []cueNote{{1, p.ms(28), 0.9, p.ms(36)}, {1.335, p.ms(28), 0.9, 0}}
+		return []cueNote{{1, p.ms(28), 0.9, p.gap(36)}, {1.335, p.ms(28), 0.9, 0}}
 	case NotificationMessageSent:
 		// A tight high double-tick, much shorter than join or leave.
-		return []cueNote{{1.78, p.ms(18), 0.85, p.ms(14)}, {2, p.ms(18), 0.8, 0}}
+		return []cueNote{{1.78, p.ms(18), 0.85, p.gap(14)}, {2, p.ms(18), 0.8, 0}}
 	case NotificationMessageReceived:
 		// Two knocks on one pitch, with a pause between them.
-		return []cueNote{{1.12, p.ms(36), 0.6, p.ms(78)}, {1.12, p.ms(52), 0.7, 0}}
+		return []cueNote{{1.12, p.ms(36), 0.6, p.gap(78)}, {1.12, p.ms(52), 0.7, 0}}
 	case NotificationScreenStarted:
 		// Rising octave.
-		return []cueNote{{1, p.ms(48), 1, p.ms(18)}, {2, p.ms(84), 1, 0}}
+		return []cueNote{{1, p.ms(48), 1, p.gap(18)}, {2, p.ms(84), 1, 0}}
 	case NotificationScreenStopped:
 		// Falling octave.
-		return []cueNote{{2, p.ms(48), 0.9, p.ms(18)}, {1, p.ms(96), 0.8, 0}}
+		return []cueNote{{2, p.ms(48), 0.9, p.gap(18)}, {1, p.ms(96), 0.8, 0}}
 	case NotificationMicMuted:
 		// High, legato, falling. A small switch, no gap.
 		return []cueNote{{1.9, p.ms(26), 0.85, 0}, {1.5, p.ms(34), 0.75, 0}}
@@ -116,19 +122,19 @@ func (p soundPack) notes(kind NotificationSoundKind) []cueNote {
 		return []cueNote{{1.4, p.ms(26), 0.8, 0}, {1.9, p.ms(40), 0.9, 0}}
 	case NotificationSpeakerMuted:
 		// Lower than the microphone, falling fifth, with a gap.
-		return []cueNote{{1, p.ms(48), 0.95, p.ms(26)}, {0.67, p.ms(84), 0.85, 0}}
+		return []cueNote{{1, p.ms(48), 0.95, p.gap(26)}, {0.67, p.ms(84), 0.85, 0}}
 	case NotificationSpeakerUnmuted:
 		// Lower than the microphone, rising fifth, with a gap.
-		return []cueNote{{0.67, p.ms(48), 0.85, p.ms(26)}, {1, p.ms(84), 0.95, 0}}
+		return []cueNote{{0.67, p.ms(48), 0.85, p.gap(26)}, {1, p.ms(84), 0.95, 0}}
 	case NotificationAway:
 		// Descending minor shape. The last note is the longest.
-		return []cueNote{{1.5, p.ms(48), 0.9, p.ms(24)}, {1.19, p.ms(48), 0.85, p.ms(24)}, {0.89, p.ms(110), 0.75, 0}}
+		return []cueNote{{1.5, p.ms(48), 0.9, p.gap(24)}, {1.19, p.ms(48), 0.85, p.gap(24)}, {0.89, p.ms(110), 0.75, 0}}
 	case NotificationReturned:
 		// Starts low, jumps, and lands high. The gaps separate it from join.
-		return []cueNote{{0.75, p.ms(36), 0.8, p.ms(16)}, {1.26, p.ms(36), 0.9, p.ms(16)}, {1.68, p.ms(72), 1, 0}}
+		return []cueNote{{0.75, p.ms(36), 0.8, p.gap(16)}, {1.26, p.ms(36), 0.9, p.gap(16)}, {1.68, p.ms(72), 1, 0}}
 	case NotificationWake:
 		// Alternating alarm pulses, louder than the other cues.
-		g := p.ms(70)
+		g := p.gap(70)
 		w := p.ms(80)
 		return []cueNote{{1.6, w, 2.2, g}, {1, w, 2.2, g}, {1.6, w, 2.2, g}, {1, w, 2.2, 0}}
 	default:

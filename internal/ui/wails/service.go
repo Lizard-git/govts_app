@@ -50,6 +50,8 @@ type Service struct {
 	recordedVisit    string
 	serverStatus     *serverstatus.Cache
 	statusChanged    func()
+	// audioSwitchMu orders microphone and speaker clicks with their cues.
+	audioSwitchMu sync.Mutex
 }
 
 func NewService(client *clientapp.App) *Service {
