@@ -224,6 +224,7 @@ export const en = {
         participant: "Participant",
         card: (name: string) => `${name}'s screen`,
         cardKind: "Screen share",
+        selfPreview: "Your screen preview",
         showing: "is sharing a screen",
         nobody: "Nobody is sharing a screen.",
         mediaKeyChanged: (fingerprint: string) => `The media server key changed. New fingerprint: ${fingerprint}`,

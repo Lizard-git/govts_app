@@ -225,6 +225,7 @@ export const ru = {
         participant: "Участник",
         card: (name: string) => `Демонстрация ${name}`,
         cardKind: "Демонстрация экрана",
+        selfPreview: "Предпросмотр вашего экрана",
         showing: "показывает экран",
         nobody: "Сейчас никто не демонстрирует экран.",
         mediaKeyChanged: (fingerprint: string) => `Ключ media-сервера изменился. Новый отпечаток: ${fingerprint}`,

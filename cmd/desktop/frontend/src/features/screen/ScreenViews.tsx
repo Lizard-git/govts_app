@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useRef, useState, useSyncExternalStore} from "react";
 import {Window as WailsWindow} from "@wailsio/runtime";
 import type {ClientViewDTO, ParticipantDTO, ScreenStreamDTO} from "../../api";
 import {desktopAPI} from "../../api";
@@ -110,15 +110,31 @@ export function ScreenStageTile({stream, ownerName, local, connected, onError}: 
     </div>;
 }
 
-export function ScreenSharing({view, channelID, participants}: {
+// The sharer's own capture, shown muted from the published track; no extra
+// capture, subscription or encoding.
+function ScreenSelfPreview({stream, label}: {stream: MediaStream; label: string}) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.srcObject = stream;
+        void video.play().catch(() => undefined);
+        return () => { video.srcObject = null; };
+    }, [stream]);
+    return <video ref={videoRef} className="screen-self-preview" aria-label={label} autoPlay muted playsInline/>;
+}
+
+export function ScreenSharing({view, channelID, participants, screenMedia}: {
     view: ClientViewDTO;
     channelID: string;
     participants: ParticipantDTO[];
+    screenMedia: ScreenMediaController;
 }) {
     const {m} = useLocale();
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");
     const streams = (view.screenStreams ?? []).filter((stream) => stream.channelId === channelID);
+    const preview = useSyncExternalStore(screenMedia.onPreviewChanged, screenMedia.localPreview);
     const watch = async (streamID: string, ownerName: string) => {
         setPending(true); setError("");
         try { await desktopAPI.openScreenWindow(streamID, ownerName); }
@@ -133,10 +149,12 @@ export function ScreenSharing({view, channelID, participants}: {
         {streams.length ? <div className="screen-cards">{streams.map((stream) => {
             const owner = participants.find((item) => item.sessionId === stream.ownerSessionId);
             const ownerName = owner?.displayName ?? m.screen.participant;
+            const own = stream.ownerSessionId === view.sessionId;
             return <article className="screen-card" key={stream.id}>
-                <div className="screen-card-preview" aria-label={m.screen.card(ownerName)}><Icon name="screen"/><span>{ownerName}</span><small>{m.screen.cardKind}</small></div>
+                {own && preview ? <div className="screen-card-preview live"><ScreenSelfPreview stream={preview} label={m.screen.selfPreview}/></div>
+                    : <div className="screen-card-preview" aria-label={m.screen.card(ownerName)}><Icon name="screen"/><span>{ownerName}</span><small>{m.screen.cardKind}</small></div>}
                 <div><strong>{ownerName}</strong><small>{m.screen.showing}</small></div>
-                {stream.ownerSessionId === view.sessionId ? <span className="screen-own">{m.screen.you}</span>
+                {own ? <span className="screen-own">{m.screen.you}</span>
                     : <button disabled={pending || channelID !== view.channelId} onClick={() => void watch(stream.id, ownerName)}>{m.screen.watch}</button>}
             </article>;
         })}</div> : <p className="screen-empty">{m.screen.nobody}</p>}

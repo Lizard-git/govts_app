@@ -224,6 +224,8 @@
 .channel-stage .screen-card-preview { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 115px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--card-strong); }
 .screen-card-preview svg { width: 32px; height: 32px; margin-bottom: 3px; color: var(--accent-blue); }
 .screen-card-preview span { max-width: 100%; overflow-wrap: anywhere; color: var(--text); font-size: 0.75rem; }
+.channel-stage .screen-card-preview.live { padding: 0; overflow: hidden; background: #000; }
+.screen-self-preview { display: block; width: 100%; aspect-ratio: 16 / 9; min-height: 115px; object-fit: contain; background: #000; }
 .channel-stage .screen-card > div strong { color: var(--text); font-weight: 500; }
 .screen-card small, .screen-empty, .screen-profile > span { color: var(--muted); }
 .channel-audio-dock { grid-row: 4; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }

@@ -188,7 +188,15 @@ async function ensureTrusted(): Promise<void> {
 }
 
 export class ScreenMediaController {
-    private publisher?: PublisherState;
+    private activePublisher?: PublisherState;
+    private previewListeners = new Set<() => void>();
+    private get publisher(): PublisherState | undefined { return this.activePublisher; }
+    // Every start or end of publishing notifies the local preview.
+    private set publisher(value: PublisherState | undefined) {
+        if (value === this.activePublisher) return;
+        this.activePublisher = value;
+        this.previewListeners.forEach((listener) => listener());
+    }
     private pendingPublisher?: {pc: RTCPeerConnection; capture: MediaStream};
     private viewerGeneration = 0;
     private pendingViewer?: RTCPeerConnection;
@@ -345,6 +353,15 @@ export class ScreenMediaController {
             throw error;
         }
     }
+
+    // The capture being published, for a local preview; null while not live.
+    // It is the sent track itself, so the preview adds no capture or encoding.
+    localPreview = (): MediaStream | null => this.activePublisher?.capture ?? null;
+
+    onPreviewChanged = (listener: () => void): (() => void) => {
+        this.previewListeners.add(listener);
+        return () => { this.previewListeners.delete(listener); };
+    };
 
     async stopPublishing(): Promise<void> {
         ++this.publishGeneration;
