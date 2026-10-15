@@ -1,4 +1,4 @@
-export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server" | "close" | "refresh";
+export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server" | "close" | "refresh" | "away" | "here";
 
 export function Icon({name}: {name: IconName}) {
     const paths: Record<IconName, React.ReactNode> = {
@@ -14,6 +14,8 @@ export function Icon({name}: {name: IconName}) {
         info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
         disconnect: <><path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4"/></>,
         close: <path d="M6 6l12 12M18 6 6 18"/>,
+        away: <><circle cx="9" cy="8" r="3"/><path d="M3 19v-1a4 4 0 0 1 4-4h2.5"/><path d="M15.5 15.5h5.5M15.5 19.5h5.5"/></>,
+        here: <><circle cx="9" cy="8" r="3"/><path d="M3 19v-1a4 4 0 0 1 4-4h2.5"/><path d="m15 17.5 2.2 2.2 4.3-4.7"/></>,
     };
     return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }

@@ -128,6 +128,8 @@ type ClientViewDTO struct {
 	SoundPack        string            `json:"soundPack"`
 	SoundVolume      float32           `json:"soundVolume"`
 	MuteOnAway       bool              `json:"muteOnAway"`
+	DeafenOnAway     bool              `json:"deafenOnAway"`
+	SoundCues        map[string]bool   `json:"soundCues"`
 }
 
 type ClientEventDTO struct {
@@ -205,9 +207,11 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 			VADSensitivity:     view.VADSensitivity,
 			VADOpen:            view.VADOpen,
 		},
-		SoundPack:   view.SoundPack,
-		SoundVolume: view.SoundVolume,
-		MuteOnAway:  view.MuteOnAway,
+		SoundPack:    view.SoundPack,
+		SoundVolume:  view.SoundVolume,
+		MuteOnAway:   view.MuteOnAway,
+		DeafenOnAway: view.DeafenOnAway,
+		SoundCues:    view.SoundCues,
 	}
 }
 

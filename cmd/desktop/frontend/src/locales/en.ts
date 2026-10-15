@@ -158,6 +158,9 @@ export const en = {
         sharing: "Sharing screen",
         away: "Away",
         wake: "Wake",
+        wakeBlockedTitle: "Wake is unavailable",
+        wakeBlockedBody: "Too many wakes in a row. You can't wake anyone until the timer reaches zero.",
+        wakeBlockedIn: (time: string) => `Available again in ${time}`,
         manage: (name: string) => `User controls for ${name}`,
         volume: "User volume",
         message: "Message",
@@ -236,7 +239,7 @@ export const en = {
         behavior: "Behavior",
         sounds: "Sounds",
         soundPack: "Sound pack",
-        soundPackHint: "Tone and length of cues: join, leave, messages, screen share, and presence.",
+        soundPackHint: "Shared tone of the cues. Each action keeps its own rhythm, so join, leave, a message, the microphone, the speaker, screen share, and presence stay distinct.",
         soundVolume: "Cue volume",
         soundVolumeHint: "Volume of these cues. Voice is unchanged.",
         previewPack: "Preview pack",
@@ -249,6 +252,23 @@ export const en = {
         packSignal: "Signal",
         muteOnAway: "Mute the microphone on Away",
         muteOnAwayHint: "Away mutes the microphone. I'm here unmutes it when that transition was the one that muted it.",
+        awayAction: "Away action",
+        deafenOnAway: "Turn off the speaker on Away",
+        deafenOnAwayHint: "Away turns off the speaker. I'm here turns it back on when that transition was the one that turned it off.",
+        soundCues: "Button cues",
+        soundCuesHint: "Each button has its own cue. A cue that is off stays silent in the window and in the tray.",
+        cues: {
+            "mic-off": "Mute microphone",
+            "mic-on": "Unmute microphone",
+            "speaker-off": "Turn off speaker",
+            "speaker-on": "Turn on speaker",
+            "away": "Away",
+            "returned": "I'm here",
+            "message-sent": "Send message",
+            "screen-start": "Start screen share",
+            "screen-stop": "Stop screen share",
+            "channel": "Change channel",
+        },
         updates: "Updates",
         devicesFailed: "Could not get audio devices",
         retry: "Retry",
@@ -420,5 +440,20 @@ export const en = {
         "screen-codec-selection-unavailable": "Codec selection is unavailable in this client. Choose VP8 or auto.",
         "screen-codec-unavailable": "The selected codec is unavailable in this client or on the server. Choose VP8 or auto.",
         "screen-codec-rejected": "The server rejected the video codec. Choose VP8 or auto.",
+        attentionLocked: (seconds: number) => `Wake is temporarily blocked because it was used too many times in a row. You can't wake anyone until the pause ends. ${seconds > 0 ? `Try again in ${enWait(seconds)}.` : "Wait a moment and try again."}`,
     },
 } satisfies Messages;
+
+function enCount(n: number, one: string, many: string): string {
+    return `${n} ${n === 1 ? one : many}`;
+}
+
+function enWait(seconds: number): string {
+    const safe = Math.max(1, Math.round(seconds));
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
+    if (minutes === 0) return enCount(rest, "second", "seconds");
+    const minuteText = enCount(minutes, "minute", "minutes");
+    if (rest === 0) return minuteText;
+    return `${minuteText} ${enCount(rest, "second", "seconds")}`;
+}

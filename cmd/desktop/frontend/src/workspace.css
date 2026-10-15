@@ -31,6 +31,18 @@
 .status-bar .disconnect-button { color: var(--danger); }
 .status-bar .disconnect-button:hover { border-color: var(--danger); }
 .error-banner { position: absolute; top: 50px; left: 12px; right: 12px; z-index: 10; margin: 0; background: var(--card); }
+.wake-notice { position: absolute; z-index: 30; top: 58px; left: 50%; transform: translateX(-50%); display: flex; align-items: flex-start; gap: 12px; width: min(360px, calc(100% - 28px)); padding: 12px 14px 12px 12px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line)); border-radius: 14px; background: var(--card); box-shadow: 0 16px 40px color-mix(in srgb, var(--shadow) 40%, transparent); color: var(--text); }
+.wake-notice-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px; color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, var(--card)); }
+.wake-notice-icon svg { width: 18px; height: 18px; }
+.wake-notice > div { min-width: 0; }
+.wake-notice strong { font-size: 0.8125rem; font-weight: 700; }
+.wake-notice p { margin: 0; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
+.wake-notice .wake-notice-time { margin-top: 4px; color: var(--text); font-size: 0.875rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wake-notice-live { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.sound-cues h4 { margin: 22px 0 6px; font-size: 0.9375rem; }
+.sound-cues .device-hint { margin: 0 0 4px; }
+.sound-cues .setting-toggle { min-height: 0; margin-top: 0; padding: 11px 0; }
+.sound-cues .setting-toggle p:empty { display: none; }
 .channels-page { grid-template-rows: minmax(0, 1fr); }
 .channels-layout { grid-template-columns: var(--channel-browser-width, 210px) 6px minmax(0, 1fr) 6px var(--channel-info-width, 245px); gap: 0; }
 .channels-layout.info-hidden { grid-template-columns: var(--channel-browser-width, 210px) 6px minmax(0, 1fr); }
@@ -214,16 +226,15 @@
 .screen-card-preview span { max-width: 100%; overflow-wrap: anywhere; color: var(--text); font-size: 0.75rem; }
 .channel-stage .screen-card > div strong { color: var(--text); font-weight: 500; }
 .screen-card small, .screen-empty, .screen-profile > span { color: var(--muted); }
-.channel-audio-dock { grid-row: 4; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.channel-audio-dock { grid-row: 4; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
 .channel-stage > .empty-state { grid-row: 1 / 4; align-self: center; }
-.audio-control-island { display: flex; gap: 6px; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.audio-control-island .voice-control { display: flex; align-items: center; justify-content: center; gap: 6px; width: 7.5rem; flex: 0 0 7.5rem; height: 2.25rem; padding: 0 5px; border: 1px solid var(--line); border-radius: 99px; color: var(--text); background: var(--card-strong); font-size: 0.625rem; }
+.audio-control-island { display: flex; flex: 1 1 auto; justify-content: center; gap: 6px; width: 100%; min-width: 0; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.audio-control-island .voice-control { display: flex; align-items: center; justify-content: center; gap: 6px; width: auto; flex: 1 1 8.5rem; max-width: 9.5rem; min-width: 0; height: 2.25rem; padding: 0 8px; overflow: hidden; border: 1px solid var(--line); border-radius: 99px; color: var(--text); background: var(--card-strong); font-size: 0.625rem; white-space: nowrap; }
+.audio-control-island .voice-control > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .audio-control-island .voice-control:first-child:not(.active) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .audio-control-island .voice-control.active { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--card)); }
 .audio-control-island .voice-control:hover { background: var(--card); }
-.audio-control-island .away-control { flex-basis: 8.25rem; width: 8.25rem; }
 .audio-control-island .away-control.active { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, var(--card)); }
-.audio-control-island .screen-share-button { white-space: normal; line-height: 1.2; }
 .audio-control-island .screen-share-button.sharing { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .screen-share-dialog { width: min(430px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 24px; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--card); box-shadow: 0 20px 70px color-mix(in srgb, var(--shadow) 40%, transparent); overflow-y: auto; }
 .link-confirm { width: min(400px, calc(100vw - 32px)); margin: auto; padding: 22px 22px 18px; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--card); box-shadow: 0 24px 70px color-mix(in srgb, var(--shadow) 42%, transparent); text-align: center; }
@@ -321,7 +332,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .participant-row { padding-left: 12px !important; }
   .channel-stage .screen-cards { grid-template-columns: 1fr; }
   .channel-tabs button { padding: 0 6px; font-size: 0.625rem; }
-  .audio-control-island { justify-content: flex-start; max-width: 100%; overflow-x: auto; border-radius: 16px; }
+  .audio-control-island { justify-content: center; max-width: 100%; overflow: hidden; }
 }
 .monitor-setting { margin-top: 14px; }
 .monitor-button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--card-strong); cursor: pointer; font-size: 0.8125rem; }
