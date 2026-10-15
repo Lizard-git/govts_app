@@ -37,6 +37,8 @@ type ClientViewState struct {
 	SoundPack          string
 	SoundVolume        float32
 	MuteOnAway         bool
+	DeafenOnAway       bool
+	SoundCues          map[string]bool
 }
 
 type NotificationSound struct {
@@ -59,6 +61,10 @@ const (
 	NotificationWake
 	NotificationAway
 	NotificationReturned
+	NotificationMicMuted
+	NotificationMicUnmuted
+	NotificationSpeakerMuted
+	NotificationSpeakerUnmuted
 )
 
 const minWakeVolume = float32(0.5)
@@ -71,7 +77,21 @@ func (s *State) PlayNotification(kind NotificationSoundKind) {
 	s.queueNotificationSoundLocked(kind)
 }
 
+// PlayPreviewNotification plays a pack demo even when that button cue is off.
+func (s *State) PlayPreviewNotification(kind NotificationSoundKind) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enqueueCueLocked(kind, true)
+}
+
 func (s *State) queueNotificationSoundLocked(sound NotificationSoundKind) {
+	s.enqueueCueLocked(sound, false)
+}
+
+func (s *State) enqueueCueLocked(sound NotificationSoundKind, preview bool) {
+	if !preview && !s.Audio.CueEnabled(sound) {
+		return
+	}
 	deafened, epoch := s.Audio.PlaybackSnapshot()
 	if deafened {
 		return
@@ -196,7 +216,7 @@ func (s *State) SnapshotView() ClientViewState {
 		SnapshotFresh: s.snapshotFresh, Muted: muted, Deafened: deafened, CaptureAvailable: captureAvailable, RNNoiseEnabled: rnnoiseEnabled, RNNoiseSensitivity: rnnoiseSensitivity, MicrophoneGain: microphoneGain,
 		VADEnabled: vadSettings.Enabled, VADMode: string(vadSettings.Mode), VADSensitivity: vadSettings.Sensitivity,
 		VADOpen: vadSettings.Open, Speaking: make(map[uint64]bool),
-		SoundPack: soundPack, SoundVolume: soundVolume, MuteOnAway: s.Audio.MuteOnAway()}
+		SoundPack: soundPack, SoundVolume: soundVolume, MuteOnAway: s.Audio.MuteOnAway(), DeafenOnAway: s.Audio.DeafenOnAway(), SoundCues: s.Audio.SoundCues()}
 	// The view's local channel belongs to the same snapshot as its participants.
 	// A newer Join ACK marks it stale until that revision is synchronized.
 	v.ChannelID = 0

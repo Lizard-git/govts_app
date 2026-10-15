@@ -86,7 +86,7 @@ func (a *App) playPackThroughSession(ctx context.Context, pack string) error {
 	_, volume := a.state.Audio.SoundSnapshot()
 	for _, kind := range voiceclient.PreviewSoundKinds() {
 		samples := voiceclient.RenderNotificationPCM(pack, volume, kind)
-		a.state.PlayNotification(kind)
+		a.state.PlayPreviewNotification(kind)
 		wait := time.Duration(len(samples)) * time.Second / 48000
 		if wait < 20*time.Millisecond {
 			wait = 20 * time.Millisecond

@@ -52,6 +52,8 @@ const emptyView: ClientViewDTO = {
     soundPack: "soft",
     soundVolume: 0.8,
     muteOnAway: true,
+    deafenOnAway: false,
+    soundCues: null,
 };
 
 function App() {
@@ -956,11 +958,22 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                        onChange={setSoundVolume}
                                        onCommit={(value) => invoke(() => desktopAPI.setSoundVolume(value))}/>
                     <SoundPackPreview/>
+                    <div className="sound-cues">
+                        <h4>{m.settings.soundCues}</h4>
+                        <p className="device-hint">{m.settings.soundCuesHint}</p>
+                        {(Object.keys(m.settings.cues) as (keyof typeof m.settings.cues)[]).map((id) => <SettingToggle
+                            key={id} title={m.settings.cues[id]} description=""
+                            checked={view.soundCues?.[id] !== false}
+                            onChange={(value) => invoke(() => desktopAPI.setSoundCue(id, value))}/>)}
+                    </div>
                 </section></>}
-                {section === "behavior" && <section className="settings-card"><h3>{m.settings.behavior}</h3>
+                {section === "behavior" && <section className="settings-card"><h3>{m.settings.awayAction}</h3>
                     <SettingToggle title={m.settings.muteOnAway} description={m.settings.muteOnAwayHint}
                                    checked={view.muteOnAway}
                                    onChange={(value) => invoke(() => desktopAPI.setMuteOnAway(value))}/>
+                    <SettingToggle title={m.settings.deafenOnAway} description={m.settings.deafenOnAwayHint}
+                                   checked={view.deafenOnAway}
+                                   onChange={(value) => invoke(() => desktopAPI.setDeafenOnAway(value))}/>
                 </section>}
                 {section === "updates" && <UpdatesPanel updates={updates}/>}
             </div>
