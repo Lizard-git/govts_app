@@ -100,7 +100,16 @@ func drainRTCP(p *publisher, s *subscriber, sender *webrtc.RTPSender) {
 }
 
 func handleFeedback(p *publisher, s *subscriber, packet rtcp.Packet) {
-	switch packet.(type) {
+	switch packet := packet.(type) {
+	case *rtcp.ReceiverReport:
+		for _, report := range packet.Reports {
+			if report.SSRC == s.ssrc {
+				s.rr.Store(&receiverStats{highest: report.LastSequenceNumber, lost: report.TotalLost})
+			}
+		}
+	case *rtcp.ReceiverEstimatedMaximumBitrate:
+		s.remb.Store(int64(packet.Bitrate))
+		s.rembAt.Store(time.Now().UnixNano())
 	case *rtcp.FullIntraRequest:
 		s.firs.Add(1)
 		requestRecoveryKeyframe(p, s)

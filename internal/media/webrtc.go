@@ -28,10 +28,18 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 	registry := &interceptor.Registry{}
 	meters := &transportMeters{}
 	registry.Add(meters)
-	if err := webrtc.RegisterDefaultInterceptorsWithOptions(mediaEngine, registry, webrtc.WithNackResponderOptions(nack.ResponderSize(nackResponderCache))); err != nil {
+	if err := webrtc.RegisterDefaultInterceptorsWithOptions(mediaEngine, registry,
+		webrtc.WithNackResponderOptions(nack.ResponderSize(nackResponderCache)),
+		webrtc.WithNackGeneratorOptions(nack.GeneratorSize(maxFramePackets), nack.GeneratorInterval(nackInterval), nack.GeneratorMaxNacksPerPacket(nackMaxPerPacket)),
+	); err != nil {
+		return nil, err
+	}
+	network, err := newBufferedMediaNet()
+	if err != nil {
 		return nil, err
 	}
 	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetNet(network)
 	if config.MinUDPPort != 0 || config.MaxUDPPort != 0 {
 		if config.MinUDPPort == 0 || config.MaxUDPPort < config.MinUDPPort {
 			return nil, errors.New("invalid media UDP port range")
@@ -43,7 +51,7 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 	if config.AdvertisedIP != "" {
 		settingEngine.SetNAT1To1IPs([]string{config.AdvertisedIP}, webrtc.ICECandidateTypeHost)
 	}
-	m := &Manager{hub: hub, meters: meters, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
+	m := &Manager{hub: hub, meters: meters, network: network, adaptive: config.AdaptiveBitrate, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
 	m.startWorker(m.reconcileLoop)
 	return m, nil
 }

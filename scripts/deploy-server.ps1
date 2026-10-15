@@ -31,7 +31,11 @@ param(
     [switch]$VoiceRedundancy = $true,
 
     # Expose the connected session count without authentication.
-    [switch]$PublicStatus  = $true
+    [switch]$PublicStatus  = $true,
+
+    # Estimate viewer rates, cap the screen source with REMB and pace viewer RTP.
+    # Disable with -MediaAdaptive:$false.
+    [switch]$MediaAdaptive = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,7 +89,8 @@ try {
 
 $voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
 $publicStatusValue = if ($PublicStatus) { '1' } else { '0' }
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' PUBLIC_STATUS='$publicStatusValue' '$remoteScript' '$remoteBinary'"
+$mediaAdaptiveValue = if ($MediaAdaptive) { '1' } else { '0' }
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' PUBLIC_STATUS='$publicStatusValue' MEDIA_ADAPTIVE='$mediaAdaptiveValue' '$remoteScript' '$remoteBinary'"
 Write-Host "Remote command ($Target): $remoteCommand"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {

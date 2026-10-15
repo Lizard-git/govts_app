@@ -38,11 +38,11 @@ func TestRTPReorderWrapsAndExpiresAllUnresolvedPackets(t *testing.T) {
 	}
 	buffer.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 3}}, now, deliver, loss)
 	buffer.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 5}}, now, deliver, loss)
-	buffer.expire(now.Add(subscriberQueueAge-time.Nanosecond), deliver, loss)
+	buffer.expire(now.Add(packetRepairAge-time.Nanosecond), deliver, loss)
 	if losses != 0 {
 		t.Fatal("requesting a keyframe before giving NACK repair a chance")
 	}
-	buffer.expire(now.Add(subscriberQueueAge), deliver, loss)
+	buffer.expire(now.Add(packetRepairAge), deliver, loss)
 	if losses != 2 || len(buffer.pending) != 0 || !buffer.deadline().IsZero() || !slices.Equal(delivered[4:], []uint16{3, 5}) {
 		t.Fatalf("expiry retained unresolved packets: %v, losses=%d retained=%d", delivered, losses, len(buffer.pending))
 	}

@@ -26,6 +26,10 @@ func (s *subscriber) close() {
 
 func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 	defer m.removeSubscriber(p, s)
+	var pace pacer
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
 	for {
 		select {
 		case <-s.closed:
@@ -45,9 +49,11 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 				s.queueMu.Unlock()
 				break
 			}
-			age := time.Since(frame.at)
-			s.queueAge.Store(age.Milliseconds())
-			if age > subscriberQueueAge {
+			now := time.Now()
+			s.queueAge.Store(now.Sub(frame.queueTime()).Milliseconds())
+			s.totalAge.Store(now.Sub(frame.at).Milliseconds())
+			if frame.stale(now) {
+				s.congestion.Add(1)
 				s.drops.Add(uint64(len(frame.packets)))
 				s.discardQueue()
 				s.waitingKeyframe = true
@@ -56,10 +62,23 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 				continue
 			}
 			s.queueMu.Unlock()
-			s.writingAt.Store(frame.at.UnixNano())
+			s.writingAt.Store(frame.queueTime().UnixNano())
+			s.writingFrameAt.Store(frame.at.UnixNano())
 			sent := true
 			for index, packet := range frame.packets {
-				if time.Since(frame.at) > subscriberQueueAge {
+				if m.adaptive {
+					if wait := pace.reserve(time.Now(), packet.MarshalSize(), s.paceRate()); wait >= time.Millisecond {
+						timer.Reset(wait)
+						select {
+						case <-s.closed:
+							timer.Stop()
+							return
+						case <-timer.C:
+						}
+					}
+				}
+				if frame.stale(time.Now()) {
+					s.congestion.Add(1)
 					s.queueMu.Lock()
 					s.drops.Add(uint64(len(frame.packets) - index))
 					s.discardQueue()
@@ -95,6 +114,7 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 				s.outPackets.Add(1)
 			}
 			s.writingAt.Store(0)
+			s.writingFrameAt.Store(0)
 			if sent {
 				s.hasFrame.Store(true)
 			}

@@ -18,8 +18,39 @@ import (
 type videoFrame struct {
 	packets []*rtp.Packet
 	at      time.Time
+	readyAt time.Time
 	bytes   int
 	key     bool
+}
+
+// at is the first received packet and readyAt the completed assembly. Queue
+// age starts at readyAt, but readyAt never resets the frame's total age: a
+// frame is stale once either budget is exceeded. Frames constructed without
+// readyAt retain their original age semantics.
+func (f *videoFrame) queueTime() time.Time {
+	if !f.readyAt.IsZero() {
+		return f.readyAt
+	}
+	return f.at
+}
+
+// A keyframe can be many times larger than a delta frame; the publisher's own
+// pacer and the viewer's pacer both spread it over time. Dropping it on the
+// delta budget would only trigger another keyframe of the same size, so a
+// keyframe has keyFrameMaxAge for assembly, queueing and writing.
+func (f *videoFrame) maxAge() time.Duration {
+	if f.key {
+		return keyFrameMaxAge
+	}
+	return frameMaxAge
+}
+
+func (f *videoFrame) stale(now time.Time) bool {
+	queueAge := subscriberQueueAge
+	if f.key {
+		queueAge = keyFrameMaxAge
+	}
+	return now.Sub(f.at) > f.maxAge() || now.Sub(f.queueTime()) > queueAge
 }
 
 func frameStart(codec string, payload []byte) (start, key bool) {
@@ -137,7 +168,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	default:
 	}
 	// Invalid input cannot become a recovery frame merely because it is a keyframe.
-	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || time.Since(frame.at) > subscriberQueueAge {
+	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now()) {
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))
@@ -147,6 +178,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	// Bound both age and bytes, not just the number of frame entries.
 	bytes := frame.bytes + s.queuedBytes
 	if bytes > maxFrameBytes || s.queuedPackets+len(frame.packets) > maxFramePackets || len(s.packets) == subscriberQueueSize {
+		s.congestion.Add(1)
 		s.discardQueue()
 		s.waitingKeyframe = true
 		requestQueueRecovery(p, s)
@@ -168,6 +200,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 		default:
 		}
 	default:
+		s.congestion.Add(1)
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))
@@ -184,11 +217,16 @@ func isClosed(done <-chan struct{}) bool {
 	}
 }
 
-// A single slow viewer should not continually disturb the shared encoder.
+// A single slow viewer should not continually disturb the shared encoder; a
+// viewer excluded from the adaptive source ceiling waits longer.
 func requestQueueRecovery(p *publisher, s *subscriber) {
 	now := time.Now().UnixNano()
 	previous := s.lastQueueRecovery.Load()
-	if previous != 0 && time.Duration(now-previous) < 5*time.Second {
+	interval := queueRecoveryInterval
+	if s.slow.Load() {
+		interval = slowQueueRecovery
+	}
+	if previous != 0 && time.Duration(now-previous) < interval {
 		return
 	}
 	if s.lastQueueRecovery.CompareAndSwap(previous, now) {

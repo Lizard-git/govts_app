@@ -35,6 +35,7 @@ func main() {
 	mediaMaxPort := flag.Int("media-max-port", 20100, "last UDP port used by WebRTC")
 	mediaAdvertisedIP := flag.String("media-advertised-ip", "", "public IP advertised by WebRTC; empty uses local interfaces")
 	mediaIdentity := flag.String("media-identity", "sonoryx-media", "path prefix for generated media TLS certificate and key")
+	mediaAdaptive := flag.Bool("media-adaptive-bitrate", false, "estimate each viewer's rate, cap the screen source with REMB and pace viewer RTP")
 	voiceIdentity := flag.String("voice-identity", "sonoryx-voice.seed", "path to persistent server signing seed")
 	voiceRedundancy := flag.Bool("voice-redundancy", false, "repeat the previous voice frame in each server → client datagram for clients that support it")
 	publicStatus := flag.Bool("public-status", false, "allow unauthenticated UDP queries of the connected session count")
@@ -60,7 +61,7 @@ func main() {
 	if !explicit["media-identity"] {
 		*mediaIdentity = legacyPath(*mediaIdentity, "govts-media", ".key")
 	}
-	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *voiceRedundancy, *publicStatus)
+	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *mediaAdaptive, *voiceRedundancy, *publicStatus)
 	if err != nil {
 		log.Printf("server stopped with error: %v", err)
 	}
@@ -85,7 +86,7 @@ func legacyPath(current, legacy, suffix string) string {
 	return legacy
 }
 
-func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, voiceRedundancy, publicStatus bool) error {
+func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, mediaAdaptive, voiceRedundancy, publicStatus bool) error {
 	currentVersion, err := appversion.Parse(serverVersion())
 	if err != nil {
 		return fmt.Errorf("invalid embedded server version: %w", err)
@@ -158,7 +159,7 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		if identityErr != nil {
 			return fmt.Errorf("media identity: %w", identityErr)
 		}
-		mediaManager, err = media.NewManagerWithConfig(hub, media.Config{MinUDPPort: uint16(mediaMinPort), MaxUDPPort: uint16(mediaMaxPort), AdvertisedIP: mediaAdvertisedIP})
+		mediaManager, err = media.NewManagerWithConfig(hub, media.Config{MinUDPPort: uint16(mediaMinPort), MaxUDPPort: uint16(mediaMaxPort), AdvertisedIP: mediaAdvertisedIP, AdaptiveBitrate: mediaAdaptive})
 		if err != nil {
 			return fmt.Errorf("create media manager: %w", err)
 		}
@@ -167,7 +168,7 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 			return handlerErr
 		}
 		mediaServer = &http.Server{Addr: fmt.Sprintf(":%d", mediaPort), Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 30 * time.Second}
-		log.Printf("media signaling configured on https://0.0.0.0:%d fingerprint=%s udp=%d-%d advertised_ip=%q", mediaPort, identity.Fingerprint, mediaMinPort, mediaMaxPort, mediaAdvertisedIP)
+		log.Printf("media signaling configured on https://0.0.0.0:%d fingerprint=%s udp=%d-%d advertised_ip=%q adaptive_bitrate=%t", mediaPort, identity.Fingerprint, mediaMinPort, mediaMaxPort, mediaAdvertisedIP, mediaAdaptive)
 		if mediaAdvertisedIP == "" {
 			log.Printf("media warning: advertised IP is empty; public-IP deployments must set -media-advertised-ip")
 		}

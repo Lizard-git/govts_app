@@ -24,11 +24,24 @@ var (
 const (
 	subscriberQueueSize = 8
 	subscriberQueueAge  = 250 * time.Millisecond
+	// A frame is useful only while its total age, from its first received
+	// packet to the last subscriber write, stays within frameMaxAge. It is an
+	// explicit compromise over the original 250 ms so upstream NACK repair
+	// (packetRepairAge) still leaves room for queueing; revisit after baseline.
+	frameMaxAge     = 400 * time.Millisecond
+	keyFrameMaxAge  = time.Second
+	packetRepairAge = 200 * time.Millisecond
+	// One NACK per interval, stopped once repair could no longer arrive in time.
+	nackInterval        = 50 * time.Millisecond
+	nackMaxPerPacket    = uint16(packetRepairAge / nackInterval)
+	mediaReadBuffer     = 4 * 1024 * 1024
 	maxFrameBytes       = 4 * 1024 * 1024
 	maxFramePackets     = 2048
 	nackResponderCache  = 2048
 	recoveryPLIInterval = time.Second
-	startupPLIRequests  = 5
+	// Per viewer, for queue overflow or stale frames.
+	queueRecoveryInterval = 5 * time.Second
+	startupPLIRequests    = 5
 )
 
 type Manager struct {
@@ -41,6 +54,9 @@ type Manager struct {
 	closeOnce    sync.Once
 	workers      sync.WaitGroup
 	meters       *transportMeters
+	network      *bufferedMediaNet
+	process      processSampler // owned by the metrics worker
+	adaptive     bool
 	closing      atomic.Int64
 }
 
@@ -48,26 +64,50 @@ type Config struct {
 	MinUDPPort   uint16
 	MaxUDPPort   uint16
 	AdvertisedIP string
+	// Enables viewer rate estimates, the REMB source ceiling and pacing.
+	AdaptiveBitrate bool
 }
 
 type publisher struct {
-	id            domain.StreamID
-	ownerID       uint64
-	pc            *webrtc.PeerConnection
-	mu            sync.RWMutex
-	codec         webrtc.RTPCodecCapability
-	ssrc          webrtc.SSRC
-	ready         bool
-	starting      bool
-	subscribers   map[string]*subscriber
-	closed        chan struct{}
-	closeOnce     sync.Once
-	createdAt     time.Time
-	recovery      chan struct{}
-	pliSent       atomic.Uint64
-	pliMerged     atomic.Uint64
-	inBytes       atomic.Uint64
-	inPackets     atomic.Uint64
+	id          domain.StreamID
+	ownerID     uint64
+	pc          *webrtc.PeerConnection
+	mu          sync.RWMutex
+	codec       webrtc.RTPCodecCapability
+	ssrc        webrtc.SSRC
+	ready       bool
+	starting    bool
+	subscribers map[string]*subscriber
+	closed      chan struct{}
+	closeOnce   sync.Once
+	createdAt   time.Time
+	recovery    chan struct{}
+	pliSent     atomic.Uint64
+	pliMerged   atomic.Uint64
+	inBytes     atomic.Uint64
+	inPackets   atomic.Uint64
+	// Cumulative event counts (not packets). inputGaps: sequence gaps still
+	// unrepaired after packetRepairAge, or sequence discontinuities.
+	// invalidFrames: frames ended by a marker without a valid start, with a
+	// malformed payload or over frame limits. expiredFrames: frames not
+	// completed within frameMaxAge. partialFrames: frames abandoned because a
+	// new RTP timestamp arrived before their marker.
+	inputGaps     atomic.Uint64
+	invalidFrames atomic.Uint64
+	expiredFrames atomic.Uint64
+	partialFrames atomic.Uint64
+	// Largest first-packet-to-completion time since the last metrics log, ms.
+	assemblyAge atomic.Int64
+	// Cumulative input packets: filled holes (repair or reordering) and
+	// sequence numbers given up after packetRepairAge (rtpReorder).
+	inFilled atomic.Uint64
+	inLost   atomic.Uint64
+	// Completed keyframes forwarded (cumulative) and the largest one since
+	// the last metrics log, RTP bytes.
+	keyFrames        atomic.Uint64
+	keyFrameMaxBytes atomic.Int64
+	// REMB ceiling sent to the source in adaptive mode, bps.
+	ceiling       atomic.Int64
 	metricsAt     time.Time
 	lastInBytes   uint64
 	lastInPackets uint64
@@ -87,7 +127,9 @@ type subscriber struct {
 	waitingKeyframe   bool
 	connected         atomic.Bool
 	queueAge          atomic.Int64
+	totalAge          atomic.Int64
 	writingAt         atomic.Int64
+	writingFrameAt    atomic.Int64
 	lastQueueRecovery atomic.Int64
 	firs              atomic.Uint64
 	closed            chan struct{}
@@ -102,6 +144,20 @@ type subscriber struct {
 	hasFrame          atomic.Bool
 	nextSequence      uint16
 	sequenceStarted   bool
+
+	// Adaptive mode (adaptive.go). ssrc is fixed before workers start;
+	// sample is owned by the reconcile worker; the rest are shared atomics.
+	ssrc       uint32
+	sample     rateSample
+	lossBase   lossBase                      // owned by the reconcile worker
+	rate       atomic.Int64                  // bps estimate, 0 until there is evidence of a limit
+	rtxRate    atomic.Int64                  // bps of NACK resends over the last second
+	rr         atomic.Pointer[receiverStats] // latest RR for the primary SSRC
+	lastLoss   atomic.Int32                  // last interval loss in permille + 1, 0 = none yet
+	remb       atomic.Int64                  // bps from the viewer's own REMB, if it sends one
+	rembAt     atomic.Int64                  // unix nanoseconds of that REMB
+	congestion atomic.Uint64                 // queue overflows and frames that went stale in the queue
+	slow       atomic.Bool                   // excluded from the source ceiling
 
 	lastOutBytes   uint64
 	lastOutPackets uint64
@@ -251,6 +307,9 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		return SubscribeResult{}, ErrStreamNotReady
 	}
 	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, subscriberQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
+	if encodings := sender.GetParameters().Encodings; len(encodings) > 0 {
+		s.ssrc = uint32(encodings[0].SSRC)
+	}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
 	m.startWorker(func() { drainRTCP(p, s, sender) })
@@ -382,10 +441,16 @@ func (m *Manager) reconcile() {
 			subscribers = append(subscribers, s)
 		}
 		p.mu.RUnlock()
+		allowed := subscribers[:0]
 		for _, s := range subscribers {
 			if !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
 				m.removeSubscriber(p, s)
+				continue
 			}
+			allowed = append(allowed, s)
+		}
+		if m.adaptive {
+			m.adaptRates(p, allowed, time.Now())
 		}
 	}
 }
