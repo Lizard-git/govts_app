@@ -39,10 +39,12 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 		for {
 			s.queueMu.Lock()
 			var frame *videoFrame
+			var backlog bool
 			select {
 			case frame = <-s.packets:
 				s.queuedBytes -= frame.bytes
 				s.queuedPackets -= len(frame.packets)
+				backlog = s.taken()
 			default:
 			}
 			if frame == nil {
@@ -52,7 +54,10 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 			now := time.Now()
 			s.queueAge.Store(now.Sub(frame.queueTime()).Milliseconds())
 			s.totalAge.Store(now.Sub(frame.at).Milliseconds())
-			if frame.stale(now) {
+			if frame.stale(now, backlog) {
+				if frame.key {
+					s.keyWritten()
+				}
 				s.congestion.Add(1)
 				s.drops.Add(uint64(len(frame.packets)))
 				s.discardQueue()
@@ -65,9 +70,13 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 			s.writingAt.Store(frame.queueTime().UnixNano())
 			s.writingFrameAt.Store(frame.at.UnixNano())
 			sent := true
+			expires := frame.expiresAt(backlog)
+			remaining := frame.bytes
 			for index, packet := range frame.packets {
+				size := packet.MarshalSize()
 				if m.adaptive {
-					if wait := pace.reserve(time.Now(), packet.MarshalSize(), s.paceRate()); wait >= time.Millisecond {
+					now := time.Now()
+					if wait := pace.reserve(now, size, framePaceRate(s.paceRate(), remaining, now, expires)); wait >= time.Millisecond {
 						timer.Reset(wait)
 						select {
 						case <-s.closed:
@@ -77,7 +86,8 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 						}
 					}
 				}
-				if frame.stale(time.Now()) {
+				remaining -= size
+				if frame.stale(time.Now(), backlog) {
 					s.congestion.Add(1)
 					s.queueMu.Lock()
 					s.drops.Add(uint64(len(frame.packets) - index))
@@ -110,11 +120,17 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 					log.Printf("screen subscriber RTP failed: stream=%d session=%d error=%v", p.id, s.sessionID, err)
 					return
 				}
-				s.outBytes.Add(uint64(packet.MarshalSize()))
+				s.outBytes.Add(uint64(size))
 				s.outPackets.Add(1)
 			}
 			s.writingAt.Store(0)
 			s.writingFrameAt.Store(0)
+			if frame.key {
+				// Frames queued from now on no longer wait for this keyframe.
+				s.queueMu.Lock()
+				s.keyWritten()
+				s.queueMu.Unlock()
+			}
 			if sent {
 				s.hasFrame.Store(true)
 			}
