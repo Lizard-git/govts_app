@@ -27,7 +27,7 @@ func TestQueueRejectsExpiredOrOversizedKeyframes(t *testing.T) {
 			frame := sampleFrame(true)
 			switch kind {
 			case "expired":
-				frame.at = time.Now().Add(-2 * subscriberQueueAge)
+				frame.at = time.Now().Add(-2 * keyFrameMaxAge)
 			case "bytes":
 				frame.bytes = maxFrameBytes + 1
 			case "packets":
