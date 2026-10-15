@@ -45,12 +45,24 @@ func (f *videoFrame) maxAge() time.Duration {
 	return frameMaxAge
 }
 
-func (f *videoFrame) stale(now time.Time) bool {
-	queueAge := subscriberQueueAge
-	if f.key {
-		queueAge = keyFrameMaxAge
+// expiresAt is the moment the frame becomes stale: the earlier of its total
+// and queue budgets. backlog gives a delta frame queued behind a keyframe the
+// keyframe budget (subscriber.keyBacklog): it waited for that keyframe's write,
+// and dropping it would only request another keyframe of the same size.
+func (f *videoFrame) expiresAt(backlog bool) time.Time {
+	maxAge, queueAge := f.maxAge(), subscriberQueueAge
+	if f.key || backlog {
+		maxAge, queueAge = keyFrameMaxAge, keyFrameMaxAge
 	}
-	return now.Sub(f.at) > f.maxAge() || now.Sub(f.queueTime()) > queueAge
+	total, queued := f.at.Add(maxAge), f.queueTime().Add(queueAge)
+	if queued.Before(total) {
+		return queued
+	}
+	return total
+}
+
+func (f *videoFrame) stale(now time.Time, backlog bool) bool {
+	return now.After(f.expiresAt(backlog))
 }
 
 func frameStart(codec string, payload []byte) (start, key bool) {
@@ -151,6 +163,7 @@ func (s *subscriber) discardQueue() {
 		default:
 			s.queuedBytes = 0
 			s.queuedPackets = 0
+			s.keyBacklog = false
 			return
 		}
 	}
@@ -168,7 +181,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	default:
 	}
 	// Invalid input cannot become a recovery frame merely because it is a keyframe.
-	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now()) {
+	if frame.bytes > maxFrameBytes || len(frame.packets) > maxFramePackets || frame.stale(time.Now(), s.keyBacklog) {
 		s.discardQueue()
 		s.waitingKeyframe = true
 		s.drops.Add(uint64(len(frame.packets)))
@@ -177,7 +190,7 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	}
 	// Bound both age and bytes, not just the number of frame entries.
 	bytes := frame.bytes + s.queuedBytes
-	if bytes > maxFrameBytes || s.queuedPackets+len(frame.packets) > maxFramePackets || len(s.packets) == subscriberQueueSize {
+	if bytes > maxFrameBytes || s.queuedPackets+len(frame.packets) > maxFramePackets || len(s.packets) >= s.queueLimit() {
 		s.congestion.Add(1)
 		s.discardQueue()
 		s.waitingKeyframe = true
@@ -195,6 +208,9 @@ func (s *subscriber) enqueue(p *publisher, frame *videoFrame) {
 	case s.packets <- frame:
 		s.queuedBytes += frame.bytes
 		s.queuedPackets += len(frame.packets)
+		if frame.key {
+			s.keyBacklog = true
+		}
 		select {
 		case s.wake <- struct{}{}:
 		default:
@@ -232,4 +248,12 @@ func requestQueueRecovery(p *publisher, s *subscriber) {
 	if s.lastQueueRecovery.CompareAndSwap(previous, now) {
 		requestRecoveryKeyframe(p, s)
 	}
+}
+
+// Frame entries the queue may hold; caller holds queueMu.
+func (s *subscriber) queueLimit() int {
+	if s.keyBacklog {
+		return backlogQueueSize
+	}
+	return subscriberQueueSize
 }

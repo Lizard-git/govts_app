@@ -46,13 +46,16 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 			default:
 			}
 			if frame == nil {
+				// Caught up: later frames no longer wait for a keyframe write.
+				s.keyBacklog = false
 				s.queueMu.Unlock()
 				break
 			}
+			backlog := s.keyBacklog
 			now := time.Now()
 			s.queueAge.Store(now.Sub(frame.queueTime()).Milliseconds())
 			s.totalAge.Store(now.Sub(frame.at).Milliseconds())
-			if frame.stale(now) {
+			if frame.stale(now, backlog) {
 				s.congestion.Add(1)
 				s.drops.Add(uint64(len(frame.packets)))
 				s.discardQueue()
@@ -65,9 +68,13 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 			s.writingAt.Store(frame.queueTime().UnixNano())
 			s.writingFrameAt.Store(frame.at.UnixNano())
 			sent := true
+			expires := frame.expiresAt(backlog)
+			remaining := frame.bytes
 			for index, packet := range frame.packets {
+				size := packet.MarshalSize()
 				if m.adaptive {
-					if wait := pace.reserve(time.Now(), packet.MarshalSize(), s.paceRate()); wait >= time.Millisecond {
+					now := time.Now()
+					if wait := pace.reserve(now, size, framePaceRate(s.paceRate(), remaining, now, expires)); wait >= time.Millisecond {
 						timer.Reset(wait)
 						select {
 						case <-s.closed:
@@ -77,7 +84,8 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 						}
 					}
 				}
-				if frame.stale(time.Now()) {
+				remaining -= size
+				if frame.stale(time.Now(), backlog) {
 					s.congestion.Add(1)
 					s.queueMu.Lock()
 					s.drops.Add(uint64(len(frame.packets) - index))
@@ -110,7 +118,7 @@ func (m *Manager) runSubscriber(p *publisher, s *subscriber) {
 					log.Printf("screen subscriber RTP failed: stream=%d session=%d error=%v", p.id, s.sessionID, err)
 					return
 				}
-				s.outBytes.Add(uint64(packet.MarshalSize()))
+				s.outBytes.Add(uint64(size))
 				s.outPackets.Add(1)
 			}
 			s.writingAt.Store(0)

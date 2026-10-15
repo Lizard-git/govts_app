@@ -23,7 +23,10 @@ var (
 
 const (
 	subscriberQueueSize = 8
-	subscriberQueueAge  = 250 * time.Millisecond
+	// Frames a queue may hold while it drains a keyframe backlog: 60 FPS over
+	// keyFrameMaxAge. Bytes and packets keep their limits.
+	backlogQueueSize   = 64
+	subscriberQueueAge = 250 * time.Millisecond
 	// A frame is useful only while its total age, from its first received
 	// packet to the last subscriber write, stays within frameMaxAge. It is an
 	// explicit compromise over the original 250 ms so upstream NACK repair
@@ -149,6 +152,7 @@ type subscriber struct {
 	// sample is owned by the reconcile worker; the rest are shared atomics.
 	ssrc       uint32
 	sample     rateSample
+	limitAt    time.Time                     // last network signal of a limit; owned by the reconcile worker
 	lossBase   lossBase                      // owned by the reconcile worker
 	rate       atomic.Int64                  // bps estimate, 0 until there is evidence of a limit
 	rtxRate    atomic.Int64                  // bps of NACK resends over the last second
@@ -158,6 +162,11 @@ type subscriber struct {
 	rembAt     atomic.Int64                  // unix nanoseconds of that REMB
 	congestion atomic.Uint64                 // queue overflows and frames that went stale in the queue
 	slow       atomic.Bool                   // excluded from the source ceiling
+
+	// Guarded by queueMu. Set when a keyframe is queued and cleared when the
+	// writer finds the queue empty or the queue is discarded: frames queued in
+	// between wait for that keyframe and get its age budget.
+	keyBacklog bool
 
 	lastOutBytes   uint64
 	lastOutPackets uint64
@@ -306,7 +315,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		_ = pc.Close()
 		return SubscribeResult{}, ErrStreamNotReady
 	}
-	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, subscriberQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
+	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, backlogQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
 	if encodings := sender.GetParameters().Encodings; len(encodings) > 0 {
 		s.ssrc = uint32(encodings[0].SSRC)
 	}

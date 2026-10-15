@@ -25,13 +25,17 @@ export class ScreenStatsLog {
         let media: any;
         let remote: any;
         let pair: any;
+        let fallbackPair: any;
         report.forEach((stat: any) => {
             if (stat.type === direction && stat.kind === "video") {
                 const codec: any = stat.codecId ? report.get(stat.codecId) : undefined;
                 if (!/\/(rtx|red|ulpfec|flexfec-03)$/i.test(codec?.mimeType ?? "")) media = stat;
             }
-            if (stat.type === "candidate-pair" && (stat.nominated || stat.selected)) pair = stat;
+            // The transport names the pair in use; several pairs can be nominated.
+            if (stat.type === "transport" && stat.selectedCandidatePairId) pair = report.get(stat.selectedCandidatePairId);
+            if (stat.type === "candidate-pair" && (stat.selected || (stat.nominated && stat.state === "succeeded"))) fallbackPair ??= stat;
         });
+        pair ??= fallbackPair;
         if (!media) return null;
         if (direction === "outbound-rtp") {
             report.forEach((stat: any) => { if (stat.type === "remote-inbound-rtp" && stat.ssrc === media.ssrc) remote = stat; });

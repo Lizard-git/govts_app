@@ -37,6 +37,12 @@ const (
 	minLossPackets    = 100 // packets a loss measurement must cover
 	maxLossWindow     = 5 * time.Second
 	rembMaxAge        = 5 * time.Second // a viewer REMB older than this is ignored
+	// An estimate with no limit signal (loss of at least healthyLoss or a
+	// fresh REMB) for this long is dropped: the viewer is uncapped and unpaced
+	// again, so a short loss burst on an idle screen does not cap it forever.
+	rateReleaseAfter = 30 * time.Second
+	// Share of the time left before a frame expires that pacing may use.
+	paceDeadlineShare = 0.8
 )
 
 // Owned by the reconcile worker.
@@ -51,22 +57,37 @@ func (m *Manager) adaptRates(p *publisher, subscribers []*subscriber, now time.T
 	ssrc := p.ssrc
 	p.mu.RUnlock()
 	rates := make([]int64, 0, len(subscribers))
+	active := 0
 	for _, s := range subscribers {
-		if rate := m.updateRate(s, now); rate > 0 {
+		rate, ok := m.updateRate(s, now)
+		if !ok {
+			continue
+		}
+		active++
+		if rate > 0 {
 			rates = append(rates, rate)
 		}
 	}
 	ceiling := int64(releasedRate)
+	var threshold int64
 	if len(rates) > 0 {
 		slices.Sort(rates)
-		// The median is at least minViewerRate, so some rate always passes.
-		threshold := max(minViewerRate, int64(float64(rates[len(rates)/2])*slowViewerShare))
-		index, _ := slices.BinarySearch(rates, threshold)
-		ceiling = max(minViewerRate, int64(float64(rates[index])*sourceHeadroom))
-		for _, s := range subscribers {
-			rate := s.rate.Load()
-			s.slow.Store(rate > 0 && rate < threshold)
+		// Active viewers without an estimate have shown no limit; they rank as
+		// releasedRate above every estimate, so a minority of lossy viewers
+		// cannot become the median and cap the healthy majority.
+		median := int64(releasedRate)
+		if middle := active / 2; middle < len(rates) {
+			median = rates[middle]
 		}
+		threshold = max(minViewerRate, int64(float64(median)*slowViewerShare))
+		// When every estimate is below the threshold, nothing caps the source.
+		if index, _ := slices.BinarySearch(rates, threshold); index < len(rates) {
+			ceiling = max(minViewerRate, int64(float64(rates[index])*sourceHeadroom))
+		}
+	}
+	for _, s := range subscribers {
+		rate := s.rate.Load()
+		s.slow.Store(rate > 0 && rate < threshold)
 	}
 	p.ceiling.Store(ceiling)
 	if ssrc != 0 {
@@ -74,17 +95,18 @@ func (m *Manager) adaptRates(p *publisher, subscribers []*subscriber, now time.T
 	}
 }
 
-// Returns the viewer's estimate in bps, or 0 until it has one.
-func (m *Manager) updateRate(s *subscriber, now time.Time) int64 {
+// Returns the viewer's estimate in bps (0 while it has none) and whether the
+// viewer is active: connected and already receiving frames.
+func (m *Manager) updateRate(s *subscriber, now time.Time) (int64, bool) {
 	if !s.connected.Load() || !s.hasFrame.Load() {
-		return 0
+		return 0, false
 	}
 	current := rateSample{at: now, bytes: s.outBytes.Load(), repeatBytes: m.repeatBytes(s)}
 	previous := s.sample
 	s.sample = current
 	elapsed := now.Sub(previous.at).Seconds()
 	if previous.at.IsZero() || elapsed <= 0 {
-		return s.rate.Load()
+		return s.rate.Load(), true
 	}
 	repeated := float64(current.repeatBytes-previous.repeatBytes) * 8 / elapsed
 	delivered := float64(current.bytes-previous.bytes)*8/elapsed + repeated
@@ -101,10 +123,16 @@ func (m *Manager) updateRate(s *subscriber, now time.Time) int64 {
 	// by itself; counting either would feed back into ever slower pacing.
 	// They stay visible as congestion_events.
 	congested := hasLoss && loss > congestedLoss
+	if congested || remb > 0 || hasLoss && loss >= healthyLoss {
+		s.limitAt = now
+	} else if rate > 0 && now.Sub(s.limitAt) > rateReleaseAfter {
+		s.rate.Store(0)
+		return 0, true
+	}
 	switch {
 	case rate == 0 && !congested && remb == 0:
 		// No evidence of a limit yet: neither cap the source nor pace.
-		return 0
+		return 0, true
 	case rate == 0 && congested:
 		rate = delivered * rateBackoff
 	case rate == 0:
@@ -120,7 +148,7 @@ func (m *Manager) updateRate(s *subscriber, now time.Time) int64 {
 	}
 	estimate := max(int64(rate), minViewerRate)
 	s.rate.Store(estimate)
-	return estimate
+	return estimate, true
 }
 
 func (m *Manager) repeatBytes(s *subscriber) uint64 {
@@ -180,6 +208,22 @@ func (s *subscriber) paceRate() int64 {
 		return 0
 	}
 	return max(minViewerRate, int64(float64(rate)*paceFactor)-s.rtxRate.Load())
+}
+
+// Pacing must not make a frame stale by itself: a keyframe larger than the
+// viewer's pace allows within its budget would be dropped, a new keyframe
+// requested and the viewer kept frozen. When the remaining bytes do not fit
+// into paceDeadlineShare of the time left at rate, the rest of the frame is
+// sent at the rate that fits, or at once when no time is left. 0 disables pacing.
+func framePaceRate(rate int64, remaining int, now, expires time.Time) int64 {
+	if rate <= 0 {
+		return 0
+	}
+	left := time.Duration(float64(expires.Sub(now)) * paceDeadlineShare)
+	if left <= 0 {
+		return 0
+	}
+	return max(rate, int64(float64(remaining*8)/left.Seconds()))
 }
 
 // Owned by the subscriber writer. The first paceBurst of data is sent at once;

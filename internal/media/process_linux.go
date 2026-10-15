@@ -3,6 +3,8 @@ package media
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -32,7 +34,8 @@ func readHostSample(network *bufferedMediaNet) hostSample {
 	sample.ok = true
 
 	inodes, inodesOK := socketInodes()
-	tablesOK := false
+	// Both tables must be read: a port missing from an unread table is not closed.
+	tablesOK := true
 	tracked := network.mediaPorts()
 	open := make(map[uint16]bool, len(tracked))
 	for _, path := range []string{"/proc/self/net/udp", "/proc/self/net/udp6"} {
@@ -44,7 +47,7 @@ func readHostSample(network *bufferedMediaNet) hostSample {
 			sample.mediaSockets++
 			sample.socketDrops += drops
 			sample.rxQueueMax = max(sample.rxQueueMax, rxQueue)
-		}) || tablesOK
+		}) && tablesOK
 	}
 	closed := make(map[uint16]uint64)
 	for port, opened := range tracked {
@@ -92,11 +95,12 @@ func socketInodes() (map[string]bool, bool) {
 	return inodes, true
 }
 
+// A missing table (udp6 when IPv6 is disabled) has no sockets and counts as read.
 // Columns: sl local rem st tx_queue:rx_queue tr:tm retrnsmt uid timeout inode ref pointer drops.
 func readUDPTable(path string, visit func(port uint16, inode string, rxQueue int64, drops uint64)) bool {
 	file, err := os.Open(path)
 	if err != nil {
-		return false
+		return errors.Is(err, fs.ErrNotExist)
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
