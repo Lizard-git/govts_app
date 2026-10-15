@@ -87,6 +87,8 @@ type App struct {
 	soundPreviewMu     sync.Mutex
 	soundPreviewCancel context.CancelFunc
 	soundPreviewRun    sync.Mutex
+	// presenceMu orders Away and Back, so Back sees what Away turned off.
+	presenceMu sync.Mutex
 
 	mu                 sync.Mutex
 	closed             bool
@@ -195,6 +197,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 	}
 	a.mu.Unlock()
 	a.state.SetConnectionStatus(voiceclient.ConnectionDisconnected)
+	a.state.Audio.ReleaseAway()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		a.events.append("error", err.Error(), 0)
 	} else {
@@ -254,6 +257,8 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			a.state.SetConnectionStatus(voiceclient.ConnectionConnecting)
 		} else {
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
+			// The new session starts present, so Away no longer holds anything.
+			a.state.Audio.ReleaseAway()
 		}
 		var sessionID uint64
 		attempt++
@@ -597,6 +602,39 @@ func (a *App) SetSoundVolume(value float32) error { return a.state.Audio.SetSoun
 
 func (a *App) SetMuteOnAway(value bool) { a.state.Audio.SetMuteOnAway(value) }
 
+func (a *App) SetDeafenOnAway(value bool) { a.state.Audio.SetDeafenOnAway(value) }
+
+func (a *App) SetSoundCues(cues map[string]bool) { a.state.Audio.SetSoundCues(cues) }
+
+func (a *App) SetSoundCue(id string, enabled bool) error {
+	return a.state.Audio.SetSoundCue(id, enabled)
+}
+
+func (a *App) PlayCue(kind voiceclient.NotificationSoundKind) {
+	a.state.PlayNotification(kind)
+}
+
+// CueLead is how long a connected session needs before deafen can cut playback
+// without swallowing the cue that was just queued. Zero means nothing will play.
+func (a *App) CueLead(kind voiceclient.NotificationSoundKind) time.Duration {
+	if a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
+		return 0
+	}
+	if !a.state.Audio.CueEnabled(kind) {
+		return 0
+	}
+	deafened, _ := a.state.Audio.PlaybackSnapshot()
+	if deafened {
+		return 0
+	}
+	pack, volume := a.state.Audio.SoundSnapshot()
+	if volume <= 0 {
+		return 0
+	}
+	// The playback buffer is 100 ms. Wait it out so deafen does not wipe the cue.
+	return voiceclient.NotificationCueDuration(pack, kind) + 120*time.Millisecond
+}
+
 // MessageReceived plays the incoming message cue. New messages are detected
 // by the chat store in the UI, so the trigger comes from there.
 func (a *App) MessageReceived() {
@@ -604,6 +642,10 @@ func (a *App) MessageReceived() {
 }
 
 func (a *App) SetAway(ctx context.Context, away bool) error {
+	// A Back click during the away cue waits here instead of racing the
+	// deafen that Away is about to make.
+	a.presenceMu.Lock()
+	defer a.presenceMu.Unlock()
 	a.mu.Lock()
 	conn := a.currentConn
 	a.mu.Unlock()
@@ -615,21 +657,45 @@ func (a *App) SetAway(ctx context.Context, away bool) error {
 	}
 	// Play before the presence round trip. The acknowledgement can take a
 	// retry interval, and the click should not wait for it.
-	if away {
-		a.state.PlayNotification(voiceclient.NotificationAway)
-	} else {
+	if !away {
+		// Playback has to be open before the return cue, or deafen swallows it.
+		undeafened, err := a.state.Audio.UndeafenForReturn()
+		if err != nil {
+			return err
+		}
 		a.state.PlayNotification(voiceclient.NotificationReturned)
+		if err := voiceclient.PublishPresence(ctx, conn, a.state, false); err != nil {
+			// The server still shows Away. Keep playback as Away left it.
+			if undeafened {
+				a.state.Audio.DeafenForAway()
+			}
+			return err
+		}
+		return a.state.Audio.UnmuteForReturn()
 	}
-	if err := voiceclient.PublishPresence(ctx, conn, a.state, away); err != nil {
+	started := time.Now()
+	a.state.PlayNotification(voiceclient.NotificationAway)
+	if err := voiceclient.PublishPresence(ctx, conn, a.state, true); err != nil {
 		return err
 	}
-	if away {
-		if a.state.Audio.MuteOnAway() {
-			a.state.Audio.MuteForAway()
-		}
-		return nil
+	if a.state.Audio.MuteOnAway() {
+		a.state.Audio.MuteForAway()
 	}
-	return a.state.Audio.UnmuteForReturn()
+	if a.state.Audio.DeafenOnAway() {
+		// Deafen clears the playback buffer. Wait out the away cue first.
+		if lead := a.CueLead(voiceclient.NotificationAway); lead > 0 {
+			if waited := time.Since(started); waited < lead {
+				timer := time.NewTimer(lead - waited)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+				case <-timer.C:
+				}
+			}
+		}
+		a.state.Audio.DeafenForAway()
+	}
+	return nil
 }
 
 func (a *App) Wake(ctx context.Context, target uint64) error {
@@ -643,6 +709,14 @@ func (a *App) Wake(ctx context.Context, target uint64) error {
 }
 
 func (a *App) SetDeafened(value bool) error { return a.state.Audio.SetDeafened(value) }
+
+// AudioSwitches reads the microphone and speaker switches without building a view.
+func (a *App) AudioSwitches() (muted, deafened bool) {
+	muted, deafened, _ = a.state.Audio.Snapshot()
+	return muted, deafened
+}
+
+func (a *App) SavedDeafened() bool { return a.state.Audio.SavedDeafened() }
 
 func (a *App) ParticipantVolume(id uint64) float32 { return a.state.Audio.ParticipantVolume(id) }
 

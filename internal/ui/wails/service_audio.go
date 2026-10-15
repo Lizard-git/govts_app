@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
+
+	voiceclient "uniclog.io/sonoryx/internal/client"
 )
 
 func (s *Service) SetSoundPack(id string) error {
@@ -22,6 +25,18 @@ func (s *Service) SetSoundVolume(value float32) error {
 
 func (s *Service) SetMuteOnAway(value bool) error {
 	s.client.SetMuteOnAway(value)
+	return s.saveSettings()
+}
+
+func (s *Service) SetDeafenOnAway(value bool) error {
+	s.client.SetDeafenOnAway(value)
+	return s.saveSettings()
+}
+
+func (s *Service) SetSoundCue(id string, enabled bool) error {
+	if err := s.client.SetSoundCue(id, enabled); err != nil {
+		return err
+	}
 	return s.saveSettings()
 }
 
@@ -48,14 +63,40 @@ func (s *Service) PreviewSoundPack() error { return s.client.PreviewSoundPack() 
 func (s *Service) StopSoundPreview() { s.client.StopSoundPreview() }
 
 func (s *Service) SetMuted(value bool) {
+	s.audioSwitchMu.Lock()
+	defer s.audioSwitchMu.Unlock()
+	before, _ := s.client.AudioSwitches()
 	if err := s.client.SetMuted(value); err != nil {
 		log.Printf("set muted failed: value=%t error=%v", value, err)
+		return
 	}
+	if before == value {
+		return
+	}
+	if value {
+		s.client.PlayCue(voiceclient.NotificationMicMuted)
+		return
+	}
+	s.client.PlayCue(voiceclient.NotificationMicUnmuted)
 }
 
 func (s *Service) SetDeafened(value bool) error {
+	// The deafen waits out its cue. A second click must wait too, or it
+	// reads the old state and is lost.
+	s.audioSwitchMu.Lock()
+	defer s.audioSwitchMu.Unlock()
+	_, before := s.client.AudioSwitches()
+	if before != value && value {
+		s.client.PlayCue(voiceclient.NotificationSpeakerMuted)
+		if lead := s.client.CueLead(voiceclient.NotificationSpeakerMuted); lead > 0 {
+			time.Sleep(lead)
+		}
+	}
 	if err := s.client.SetDeafened(value); err != nil {
 		return err
+	}
+	if before != value && !value {
+		s.client.PlayCue(voiceclient.NotificationSpeakerUnmuted)
 	}
 	return s.saveSettings()
 }

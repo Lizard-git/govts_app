@@ -10,6 +10,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/audio/voicegate"
+	"uniclog.io/sonoryx/internal/clientsettings"
 )
 
 // SetMuted and Send share the same lock. On return, an earlier send has
@@ -32,7 +33,13 @@ type AudioControlState struct {
 	soundPack          string
 	soundVolume        float32
 	muteOnAway         bool
+	deafenOnAway       bool
+	soundCues          map[string]bool
+	// soundCueView is every cue with its state. It is built once per change
+	// and shared read-only with snapshots.
+	soundCueView       map[string]bool
 	awayMuted          bool
+	awayDeafened       bool
 	player             audio.DeafenPlayer
 	monitor            func([]int16)
 	onChange           func()
@@ -347,6 +354,7 @@ func (a *AudioControlState) SetDeafened(value bool) error {
 			return err
 		}
 	}
+	a.awayDeafened = false
 	if a.deafened != value {
 		a.playbackEpoch++
 	}
@@ -434,6 +442,75 @@ func (a *AudioControlState) SetMuteOnAway(value bool) {
 	}
 }
 
+func (a *AudioControlState) DeafenOnAway() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.deafenOnAway
+}
+
+func (a *AudioControlState) SetDeafenOnAway(value bool) {
+	a.mu.Lock()
+	changed := a.deafenOnAway != value
+	a.deafenOnAway = value
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+}
+
+// SoundCues returns every button cue with its state. The map is shared
+// between snapshots and must not be modified.
+func (a *AudioControlState) SoundCues() map[string]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.soundCueView == nil {
+		a.soundCueView = clientsettings.SoundCueStates(a.soundCues)
+	}
+	return a.soundCueView
+}
+
+func (a *AudioControlState) SetSoundCues(cues map[string]bool) {
+	normalized := clientsettings.NormalizeSoundCues(cues)
+	a.mu.Lock()
+	a.soundCues = normalized
+	a.soundCueView = nil
+	a.mu.Unlock()
+	if a.onChange != nil {
+		a.onChange()
+	}
+}
+
+func (a *AudioControlState) SetSoundCue(id string, enabled bool) error {
+	if !clientsettings.KnownCue(id) {
+		return errors.New("unknown sound cue")
+	}
+	a.mu.Lock()
+	if a.soundCues == nil {
+		a.soundCues = map[string]bool{}
+	}
+	if enabled {
+		delete(a.soundCues, id)
+	} else {
+		a.soundCues[id] = false
+	}
+	a.soundCueView = nil
+	a.mu.Unlock()
+	if a.onChange != nil {
+		a.onChange()
+	}
+	return nil
+}
+
+func (a *AudioControlState) CueEnabled(kind NotificationSoundKind) bool {
+	id, ok := CueID(kind)
+	if !ok {
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return clientsettings.SoundCueEnabled(a.soundCues, id)
+}
+
 // MuteForAway mutes the microphone and remembers that this transition did it.
 // A microphone that was already off is left to the user.
 func (a *AudioControlState) MuteForAway() {
@@ -452,6 +529,72 @@ func (a *AudioControlState) MuteForAway() {
 	if changed && a.onChange != nil {
 		a.onChange()
 	}
+}
+
+// DeafenForAway turns playback off and remembers that this transition did it.
+// A speaker that was already off is left to the user.
+func (a *AudioControlState) DeafenForAway() {
+	a.mu.Lock()
+	if a.deafened {
+		a.mu.Unlock()
+		return
+	}
+	if a.player != nil {
+		if err := a.player.SetDeafened(true); err != nil {
+			a.mu.Unlock()
+			return
+		}
+	}
+	a.deafened = true
+	a.playbackEpoch++
+	a.awayDeafened = true
+	a.mu.Unlock()
+	if a.onChange != nil {
+		a.onChange()
+	}
+}
+
+// UndeafenForReturn turns playback back on only when Away deafened it.
+// It reports whether playback was turned on, so a failed return can undo it.
+func (a *AudioControlState) UndeafenForReturn() (bool, error) {
+	a.mu.Lock()
+	if !a.awayDeafened {
+		a.mu.Unlock()
+		return false, nil
+	}
+	if a.player != nil {
+		if err := a.player.SetDeafened(false); err != nil {
+			a.mu.Unlock()
+			return false, err
+		}
+	}
+	a.awayDeafened = false
+	changed := false
+	if a.deafened {
+		a.deafened = false
+		a.playbackEpoch++
+		changed = true
+	}
+	a.mu.Unlock()
+	if changed && a.onChange != nil {
+		a.onChange()
+	}
+	return changed, nil
+}
+
+// SavedDeafened is the deafen state worth persisting. A deafen made by Away
+// belongs to that presence and must not outlive the session.
+func (a *AudioControlState) SavedDeafened() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.deafened && !a.awayDeafened
+}
+
+// ReleaseAway undoes what Away turned off. The server forgets presence with
+// the session, so a new or closed session must not keep it either.
+func (a *AudioControlState) ReleaseAway() {
+	_, _ = a.UndeafenForReturn()
+	_ = a.UnmuteForReturn()
 }
 
 // UnmuteForReturn turns the microphone back on only when Away muted it.

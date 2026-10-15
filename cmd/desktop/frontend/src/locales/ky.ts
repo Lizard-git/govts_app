@@ -158,6 +158,9 @@ export const ky = {
         sharing: "Экран көрсөтүүдө",
         away: "Ордунда жок",
         wake: "Ойготуу",
+        wakeBlockedTitle: "«Ойготуу» жеткиликсиз",
+        wakeBlockedBody: "Чакыруулар өтө көп болду. Таймер нөлгө жетмейинче катышуучуну ойготуу мүмкүн эмес.",
+        wakeBlockedIn: (time: string) => `Кайра ${time} кийин болот`,
         manage: (name: string) => `${name} колдонуучусун башкаруу`,
         volume: "Колдонуучунун үнү",
         message: "Билдирүү",
@@ -237,7 +240,7 @@ export const ky = {
         behavior: "Жүрүм-турум",
         sounds: "Үндөр",
         soundPack: "Үн топтому",
-        soundPackHint: "Сигналдардын тембри жана узундугу: кирүү, чыгуу, билдирүүлөр, трансляция жана жоктук.",
+        soundPackHint: "Сигналдардын жалпы тембри. Ар бир аракеттин өз ритми бар: кирүү, чыгуу, билдирүү, микрофон, динамик, трансляция жана жоктук айрымаланат.",
         soundVolume: "Сигналдардын үнү",
         soundVolumeHint: "Бул сигналдардын жалпы үнү. Үн сүйлөшүүгө таасир этпейт.",
         previewPack: "Топтомду угуу",
@@ -250,6 +253,23 @@ export const ky = {
         packSignal: "Сигнал",
         muteOnAway: "«Кеттим» басканда микрофонду өчүрүү",
         muteOnAwayHint: "«Кеттим» микрофонду өчүрөт. «Ордумдамын» аны кайра күйгүзөт, эгер өчүргөн ушул өтүү болсо.",
+        awayAction: "«Кеттим» аракети",
+        deafenOnAway: "«Кеттим» басканда динамикти өчүрүү",
+        deafenOnAwayHint: "«Кеттим» динамикти өчүрөт. «Ордумдамын» аны кайра күйгүзөт, эгер өчүргөн ушул өтүү болсо.",
+        soundCues: "Баскыч сигналдары",
+        soundCuesHint: "Ар бир баскычтын өз сигналы бар. Өчүрүлгөн сигнал терезеде да, трейде да ойнобойт.",
+        cues: {
+            "mic-off": "Микрофонду өчүрүү",
+            "mic-on": "Микрофонду күйгүзүү",
+            "speaker-off": "Динамикти өчүрүү",
+            "speaker-on": "Динамикти күйгүзүү",
+            "away": "Кеттим",
+            "returned": "Ордумдамын",
+            "message-sent": "Билдирүү жөнөтүү",
+            "screen-start": "Көрсөтүүнү баштоо",
+            "screen-stop": "Көрсөтүүнү бүтүрүү",
+            "channel": "Каналды алмаштыруу",
+        },
         updates: "Жаңыртуулар",
         devicesFailed: "Аудио түзмөктөр алынган жок",
         retry: "Кайталоо",
@@ -421,5 +441,15 @@ export const ky = {
         "screen-codec-selection-unavailable": "Бул клиентте кодек тандоо жеткиликсиз. VP8 же авто тандаңыз.",
         "screen-codec-unavailable": "Тандалган кодек клиентте же серверде жеткиликсиз. VP8 же авто тандаңыз.",
         "screen-codec-rejected": "Сервер видео кодекти четке какты. VP8 же авто тандаңыз.",
+        attentionLocked: (seconds: number) => `«Ойготуу» убактылуу бөгөттөлдү: чакыруулар өтө көп болду. Тыныгуу бүтмөйүнчө катышуучуну ойготуу мүмкүн эмес. ${seconds > 0 ? `Кайра ${kyWait(seconds)} кийин болот.` : "Бир аз күтүп, кайра аракет кылыңыз."}`,
     },
 } satisfies Messages;
+
+function kyWait(seconds: number): string {
+    const safe = Math.max(1, Math.round(seconds));
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
+    if (minutes === 0) return `${rest} секунд`;
+    if (rest === 0) return `${minutes} мүнөт`;
+    return `${minutes} мүнөт ${rest} секунд`;
+}

@@ -57,6 +57,8 @@ func (s *Service) enableSettings(path string) error {
 		restoreErrors = append(restoreErrors, err)
 	}
 	s.client.SetMuteOnAway(settings.MuteOnAway)
+	s.client.SetDeafenOnAway(settings.DeafenOnAway)
+	s.client.SetSoundCues(settings.SoundCues)
 	if err := s.client.SetDeafened(settings.Deafened); err != nil {
 		restoreErrors = append(restoreErrors, err)
 	}
@@ -99,7 +101,7 @@ func (s *Service) saveSettings() (saveErr error) {
 		DisplayName:        displayName,
 		CaptureDeviceID:    devices.CaptureID,
 		PlaybackDeviceID:   devices.PlaybackID,
-		Deafened:           view.Deafened,
+		Deafened:           s.client.SavedDeafened(),
 		RNNoiseEnabled:     view.RNNoiseEnabled,
 		RNNoiseSensitivity: view.RNNoiseSensitivity,
 		MicrophoneGain:     view.MicrophoneGain,
@@ -113,6 +115,8 @@ func (s *Service) saveSettings() (saveErr error) {
 		SoundPack:          view.SoundPack,
 		SoundVolume:        view.SoundVolume,
 		MuteOnAway:         view.MuteOnAway,
+		DeafenOnAway:       view.DeafenOnAway,
+		SoundCues:          clientsettings.NormalizeSoundCues(view.SoundCues),
 		RecentServers:      recentServers,
 	})
 }
