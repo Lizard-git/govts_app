@@ -19,7 +19,8 @@ import {ChatStore} from "./features/chat/chatStore";
 import {useWorkspaceResize} from "./components/useWorkspaceResize";
 import {UpdateButton, UpdateDialog, UpdatesPanel, useUpdates, type UpdatesState} from "./features/updates/Updates";
 import {applyAppearance, createCustomAppearance, downloadThemeFile, loadAppearance, maxSavedThemes, normalizeTheme, readThemeFile, saveAppearance, snapshotTheme, themeColor, type Appearance, type SavedTheme, type StageBackdrop} from "./appearance";
-import {errorCode, errorText, rawError, type Messages} from "./locales";
+import {attentionLockSeconds, errorCode, errorText, rawError, type Messages} from "./locales";
+import {freshWakeGate, wakeClock, wakeDecision, wakeFailed, wakeRejected, wakeSent, type WakeGate} from "./features/participants/wakeLimit";
 import {LocaleSwitch, useLocale} from "./locales/Locale";
 import {InterfaceSettings} from "./features/settings/InterfaceSettings";
 import {StageScene} from "./features/settings/StageScene";
@@ -233,7 +234,12 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
     }, [chatStore, view.connectionStatus]);
     useEffect(() => { chatStore?.invalidate(); }, [chatStore, view.chatRevision]);
     const [events, setEvents] = useState<ClientEventDTO[]>([]);
-    const [actionError, setActionError] = useState("");
+    const [actionError, setActionErrorState] = useState("");
+    const [actionErrorTick, setActionErrorTick] = useState(0);
+    const setActionError = useCallback((message: string) => {
+        setActionErrorState(message);
+        if (message) setActionErrorTick((tick) => tick + 1);
+    }, []);
     const [refreshingServers, setRefreshingServers] = useState(false);
     const refreshingServersRef = useRef(false);
     const refreshServers = useCallback(async () => {
@@ -329,7 +335,63 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         }
     }, [refresh]);
 
+    const wakeGate = useRef<WakeGate>(freshWakeGate());
+    const [wakeUntil, setWakeUntil] = useState(0);
+    const [wakeNow, setWakeNow] = useState(() => Date.now());
+    const [wakeLabel, setWakeLabel] = useState("");
+    const wakeSession = view.connectionStatus === "connected" ? view.sessionId : "";
+    useEffect(() => {
+        wakeGate.current = freshWakeGate();
+        setWakeUntil(0);
+        setWakeLabel("");
+    }, [wakeSession]);
+    useEffect(() => {
+        if (!wakeUntil) return;
+        const timer = window.setInterval(() => {
+            const now = Date.now();
+            if (now >= wakeGate.current.until) {
+                wakeGate.current = freshWakeGate();
+                setWakeUntil(0);
+                return;
+            }
+            setWakeNow(now);
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, [wakeUntil]);
+    const showWakeLock = useCallback((until: number) => {
+        const now = Date.now();
+        setWakeNow(now);
+        setWakeUntil(until);
+        setWakeLabel(wakeClock(Math.max(1, (until - now) / 1000)));
+    }, []);
+    const wakeParticipant = useCallback(async (sessionId: string) => {
+        const now = Date.now();
+        const decision = wakeDecision(wakeGate.current, now);
+        if (decision !== "send") {
+            showWakeLock(wakeGate.current.until);
+            return;
+        }
+        try {
+            await desktopAPI.wake(sessionId);
+            wakeSent(wakeGate.current, Date.now());
+            void refresh();
+        } catch (error) {
+            const lockedFor = attentionLockSeconds(error);
+            if (lockedFor != null) {
+                wakeRejected(wakeGate.current, Date.now(), lockedFor);
+                showWakeLock(wakeGate.current.until);
+                return;
+            }
+            wakeFailed(wakeGate.current);
+            setActionError(rawError(error));
+        }
+    }, [refresh, showWakeLock]);
     const lobby = view.connectionStatus === "disconnected";
+    useEffect(() => {
+        if (!actionError || lobby) return;
+        const timer = window.setTimeout(() => setActionErrorState(""), 5000);
+        return () => window.clearTimeout(timer);
+    }, [actionError, actionErrorTick, lobby]);
     const mainRef = useRef<HTMLElement>(null);
     const settingsWasOpen = useRef(false);
     useEffect(() => {
@@ -359,7 +421,8 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
             </> : <>
             <StatusBar view={view} onPageChange={setPage} sharing={sharing} screenMedia={screenMedia.current} updateAction={<UpdateButton updates={updates}/>} invoke={invoke}/>
             {actionError && <div className="error-banner" role="alert">{errorText(actionError, m)}</div>}
-            <ChannelsPage view={view} events={events} invoke={invoke} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
+            {wakeUntil > wakeNow && <WakeNotice until={wakeUntil} now={wakeNow} label={wakeLabel}/>}
+            <ChannelsPage view={view} events={events} invoke={invoke} onWake={wakeParticipant} refreshingServers={refreshingServers} onRefreshServers={refreshServers}
                           stageBackdrop={appearance.theme === "custom" ? appearance.stageBackdrop : "mountains"}
                           onReconnect={(address) => invoke(async () => {
                               if (sharing.pending) throw new Error(errorCode("screen-picker-switch"));
@@ -380,9 +443,24 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
     </div>;
 }
 
-function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers, stageBackdrop}: {
+function WakeNotice({until, now, label}: {until: number; now: number; label: string}) {
+    const {m} = useLocale();
+    const left = wakeClock(Math.max(1, (until - now) / 1000));
+    return <div className="wake-notice">
+        <span className="wake-notice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/></svg></span>
+        <div>
+            <strong>{m.people.wakeBlockedTitle}</strong>
+            <p>{m.people.wakeBlockedBody}</p>
+            <p className="wake-notice-time" aria-hidden="true">{m.people.wakeBlockedIn(left)}</p>
+            <span className="wake-notice-live" role="status">{m.people.wakeBlockedTitle}. {m.people.wakeBlockedBody} {m.people.wakeBlockedIn(label || left)}</span>
+        </div>
+    </div>;
+}
+
+function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, onWake, contentTab, setContentTab, directChats, setDirectChats, chatStore, refreshingServers, onRefreshServers, stageBackdrop}: {
     refreshingServers: boolean;
     onRefreshServers: () => void;
+    onWake: (sessionId: string) => void;
     onReconnect: (address: string) => Promise<void>;
     view: ClientViewDTO;
     events: ClientEventDTO[];
@@ -472,7 +550,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                                                              wakeEnabled={view.connectionStatus === "connected"}
                                                              currentID={view.channelId}
                                                              onError={onError} onMessage={openMessage}
-                                                             onWake={(participant) => { void invoke(() => desktopAPI.wake(participant.sessionId)); }}
+                                                             onWake={(participant) => { onWake(participant.sessionId); }}
                                                              onJoin={(id) => {
                     if (id !== view.channelId && view.connectionStatus === "connected") void invoke(() => desktopAPI.joinChannel(id));
                 }} onMoveParticipant={(sessionID, channelID) => {
@@ -490,7 +568,7 @@ function ChannelsPage({view, events, invoke, sharing, onError, onReconnect, cont
                     {members.length ? members.map((participant) => <div className="stage-participant-group" key={participant.sessionId}><ParticipantRow
                         participant={participant} variant="stage" sharingScreen={screenOwners.has(participant.sessionId)} canKick={view.canKick} canBan={view.canBan} canDrag={false}
                         canWake={view.connectionStatus === "connected" && participant.channelId === view.channelId}
-                        onWake={(person) => { void invoke(() => desktopAPI.wake(person.sessionId)); }}
+                        onWake={(person) => { onWake(person.sessionId); }}
                         depth={0} onError={onError} onMessage={openMessage} onDragStart={(event) => event.preventDefault()} onDragEnd={() => {}}/>
                         {channelStreams.filter((stream) => stream.ownerSessionId === participant.sessionId).map((stream) => <ScreenStageTile key={stream.id} stream={stream} ownerName={participant.displayName} local={participant.local} connected={view.connectionStatus === "connected"} onError={onError}/>)}</div>) : <div className="stage-empty">{m.channels.emptyStage}</div>}
                 </div></div>

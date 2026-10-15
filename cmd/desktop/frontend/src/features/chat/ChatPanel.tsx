@@ -5,9 +5,17 @@ import {useLocale} from "../../locales/Locale";
 import {chatLinkParts, openConfirmedLink} from "./chatLinks";
 import {ChatStore, type ChatTarget} from "./chatStore";
 
+function ignoreMiddleClick(event: {button: number; preventDefault: () => void}) {
+    if (event.button === 1) event.preventDefault();
+}
+
 function ChatMessageText({text}: {text: string}) {
     return chatLinkParts(text).map((part, index) => part.href
-        ? <a key={index} href={part.href} onClick={(event) => { event.preventDefault(); openConfirmedLink(part.href!); }}>{part.text}</a>
+        ? <a key={index} href={part.href}
+            onPointerDown={ignoreMiddleClick}
+            onMouseDown={ignoreMiddleClick}
+            onAuxClick={ignoreMiddleClick}
+            onClick={(event) => { event.preventDefault(); if (event.button !== 0) return; openConfirmedLink(part.href!); }}>{part.text}</a>
         : <span key={index}>{part.text}</span>);
 }
 

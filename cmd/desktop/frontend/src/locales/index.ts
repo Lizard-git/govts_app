@@ -39,10 +39,27 @@ export function rawError(error: unknown): string {
     return raw.replace(/^Error:\s*/, "");
 }
 
+const serverErrorPrefix = "server error: ";
+const attentionLockedPattern = /attention-locked:\s*(\d+)/i;
+const attentionLegacyPattern = /attention is too frequent/i;
+
+export function attentionLockSeconds(error: unknown): number | null {
+    const raw = rawError(error);
+    const locked = attentionLockedPattern.exec(raw);
+    if (locked) return Math.max(1, Math.ceil(Number(locked[1])));
+    if (attentionLegacyPattern.test(raw)) return 0;
+    return null;
+}
+
 export function errorText(error: unknown, messages: Messages): string {
     const raw = rawError(error);
     if (raw.startsWith(mediaKeyPrefix)) return messages.screen.mediaKeyChanged(raw.slice(mediaKeyPrefix.length));
-    return messages.errors[raw as keyof Messages["errors"]] ?? raw;
+    const locked = attentionLockedPattern.exec(raw);
+    if (locked) return messages.errors.attentionLocked(Math.max(1, Math.ceil(Number(locked[1]))));
+    if (attentionLegacyPattern.test(raw)) return messages.errors.attentionLocked(0);
+    const body = raw.startsWith(serverErrorPrefix) ? raw.slice(serverErrorPrefix.length) : raw;
+    const known = messages.errors[body as keyof Messages["errors"]] ?? messages.errors[raw as keyof Messages["errors"]];
+    return typeof known === "string" ? known : raw;
 }
 
 export function mediaKeyError(fingerprint: string): string {

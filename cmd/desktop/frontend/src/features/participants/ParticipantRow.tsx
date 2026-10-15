@@ -155,7 +155,7 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, canWake =
             <span className="stage-voice" aria-label={participant.muted ? m.people.micOff : participant.deafened ? m.people.soundOff : participant.speaking ? m.people.speaking : m.people.silent}>
                 {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
                 {participant.away && <span className="participant-flag away" title={m.people.away} aria-label={m.people.away}><AwayIcon/></span>}
-                {participant.muted ? <MicOffIcon/> : participant.deafened ? <SoundOffIcon/> : participant.speaking ? <span className="voice-bars"><i/><i/><i/><i/><i/></span> : null}
+                {participant.muted ? <span title={m.people.micOff} aria-label={m.people.micOff}><MicOffIcon/></span> : participant.deafened ? <span title={m.people.soundOff} aria-label={m.people.soundOff}><SoundOffIcon/></span> : participant.speaking ? <span className="voice-bars"><i/><i/><i/><i/><i/></span> : null}
             </span>
             </> : <><span className="avatar">{participant.displayName.slice(0, 1).toUpperCase()}</span>
             <span className="participant-label"><span className="participant-name" title={participant.displayName}>{participant.displayName}{participant.local ? m.people.you : ""}</span>
@@ -163,8 +163,8 @@ export function ParticipantRow({participant, canKick, canBan, canDrag, canWake =
             {variant !== "list" && <span className="participant-status">
                 {sharingScreen && <span className="participant-screen" title={m.people.sharing} aria-label={m.people.sharing}><Icon name="screen"/></span>}
                 {participant.away && <span className="participant-flag away" title={m.people.away} aria-label={m.people.away}><AwayIcon/></span>}
-                {participant.muted && <span className="participant-flag" aria-label={m.people.micOff}><MicOffIcon/></span>}
-                {participant.deafened && <span className="participant-flag" aria-label={m.people.soundOff}><SoundOffIcon/></span>}
+                {participant.muted && <span className="participant-flag" title={m.people.micOff} aria-label={m.people.micOff}><MicOffIcon/></span>}
+                {participant.deafened && <span className="participant-flag" title={m.people.soundOff} aria-label={m.people.soundOff}><SoundOffIcon/></span>}
                 <span className="speaking-ring" aria-label={participant.speaking ? m.people.speaking : m.people.silent}/>
             </span>}</>}
         </div>

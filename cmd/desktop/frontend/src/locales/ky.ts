@@ -158,6 +158,9 @@ export const ky = {
         sharing: "Экран көрсөтүүдө",
         away: "Ордунда жок",
         wake: "Ойготуу",
+        wakeBlockedTitle: "«Ойготуу» жеткиликсиз",
+        wakeBlockedBody: "Чакыруулар өтө көп болду. Таймер нөлгө жетмейинче катышуучуну ойготуу мүмкүн эмес.",
+        wakeBlockedIn: (time: string) => `Кайра ${time} кийин болот`,
         manage: (name: string) => `${name} колдонуучусун башкаруу`,
         volume: "Колдонуучунун үнү",
         message: "Билдирүү",
@@ -420,5 +423,15 @@ export const ky = {
         "screen-codec-selection-unavailable": "Бул клиентте кодек тандоо жеткиликсиз. VP8 же авто тандаңыз.",
         "screen-codec-unavailable": "Тандалган кодек клиентте же серверде жеткиликсиз. VP8 же авто тандаңыз.",
         "screen-codec-rejected": "Сервер видео кодекти четке какты. VP8 же авто тандаңыз.",
+        attentionLocked: (seconds: number) => `«Ойготуу» убактылуу бөгөттөлдү: чакыруулар өтө көп болду. Тыныгуу бүтмөйүнчө катышуучуну ойготуу мүмкүн эмес. ${seconds > 0 ? `Кайра ${kyWait(seconds)} кийин болот.` : "Бир аз күтүп, кайра аракет кылыңыз."}`,
     },
 } satisfies Messages;
+
+function kyWait(seconds: number): string {
+    const safe = Math.max(1, Math.round(seconds));
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
+    if (minutes === 0) return `${rest} секунд`;
+    if (rest === 0) return `${minutes} мүнөт`;
+    return `${minutes} мүнөт ${rest} секунд`;
+}

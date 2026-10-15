@@ -112,7 +112,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <tr><td>Состояние</td><td>StateSnapshotRequest / Ack, StateEvent</td><td>Постраничный snapshot + live-события с ревизией.</td></tr>
 <tr><td>Аудио-состояние</td><td>AudioState / Ack</td><td>mute/deafen, рассылается остальным через события.</td></tr>
 <tr><td>Присутствие</td><td>Presence / Ack</td><td>C→S: 1 байт, 0 или 1 — «отошёл» / «на месте». Сервер пишет флаг в сессию и шлёт <code>ParticipantPresence</code>. Звук не едет по сети.</td></tr>
-<tr><td>Внимание</td><td>Attention / Ack</td><td>C→S: 8 байт SessionID цели в том же канале. S→цель: Attention с RequestID 0 и пустым payload. Повтор того же RequestID не шлёт сигнал второй раз. Новый запрос чаще чем раз в 2 с — отказ. Кулдаун ставится после успешной отправки цели.</td></tr>
+<tr><td>Внимание</td><td>Attention / Ack</td><td>C→S: 8 байт SessionID цели в том же канале. S→цель: Attention с RequestID 0 и пустым payload. Повтор того же RequestID не шлёт сигнал второй раз. В серии проходят 2 вызова: слот резервирует <code>AcceptAttention</code> до отправки кадра, <code>ReleaseAttention</code> возвращает его, если кадр не ушёл. Следующий запрос и каждый запрос, пока срок блокировки впереди, сигнал не шлют и блокировку не снимают: ступень 10 с, 30 с, 1 мин, 2 мин, 5 мин, 10 мин начинается заново и поднимается. Ступень и счётчик обнуляются, только когда этот срок достигнут. Серия из 2 вызовов без открытой блокировки гаснет через 10 с; один вызов — через 2 мин тишины. Отказ: <code>attention-locked:&lt;секунды&gt;</code>. Клиент ту же лестницу держит у себя и во время паузы пакет не отправляет.</td></tr>
 <tr><td>Модерация</td><td>Kick, Ban, Drag, ModerationAck, AccountPrivileges</td><td>Проверка прав <code>kick/ban/drag</code>; Privileges — пуш при изменении прав из консоли.</td></tr>
 <tr><td>Экран</td><td>MediaCredentialRequest / Ack</td><td>32-байтный bearer-токен для HTTPS-сигнализации.</td></tr>
 <tr><td>Чат</td><td>ChatRequest / ChatAck, ChatChanged</td><td>Отдельная очередь на сервере (§10).</td></tr>
@@ -208,7 +208,7 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 </ul>
 <div class="note">Узкое место: <code>policyGate</code> берётся и для голосовых пакетов, а <code>AuthFinish</code> делает SQLite-запрос под ним. См. <code>project-review.md</code> §1.1.</div>
 <h3>Hub</h3>
-<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, away, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии. <code>AcceptAttention</code> не списывает кулдаун само: <code>MarkAttention</code> вызывается после того, как кадр Attention ушёл цели.</p>
+<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, away, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии. <code>AcceptAttention</code> пропускает 2 вызова серии и резервирует слот в том же захвате мьютекса. <code>ReleaseAttention</code> возвращает слот, если кадр цели не отправлен. Отказ пишет блокировку 10 с–10 мин и не снимает её следующим запросом. Обнуление ступени — только по истечении срока.</p>
 <h3>RequestCache</h3>
 <p><code>internal/voice/cache.go</code>. Ключ — (SessionID, RequestID). Повтор control-запроса получает сохранённый ответ, мутация не выполняется дважды. Клиент повторяет запрос до ответа или таймаута (<code>internal/client/request.go</code>).</p>
 
@@ -436,7 +436,7 @@ WebRTC DTLS-SRTP, VP8 / H.264 / VP9 / AV1, только видео, UDP 20000–
 <tr><td>PLC подряд</td><td>≤ 3 кадра (60 мс)</td><td>client/jitter.go</td></tr>
 <tr><td>Очередь микшера</td><td>5 кадров на отправителя</td><td>client/mixer.go</td></tr>
 <tr><td>Очередь сигналов</td><td>8 событий, эффекты ≤ 90 кадров</td><td>client/state.go, client/mixer.go</td></tr>
-<tr><td>Attention</td><td>не чаще 2 с на отправителя</td><td>voice/hub.go</td></tr>
+<tr><td>Attention</td><td>2 вызова, затем отказ 10 с, 30 с, 1 мин, 2 мин, 5 мин, 10 мин. Повтор во время срока удлиняет ступень и не шлёт сигнал. Сброс — по истечении срока. 2 вызова без блокировки гаснут через 10 с, один вызов — через 2 мин</td><td>voice/hub.go</td></tr>
 <tr><td>Heartbeat / ACK</td><td>5 с / 3 с</td><td>client</td></tr>
 <tr><td>Session timeout</td><td>30 с</td><td>server</td></tr>
 <tr><td>Reconnect backoff</td><td>1, 2, 4, 4… с</td><td>clientapp</td></tr>

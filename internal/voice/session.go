@@ -9,17 +9,24 @@ import (
 )
 
 type Session struct {
-	ID              uint64
-	UserID          int64
-	JoinLevel       uint16
-	Permissions     uint8
-	Owner           bool
-	Name            string
-	ChannelID       domain.ChannelID
-	Muted           bool
-	Deafened        bool
-	Away            bool
-	lastAttention   time.Time
+	ID          uint64
+	UserID      int64
+	JoinLevel   uint16
+	Permissions uint8
+	Owner       bool
+	Name        string
+	ChannelID   domain.ChannelID
+	Muted       bool
+	Deafened    bool
+	Away        bool
+	// attentionUsed counts reserved wakes in the current burst.
+	// attentionStep is the next lock rung. attentionUntil is when the
+	// current lock ends; the zero time means there is no lock.
+	// attentionAt is the last reserved wake or the last lock update.
+	attentionUsed   int
+	attentionStep   int
+	attentionUntil  time.Time
+	attentionAt     time.Time
 	Addr            *net.UDPAddr
 	LastSeen        time.Time
 	MediaCredential [32]byte

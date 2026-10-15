@@ -334,9 +334,9 @@ func HandleAttentionPacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestC
 		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
 	}
 	if err := SendToSession(conn, target, protocol.VoicePacket{Type: protocol.PacketAttention, SessionID: target.ID}); err != nil {
+		hub.ReleaseAttention(packet.SessionID)
 		return err
 	}
-	hub.MarkAttention(packet.SessionID, now)
 	ack := protocol.VoicePacket{Type: protocol.PacketAttentionAck, SessionID: packet.SessionID, RequestID: packet.RequestID}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
 	session, ok := hub.Get(packet.SessionID)

@@ -140,20 +140,20 @@ export function AudioControls({view, invoke, sharing}: {
             <button className={`voice-control ${view.audio.muted || !view.audio.captureAvailable ? "active" : ""}`}
                 aria-pressed={view.audio.muted} disabled={!view.audio.captureAvailable}
                 title={!view.audio.captureAvailable ? m.connection.noMic : view.audio.muted ? m.connection.micOn : m.connection.micOff}
-                onClick={() => void invoke(() => desktopAPI.setMuted(!view.audio.muted))}><Icon name="mic"/>{m.connection.mic}</button>
+                onClick={() => void invoke(() => desktopAPI.setMuted(!view.audio.muted))}><Icon name="mic"/><span>{m.connection.mic}</span></button>
             <button className={`voice-control ${view.audio.deafened ? "active" : ""}`} aria-pressed={view.audio.deafened}
                 title={view.audio.deafened ? m.connection.soundOn : m.connection.soundOff}
-                onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}><Icon name="sound"/>{m.connection.audio}</button>
+                onClick={() => void invoke(() => desktopAPI.setDeafened(!view.audio.deafened))}><Icon name="sound"/><span>{m.connection.audio}</span></button>
             <button className={`voice-control away-control ${away ? "active" : ""}`}
                 aria-pressed={away}
                 disabled={view.connectionStatus !== "connected" || view.channelId === "0"}
                 title={away ? m.connection.hereHint : m.connection.awayHint}
                 onClick={() => void invoke(() => desktopAPI.setAway(!away))}>
-                {away ? m.connection.here : m.connection.away}
+                <Icon name={away ? "here" : "away"}/><span>{away ? m.connection.here : m.connection.away}</span>
             </button>
         <button ref={sharing.buttonRef} className={`voice-control screen-share-button ${sharing.active ? "sharing" : ""}`}
             title={sharing.active ? m.connection.stopShare : m.connection.startShare} aria-pressed={sharing.active}
             aria-haspopup={sharing.active ? undefined : "dialog"} disabled={sharing.pending || !sharing.available}
-            onClick={() => void sharing.toggle()}><Icon name="screen"/>{sharing.active ? m.connection.stopShare : m.connection.sharing}</button>
+            onClick={() => void sharing.toggle()}><Icon name="screen"/><span>{sharing.active ? m.connection.stopShare : m.connection.sharing}</span></button>
     </div>;
 }

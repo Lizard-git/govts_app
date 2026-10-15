@@ -159,6 +159,9 @@ export const ru = {
         sharing: "Демонстрирует экран",
         away: "Не на месте",
         wake: "Разбудить",
+        wakeBlockedTitle: "«Разбудить» недоступно",
+        wakeBlockedBody: "Слишком много вызовов подряд. Пока таймер не дойдёт до нуля, разбудить участника нельзя.",
+        wakeBlockedIn: (time: string) => `Можно снова через ${time}`,
         manage: (name: string) => `Управление пользователем ${name}`,
         volume: "Громкость пользователя",
         message: "Сообщение",
@@ -421,5 +424,25 @@ export const ru = {
         "screen-codec-selection-unavailable": "Выбор кодека недоступен в этом клиенте. Выберите VP8 или авто.",
         "screen-codec-unavailable": "Выбранный кодек недоступен в клиенте или на сервере. Выберите VP8 или авто.",
         "screen-codec-rejected": "Сервер отклонил видеокодек. Выберите VP8 или авто.",
+        attentionLocked: (seconds: number) => `«Разбудить» временно заблокировано: слишком много вызовов подряд. Пока пауза не кончится, разбудить участника нельзя. ${seconds > 0 ? `Повторить можно через ${ruWait(seconds)}.` : "Подождите немного и попробуйте ещё раз."}`,
     },
 };
+
+function ruCount(n: number, one: string, few: string, many: string): string {
+    const mod100 = n % 100;
+    const mod10 = n % 10;
+    if (mod100 > 10 && mod100 < 20) return `${n} ${many}`;
+    if (mod10 > 1 && mod10 < 5) return `${n} ${few}`;
+    if (mod10 === 1) return `${n} ${one}`;
+    return `${n} ${many}`;
+}
+
+function ruWait(seconds: number): string {
+    const safe = Math.max(1, Math.round(seconds));
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
+    if (minutes === 0) return ruCount(rest, "секунду", "секунды", "секунд");
+    const minuteText = ruCount(minutes, "минуту", "минуты", "минут");
+    if (rest === 0) return minuteText;
+    return `${minuteText} ${ruCount(rest, "секунду", "секунды", "секунд")}`;
+}
