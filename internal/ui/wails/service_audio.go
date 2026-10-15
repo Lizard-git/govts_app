@@ -63,7 +63,9 @@ func (s *Service) PreviewSoundPack() error { return s.client.PreviewSoundPack() 
 func (s *Service) StopSoundPreview() { s.client.StopSoundPreview() }
 
 func (s *Service) SetMuted(value bool) {
-	before := s.client.Snapshot().Muted
+	s.audioSwitchMu.Lock()
+	defer s.audioSwitchMu.Unlock()
+	before, _ := s.client.AudioSwitches()
 	if err := s.client.SetMuted(value); err != nil {
 		log.Printf("set muted failed: value=%t error=%v", value, err)
 		return
@@ -79,7 +81,11 @@ func (s *Service) SetMuted(value bool) {
 }
 
 func (s *Service) SetDeafened(value bool) error {
-	before := s.client.Snapshot().Deafened
+	// The deafen waits out its cue. A second click must wait too, or it
+	// reads the old state and is lost.
+	s.audioSwitchMu.Lock()
+	defer s.audioSwitchMu.Unlock()
+	_, before := s.client.AudioSwitches()
 	if before != value && value {
 		s.client.PlayCue(voiceclient.NotificationSpeakerMuted)
 		if lead := s.client.CueLead(voiceclient.NotificationSpeakerMuted); lead > 0 {

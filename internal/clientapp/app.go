@@ -87,6 +87,8 @@ type App struct {
 	soundPreviewMu     sync.Mutex
 	soundPreviewCancel context.CancelFunc
 	soundPreviewRun    sync.Mutex
+	// presenceMu orders Away and Back, so Back sees what Away turned off.
+	presenceMu sync.Mutex
 
 	mu                 sync.Mutex
 	closed             bool
@@ -195,6 +197,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 	}
 	a.mu.Unlock()
 	a.state.SetConnectionStatus(voiceclient.ConnectionDisconnected)
+	a.state.Audio.ReleaseAway()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		a.events.append("error", err.Error(), 0)
 	} else {
@@ -254,6 +257,8 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			a.state.SetConnectionStatus(voiceclient.ConnectionConnecting)
 		} else {
 			a.state.SetConnectionStatus(voiceclient.ConnectionReconnecting)
+			// The new session starts present, so Away no longer holds anything.
+			a.state.Audio.ReleaseAway()
 		}
 		var sessionID uint64
 		attempt++
@@ -637,6 +642,10 @@ func (a *App) MessageReceived() {
 }
 
 func (a *App) SetAway(ctx context.Context, away bool) error {
+	// A Back click during the away cue waits here instead of racing the
+	// deafen that Away is about to make.
+	a.presenceMu.Lock()
+	defer a.presenceMu.Unlock()
 	a.mu.Lock()
 	conn := a.currentConn
 	a.mu.Unlock()
@@ -650,11 +659,16 @@ func (a *App) SetAway(ctx context.Context, away bool) error {
 	// retry interval, and the click should not wait for it.
 	if !away {
 		// Playback has to be open before the return cue, or deafen swallows it.
-		if err := a.state.Audio.UndeafenForReturn(); err != nil {
+		undeafened, err := a.state.Audio.UndeafenForReturn()
+		if err != nil {
 			return err
 		}
 		a.state.PlayNotification(voiceclient.NotificationReturned)
 		if err := voiceclient.PublishPresence(ctx, conn, a.state, false); err != nil {
+			// The server still shows Away. Keep playback as Away left it.
+			if undeafened {
+				a.state.Audio.DeafenForAway()
+			}
 			return err
 		}
 		return a.state.Audio.UnmuteForReturn()
@@ -695,6 +709,14 @@ func (a *App) Wake(ctx context.Context, target uint64) error {
 }
 
 func (a *App) SetDeafened(value bool) error { return a.state.Audio.SetDeafened(value) }
+
+// AudioSwitches reads the microphone and speaker switches without building a view.
+func (a *App) AudioSwitches() (muted, deafened bool) {
+	muted, deafened, _ = a.state.Audio.Snapshot()
+	return muted, deafened
+}
+
+func (a *App) SavedDeafened() bool { return a.state.Audio.SavedDeafened() }
 
 func (a *App) ParticipantVolume(id uint64) float32 { return a.state.Audio.ParticipantVolume(id) }
 

@@ -101,7 +101,7 @@ func (s *Service) saveSettings() (saveErr error) {
 		DisplayName:        displayName,
 		CaptureDeviceID:    devices.CaptureID,
 		PlaybackDeviceID:   devices.PlaybackID,
-		Deafened:           view.Deafened,
+		Deafened:           s.client.SavedDeafened(),
 		RNNoiseEnabled:     view.RNNoiseEnabled,
 		RNNoiseSensitivity: view.RNNoiseSensitivity,
 		MicrophoneGain:     view.MicrophoneGain,
