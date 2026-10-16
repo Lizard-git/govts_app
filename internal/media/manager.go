@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,23 +73,28 @@ type Config struct {
 }
 
 type publisher struct {
-	id          domain.StreamID
-	ownerID     uint64
-	pc          *webrtc.PeerConnection
-	mu          sync.RWMutex
-	codec       webrtc.RTPCodecCapability
-	ssrc        webrtc.SSRC
-	ready       bool
-	starting    bool
-	subscribers map[string]*subscriber
-	closed      chan struct{}
-	closeOnce   sync.Once
-	createdAt   time.Time
-	recovery    chan struct{}
-	pliSent     atomic.Uint64
-	pliMerged   atomic.Uint64
-	inBytes     atomic.Uint64
-	inPackets   atomic.Uint64
+	id       domain.StreamID
+	ownerID  uint64
+	pc       *webrtc.PeerConnection
+	mu       sync.RWMutex
+	codec    webrtc.RTPCodecCapability
+	ssrc     webrtc.SSRC
+	ready    bool
+	starting bool
+	// hasAudio is fixed from the offer before the publisher is visible;
+	// audioStarted (under mu) admits one audio forwarder.
+	hasAudio       bool
+	audioStarted   bool
+	audioInPackets atomic.Uint64
+	subscribers    map[string]*subscriber
+	closed         chan struct{}
+	closeOnce      sync.Once
+	createdAt      time.Time
+	recovery       chan struct{}
+	pliSent        atomic.Uint64
+	pliMerged      atomic.Uint64
+	inBytes        atomic.Uint64
+	inPackets      atomic.Uint64
 	// Cumulative event counts (not packets). inputGaps: sequence gaps still
 	// unrepaired after packetRepairAge, or sequence discontinuities.
 	// invalidFrames: frames ended by a marker without a valid start, with a
@@ -122,6 +128,8 @@ type subscriber struct {
 	pc                *webrtc.PeerConnection
 	track             *webrtc.TrackLocalStaticRTP
 	sender            *webrtc.RTPSender
+	audioTrack        *webrtc.TrackLocalStaticRTP // nil without stream sound; fixed before workers start
+	audioOutPackets   atomic.Uint64
 	packets           chan *videoFrame
 	queueMu           sync.Mutex
 	queuedBytes       int
@@ -209,7 +217,7 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		m.mu.Unlock()
 		return PublishResult{}, err
 	}
-	p := &publisher{id: streamID, ownerID: ownerID, pc: pc, subscribers: make(map[string]*subscriber), closed: make(chan struct{}), createdAt: time.Now(), recovery: make(chan struct{}, 1)}
+	p := &publisher{id: streamID, ownerID: ownerID, pc: pc, hasAudio: offerHasOpus(offer.SDP, true), subscribers: make(map[string]*subscriber), closed: make(chan struct{}), createdAt: time.Now(), recovery: make(chan struct{}, 1)}
 
 	m.publishers[streamID] = p
 	m.ownerStreams[ownerID] = streamID
@@ -224,6 +232,18 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		}
 	})
 	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if remote.Kind() == webrtc.RTPCodecTypeAudio {
+			// Sound is optional: an unexpected audio track is ignored, never fatal.
+			p.mu.Lock()
+			start := p.hasAudio && !p.audioStarted && strings.EqualFold(remote.Codec().MimeType, webrtc.MimeTypeOpus)
+			p.audioStarted = p.audioStarted || start
+			p.mu.Unlock()
+			if start {
+				log.Printf("screen publisher audio track: stream=%d owner=%d ssrc=%d", streamID, ownerID, remote.SSRC())
+				m.startWorker(func() { m.forwardAudio(p, remote) })
+			}
+			return
+		}
 		if !supportedScreenCodec(remote.Codec().RTPCodecCapability) {
 			cleanup()
 			return
@@ -264,6 +284,12 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
 		cleanup()
 		return PublishResult{}, err
+	}
+	if p.hasAudio {
+		if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			cleanup()
+			return PublishResult{}, err
+		}
 	}
 	answer, err := acceptOffer(ctx, pc, offer)
 	if err != nil {
@@ -314,19 +340,34 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 		_ = pc.Close()
 		return SubscribeResult{}, err
 	}
+	// Same stream id as the video, so the viewer synchronizes both tracks.
+	var audioTrack *webrtc.TrackLocalStaticRTP
+	var audioSender *webrtc.RTPSender
+	if p.hasAudio && offerHasOpus(offer.SDP, false) {
+		if audioTrack, err = webrtc.NewTrackLocalStaticRTP(screenAudioCodec().RTPCodecCapability, "screen-audio", fmt.Sprintf("screen-%d", streamID)); err == nil {
+			audioSender, err = pc.AddTrack(audioTrack)
+		}
+		if err != nil {
+			_ = pc.Close()
+			return SubscribeResult{}, err
+		}
+	}
 	p.mu.Lock()
 	if !p.ready || isClosed(p.closed) || p.subscribers[subscriberID] != nil {
 		p.mu.Unlock()
 		_ = pc.Close()
 		return SubscribeResult{}, ErrStreamNotReady
 	}
-	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, packets: make(chan *videoFrame, backlogQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
+	s := &subscriber{id: subscriberID, sessionID: sessionID, pc: pc, track: track, sender: sender, audioTrack: audioTrack, packets: make(chan *videoFrame, backlogQueueSize), waitingKeyframe: true, wake: make(chan struct{}, 1), closed: make(chan struct{}), closingGauge: &m.closing}
 	if encodings := sender.GetParameters().Encodings; len(encodings) > 0 {
 		s.ssrc = uint32(encodings[0].SSRC)
 	}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
 	m.startWorker(func() { drainRTCP(p, s, sender) })
+	if audioSender != nil {
+		m.startWorker(func() { drainAudioRTCP(audioSender) })
+	}
 	m.startWorker(func() { m.runSubscriber(p, s) })
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("screen subscriber state: stream=%d session=%d subscriber=%q state=%s", streamID, sessionID, subscriberID, state)

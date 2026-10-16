@@ -80,6 +80,9 @@ func main() {
 		},
 		Windows: application.WindowsOptions{
 			WebviewUserDataPath: webviewDataPath,
+			// Screen viewer windows open without a click inside them; their
+			// stream sound must start like the voice chat does.
+			AdditionalBrowserArgs: []string{"--autoplay-policy=no-user-gesture-required"},
 		},
 	})
 	clientupdate.RecordRecoveryStartup(applicationVersion())

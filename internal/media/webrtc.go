@@ -25,6 +25,9 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 			return nil, err
 		}
 	}
+	if err := mediaEngine.RegisterCodec(screenAudioCodec(), webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, err
+	}
 	registry := &interceptor.Registry{}
 	meters := &transportMeters{}
 	registry.Add(meters)

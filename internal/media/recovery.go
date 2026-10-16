@@ -120,3 +120,13 @@ func handleFeedback(p *publisher, s *subscriber, packet rtcp.Packet) {
 		s.nacks.Add(1) // NACK is handled by Pion, not converted into PLI.
 	}
 }
+
+// Interceptors process RTCP only while it is read; viewer audio feedback
+// carries nothing the SFU acts on.
+func drainAudioRTCP(sender *webrtc.RTPSender) {
+	for {
+		if _, _, err := sender.ReadRTCP(); err != nil {
+			return
+		}
+	}
+}

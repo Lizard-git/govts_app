@@ -123,3 +123,42 @@ func screenCodecs() []webrtc.RTPCodecParameters {
 		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=104"}, PayloadType: 105},
 	}
 }
+
+// Optional sound of a screen stream. Without NACK feedback Pion binds no NACK
+// responder or generator to it: Opus in-band FEC covers short losses.
+func screenAudioCodec() webrtc.RTPCodecParameters {
+	return webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1"}, PayloadType: 111}
+}
+
+// offerHasOpus reports an active Opus audio section; sending selects the
+// publisher direction (sendonly/sendrecv), otherwise the viewer one.
+func offerHasOpus(offer string, sending bool) bool {
+	var description sdp.SessionDescription
+	if description.Unmarshal([]byte(offer)) != nil {
+		return false
+	}
+	for _, media := range description.MediaDescriptions {
+		if media.MediaName.Media != "audio" || media.MediaName.Port.Value == 0 {
+			continue
+		}
+		direction := "sendrecv"
+		opus := false
+		for _, attribute := range media.Attributes {
+			switch attribute.Key {
+			case "sendrecv", "sendonly", "recvonly", "inactive":
+				direction = attribute.Key
+			case "rtpmap":
+				parts := strings.Fields(attribute.Value)
+				opus = opus || len(parts) == 2 && slices.Contains(media.MediaName.Formats, parts[0]) && strings.HasPrefix(strings.ToLower(parts[1]), "opus/48000")
+			}
+		}
+		wanted := "recvonly"
+		if sending {
+			wanted = "sendonly"
+		}
+		if opus && (direction == "sendrecv" || direction == wanted) {
+			return true
+		}
+	}
+	return false
+}
