@@ -84,6 +84,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
        transport/udp.ServerPacketConn ── SecureDatagramCodec
    └─ voice.ServeUDP (один цикл) ── Hub (сессии, каналы, ревизия) ── persist (SQLite)</pre>
 <p>Граница: <b>VoicePacket</b> — логический пакет; <b>DatagramCodec</b> превращает его в байты провода (шифрует/расшифровывает) с учётом направления и <code>KeyOwnerID</code>.</p>
+<p>Desktop backend и CLI сборки используют Wails <code>v3.0.0-beta.30</code>: версия закреплена в <code>go.mod</code>, <code>package.json</code>, <code>Taskfile.yml</code> и командах dev-режима <code>build/config.yml</code>; контрольные суммы Go-модуля хранятся в <code>go.sum</code>. Задача <code>version:prepare</code> создаёт <code>build/config.generated.yml</code> из этого шаблона перед запуском dev-режима.</p>
 
 </section>
 <section id="packet"><h2><span class="n">02</span>Логический пакет <code>VoicePacket</code></h2>
