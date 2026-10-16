@@ -183,3 +183,46 @@ func (m *Manager) invalidateFrame(p *publisher) {
 		requestRecoveryKeyframe(p, s)
 	}
 }
+
+// forwardAudio relays the stream sound as is. Opus packets are independent,
+// so there is no frame assembly, keyframe recovery or per-viewer queue: a
+// write to a viewer is a non-blocking UDP send, and a lost packet stays lost.
+// Its end never stops the video publisher.
+func (m *Manager) forwardAudio(p *publisher, remote *webrtc.TrackRemote) {
+	var subscribers []*subscriber
+	for {
+		packet, _, err := remote.ReadRTP()
+		if err != nil {
+			if !isClosed(p.closed) {
+				log.Printf("screen publisher audio ended: stream=%d error=%v", p.id, err)
+			}
+			return
+		}
+		if len(packet.Payload) == 0 {
+			continue
+		}
+		p.audioInPackets.Add(1)
+		// Header extension ids were negotiated with the publisher, not with
+		// the viewers; each viewer's interceptors add their own.
+		packet.Header.Extension = false
+		packet.Header.Extensions = nil
+		subscribers = subscribers[:0]
+		p.mu.RLock()
+		for _, s := range p.subscribers {
+			if s.audioTrack != nil {
+				subscribers = append(subscribers, s)
+			}
+		}
+		p.mu.RUnlock()
+		for _, s := range subscribers {
+			if !s.connected.Load() || !m.hub.CanSubscribeScreen(s.sessionID, p.id) {
+				continue
+			}
+			// WriteRTP copies the header before setting SSRC and payload type.
+			if s.audioTrack.WriteRTP(packet) == nil {
+				s.audioOutPackets.Add(1)
+			}
+		}
+		clear(subscribers)
+	}
+}

@@ -72,7 +72,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, c := range screenCodecs() {
 			codecs = append(codecs, codecInfo{c.MimeType, c.SDPFmtpLine, uint8(c.PayloadType)})
 		}
-		writeJSON(w, map[string]any{"codecs": codecs})
+		// "audio" tells clients this server forwards stream sound; older
+		// servers omit it and clients then publish video only.
+		audio := screenAudioCodec()
+		writeJSON(w, map[string]any{"codecs": codecs, "audio": []codecInfo{{audio.MimeType, audio.SDPFmtpLine, uint8(audio.PayloadType)}}})
 	case "/media/publish":
 		h.publish(w, r, sessionID)
 	case "/media/subscribe":
