@@ -8,6 +8,19 @@ import {Icon} from "../../components/Icon";
 import {errorText, rawError} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 
+type SoundPreference = {volume: number; muted: boolean};
+const soundKey = "sonoryx.screenSound";
+function loadSound(): SoundPreference {
+    try {
+        const value = JSON.parse(localStorage.getItem(soundKey) ?? "null");
+        if (typeof value?.volume === "number" && value.volume >= 0 && value.volume <= 1 && typeof value.muted === "boolean") return value;
+    } catch { /* Defaults below. */ }
+    return {volume: 1, muted: false};
+}
+function saveSound(value: SoundPreference) {
+    try { localStorage.setItem(soundKey, JSON.stringify(value)); } catch { /* Kept for this window. */ }
+}
+
 function bitrateText(value: number, m: ReturnType<typeof useLocale>["m"]): string {
     return value >= 1_000_000 ? m.screen.mbps((value / 1_000_000).toFixed(2)) : m.screen.kbps(String(Math.round(value / 1000)));
 }
@@ -21,6 +34,23 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
     const [error, setError] = useState("");
     const [fullscreen, setFullscreen] = useState(false);
     const [stats, setStats] = useState<ScreenStats | null>(null);
+    // The video stays muted so a blocked autoplay of sound never pauses it;
+    // sound plays from its own element.
+    const audioRef = useRef<HTMLAudioElement>(null);
+    const [hasSound, setHasSound] = useState(false);
+    const [soundBlocked, setSoundBlocked] = useState(false);
+    const [sound, setSound] = useState(loadSound);
+    const updateSound = (next: SoundPreference) => { setSound(next); saveSound(next); };
+    const playSound = () => {
+        const audio = audioRef.current;
+        if (!audio?.srcObject) return;
+        void audio.play().then(() => setSoundBlocked(false)).catch(() => setSoundBlocked(true));
+    };
+    useEffect(() => {
+        if (!audioRef.current) return;
+        audioRef.current.volume = sound.volume;
+        audioRef.current.muted = sound.muted;
+    }, [sound, hasSound]);
 
     useEffect(() => {
         let cancelled = false;
@@ -49,6 +79,16 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
                     videoRef.current.srcObject = remote;
                     await videoRef.current.play();
                 }
+                const tracks = remote.getAudioTracks();
+                if (tracks.length && audioRef.current) {
+                    // Saved volume applies before the first sample plays.
+                    const saved = loadSound();
+                    audioRef.current.volume = saved.volume;
+                    audioRef.current.muted = saved.muted;
+                    audioRef.current.srcObject = new MediaStream(tracks);
+                    setHasSound(true);
+                    playSound();
+                }
                 setStatus("live");
             } catch (reason) {
                 if (!cancelled) { setError(rawError(reason)); setStatus("failed"); }
@@ -58,6 +98,7 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
         return () => {
             cancelled = true;
             offState();
+            if (audioRef.current) audioRef.current.srcObject = null;
             media.dispose();
             controller.current = null;
         };
@@ -80,6 +121,11 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
     return <main className="screen-viewer-window">
         <header className="screen-viewer-toolbar">
             <div><strong>{ownerName}</strong><span>{statusText}{resolution ? ` · ${resolution}` : ""}{statsText}{stats?.codec ? ` · ${stats.codec}` : ""}{stats?.implementation ? ` · ${stats.implementation}` : ""}</span></div>
+            {hasSound && (soundBlocked ? <button onClick={playSound}>{m.screen.enableSound}</button> : <>
+                <button aria-pressed={sound.muted} onClick={() => updateSound({...sound, muted: !sound.muted})}>{sound.muted ? m.screen.unmute : m.screen.mute}</button>
+                <input className="screen-viewer-volume" type="range" min={0} max={1} step={0.05} value={sound.volume} aria-label={m.screen.volume}
+                    onChange={(event) => updateSound({volume: Number(event.target.value), muted: false})}/>
+            </>)}
             <button onClick={() => void toggleFullscreen()}>{fullscreen ? m.screen.restore : m.screen.fullscreen}</button>
             <button onClick={() => void close()}>{m.screen.close}</button>
         </header>
@@ -88,6 +134,7 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
             const video = event.currentTarget;
             setResolution(`${video.videoWidth}×${video.videoHeight}`);
         }}/>
+        <audio ref={audioRef} autoPlay/>
     </main>;
 }
 

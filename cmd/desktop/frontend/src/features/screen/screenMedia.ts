@@ -3,14 +3,15 @@ import {errorCode, mediaKeyError} from "../../locales";
 import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
 import {ScreenStatsLog} from "./screenStatsLog";
 import {defaultScreenSettings, profileFromSettings, screenSizes, type ScreenSettings} from "./screenProfiles";
+import {closeAudioContext, ScreenAudioBridge, type ScreenAudioChoice} from "./screenAudio";
 
-type ServerCodecs = {legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]};
+type ServerCodecs = {legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]; audio?: {mimeType: string}[]};
 export class ScreenCodecLimitError extends Error {
     constructor(public readonly level: number) {
         super("H.264 profile/level cannot share this capture at the selected resolution and FPS.");
     }
 }
-type PublisherState = {streamID: string; pc: RTCPeerConnection; capture: MediaStream; settings: ScreenSettings; cleanup?: () => void};
+type PublisherState = {streamID: string; pc: RTCPeerConnection; capture: MediaStream; settings: ScreenSettings; releaseSound: () => void; cleanup?: () => void};
 const fmtp = (line = "") => Object.fromEntries(line.split(";").map((part) => part.trim().split("=")));
 const h264Limits: Record<number, [number, number]> = {
     31: [3600, 108000], 32: [5120, 216000], 40: [8192, 245760], 41: [8192, 245760],
@@ -197,7 +198,7 @@ export class ScreenMediaController {
         this.activePublisher = value;
         this.previewListeners.forEach((listener) => listener());
     }
-    private pendingPublisher?: {pc: RTCPeerConnection; capture: MediaStream};
+    private pendingPublisher?: {pc: RTCPeerConnection; capture: MediaStream; releaseSound: () => void};
     private viewerGeneration = 0;
     private pendingViewer?: RTCPeerConnection;
     private viewer?: {streamID: string; subscriberID: string; pc: RTCPeerConnection};
@@ -210,7 +211,7 @@ export class ScreenMediaController {
     private publishGeneration = 0;
     private picking = false;
 
-    async publish(onEnded: () => void, settings: ScreenSettings = defaultScreenSettings, isCurrent: () => boolean = () => true): Promise<string> {
+    async publish(onEnded: () => void, settings: ScreenSettings = defaultScreenSettings, isCurrent: () => boolean = () => true, sound: ScreenAudioChoice = {source: "off"}): Promise<string> {
         if (this.publisher) return this.publisher.streamID;
         if (this.picking || this.pendingPublisher) throw new Error(errorCode("screen-already-starting"));
         settings = {...settings};
@@ -220,23 +221,37 @@ export class ScreenMediaController {
             if (generation !== this.publishGeneration || !isCurrent()) throw new DOMException(errorCode("screen-aborted"), "AbortError");
         };
         // Keep the picker in the direct click call chain: some WebViews require user activation.
+        // The native sound context is created in the same chain so it may start playing.
+        // pid 0 means "system without Sonoryx" in Go, so "app" needs a real pid.
+        if (sound.source === "app" && !sound.pid) sound = {source: "off"};
+        const soundContext = sound.source !== "off" ? new AudioContext({sampleRate: 48000, latencyHint: "interactive"}) : undefined;
+        let bridge: ScreenAudioBridge | undefined;
+        const releaseSound = () => {
+            if (bridge) bridge.stop();
+            else closeAudioContext(soundContext);
+        };
         this.picking = true;
         let capture: MediaStream;
         try {
-            logDiagnostic("screen_picker_open", `generation=${generation}`);
-            capture = await navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
+            logDiagnostic("screen_picker_open", `generation=${generation} sound=${sound.source}`);
+            // Picker hints only: open on the "Window" tab and leave out the page's
+            // own surface. The user can still choose any screen or window.
+            const options: DisplayMediaStreamOptions & {selfBrowserSurface?: "include" | "exclude"} = {video: {displaySurface: "window"}, audio: false, selfBrowserSurface: "exclude"};
+            capture = await navigator.mediaDevices.getDisplayMedia(options);
             logDiagnostic("screen_picker_selected", `generation=${generation}`);
         } catch (error) {
             logDiagnostic("screen_picker_closed", error);
+            releaseSound();
             throw error;
         }
         finally { this.picking = false; }
+        const releaseCapture = () => { capture.getTracks().forEach((track) => track.stop()); releaseSound(); };
         try { checkCurrent(); }
-        catch (error) { capture.getTracks().forEach((track) => track.stop()); throw error; }
+        catch (error) { releaseCapture(); throw error; }
         let pc: RTCPeerConnection;
         try { pc = new RTCPeerConnection({iceServers: []}); }
-        catch (error) { capture.getTracks().forEach((track) => track.stop()); throw error; }
-        const pending = {pc, capture};
+        catch (error) { releaseCapture(); throw error; }
+        const pending = {pc, capture, releaseSound};
         this.pendingPublisher = pending;
         const requireCaptureTrack = (track: MediaStreamTrack | undefined): MediaStreamTrack => {
             if (!track) throw new Error(errorCode("screen-no-track"));
@@ -292,6 +307,21 @@ export class ScreenMediaController {
             checkCurrent();
             preferCodecs(transceiver, settings, server, captureTrack.getSettings());
             checkCurrent();
+            // Sound is optional: a server without it or a failed capture leaves
+            // the share video-only rather than failing it.
+            let soundTrack: MediaStreamTrack | undefined;
+            if (soundContext && !server.legacy && server.audio?.some((codec) => /opus$/i.test(codec.mimeType))) {
+                try {
+                    bridge = await ScreenAudioBridge.start(soundContext, sound.source === "app" ? sound.pid ?? 0 : 0);
+                    soundTrack = bridge.track;
+                } catch (error) { logDiagnostic("screen_audio_failed", error); }
+                checkCurrent();
+            } else if (sound.source !== "off") logDiagnostic("screen_audio_unsupported", "server has no stream sound");
+            if (!bridge) closeAudioContext(soundContext); // not kept open for the whole share
+            if (soundTrack) {
+                pc.addTransceiver(soundTrack, {direction: "sendonly", streams: [capture], sendEncodings: [{maxBitrate: 128_000}]});
+                logDiagnostic("screen_audio_added", sound.source);
+            }
             const offer = await localOffer(pc);
             checkCurrent();
             checkCapture();
@@ -305,7 +335,7 @@ export class ScreenMediaController {
             checkCapture();
             ensureStillPending();
             this.pendingPublisher = undefined;
-            const active: PublisherState = {streamID, pc, capture, settings: {...settings}};
+            const active: PublisherState = {streamID, pc, capture, settings: {...settings}, releaseSound};
             this.publisher = active;
             this.publisherLog.reset();
             this.startDiagnostics();
@@ -329,7 +359,7 @@ export class ScreenMediaController {
                 if (this.publisher !== active) return;
                 this.publisher = undefined;
                 this.publisherStats.reset();
-                capture.getTracks().forEach((track) => track.stop());
+                releaseCapture();
                 active.cleanup?.();
                 if (pc.connectionState !== "closed") pc.close();
                 void desktopAPI.stopScreen(streamID).catch((error) => { logDiagnostic("screen_stop_cleanup", error); });
@@ -346,7 +376,7 @@ export class ScreenMediaController {
         } catch (error) {
             logDiagnostic("screen_publish_failed", error);
             if (this.pendingPublisher === pending) this.pendingPublisher = undefined;
-            capture.getTracks().forEach((track) => track.stop());
+            releaseCapture();
             pc.close();
             if (streamID) await desktopAPI.stopScreen(streamID).catch((error) => { logDiagnostic("screen_publish_cleanup", error); });
             checkCurrent();
@@ -375,6 +405,7 @@ export class ScreenMediaController {
                 track.onended = null;
                 track.stop();
             });
+            pending.releaseSound();
             if (pending.pc.signalingState !== "closed") pending.pc.close();
         }
         if (!active) return;
@@ -383,6 +414,7 @@ export class ScreenMediaController {
             track.onended = null;
             track.stop();
         });
+        active.releaseSound();
         if (active.pc.signalingState !== "closed") active.pc.close();
         await desktopAPI.stopScreen(active.streamID);
     }
@@ -411,6 +443,9 @@ export class ScreenMediaController {
             const receiver = pc.addTransceiver("video", {direction: "recvonly"});
             const receiveCodecs = RTCRtpReceiver.getCapabilities?.("video")?.codecs;
             if (receiveCodecs && receiver.setCodecPreferences) receiver.setCodecPreferences(receiveCodecs);
+            // Stream sound shares the video's stream id, so it joins the returned
+            // MediaStream. Servers or streams without sound leave it inactive.
+            pc.addTransceiver("audio", {direction: "recvonly"});
             const result = await desktopAPI.subscribeScreen(streamID, subscriberID, await localOffer(pc));
             await pc.setRemoteDescription({type: "answer", sdp: result.answer.sdp});
             const remote = await remoteVideo;
@@ -460,8 +495,10 @@ export class ScreenMediaController {
         this.publisher = undefined;
         this.viewer = undefined;
         pending?.capture.getTracks().forEach((track) => track.stop());
+        pending?.releaseSound();
         pending?.pc.close();
         publisher?.capture.getTracks().forEach((track) => track.stop());
+        publisher?.releaseSound();
         publisher?.cleanup?.();
         publisher?.pc.close();
         viewer?.pc.close();

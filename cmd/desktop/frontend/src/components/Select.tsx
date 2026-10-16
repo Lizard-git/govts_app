@@ -1,4 +1,9 @@
-import {useEffect, useRef, useState, type ReactNode} from "react";
+import {useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode} from "react";
+
+// List size limits and its gap below the control, px.
+const listMaxHeight = 240;
+const listMinHeight = 120;
+const listGap = 6;
 
 export type SelectOption = {
     value: string;
@@ -6,21 +11,26 @@ export type SelectOption = {
     detail?: string;
     selectedLabel?: string;
     fontFamily?: string;
+    disabled?: boolean;
 };
 
-export function Select({id, label, value, options, disabled = false, onChange, hint, labelExtra, className}: {
+export function Select({id, label, value, options, disabled = false, onChange, onOpen, hint, labelExtra, className}: {
     id: string;
     label: string;
     value: string;
     options: SelectOption[];
     disabled?: boolean;
     onChange: (value: string) => void;
+    // Called each time the list opens, e.g. to refresh its options.
+    onOpen?: () => void;
     hint?: string;
     labelExtra?: ReactNode;
     className?: string;
 }) {
     const [open, setOpen] = useState(false);
+    const [placement, setPlacement] = useState<CSSProperties>();
     const rootRef = useRef<HTMLDivElement>(null);
+    const controlRef = useRef<HTMLDivElement>(null);
     const labelId = `${id}-label`;
     const selected = options.find((option) => option.value === value);
     const selectedName = selected?.selectedLabel ?? selected?.label ?? value;
@@ -28,6 +38,28 @@ export function Select({id, label, value, options, disabled = false, onChange, h
     useEffect(() => {
         if (disabled) setOpen(false);
     }, [disabled]);
+
+    // The list always opens downward and is fixed to the window, so a
+    // scrolling parent (a dialog, a settings page) never clips it. It stays
+    // inside its parent's top layer, e.g. above a modal dialog. Scrolling or
+    // resizing moves it with the control.
+    useLayoutEffect(() => {
+        if (!open) { setPlacement(undefined); return; }
+        const place = () => {
+            const control = controlRef.current?.getBoundingClientRect();
+            if (!control) return;
+            const top = control.bottom + listGap;
+            setPlacement({position: "fixed", top, left: control.left, right: "auto", width: control.width,
+                maxHeight: Math.max(listMinHeight, Math.min(listMaxHeight, window.innerHeight - top - listGap))});
+        };
+        place();
+        window.addEventListener("resize", place);
+        window.addEventListener("scroll", place, true);
+        return () => {
+            window.removeEventListener("resize", place);
+            window.removeEventListener("scroll", place, true);
+        };
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -57,12 +89,12 @@ export function Select({id, label, value, options, disabled = false, onChange, h
         {labelExtra
             ? <div className="app-select-heading"><span className="setting-label" id={labelId}>{label}</span>{labelExtra}</div>
             : <span className="setting-label" id={labelId}>{label}</span>}
-        <div className="app-select-control">
+        <div className="app-select-control" ref={controlRef}>
             <button id={id} className="app-select-trigger" type="button" disabled={disabled}
                     aria-labelledby={`${labelId} ${id}`} aria-haspopup="listbox" aria-expanded={open}
-                    onClick={() => setOpen((current) => !current)}><span style={selected?.fontFamily ? {fontFamily: `"${selected.fontFamily}", "Noto Sans", sans-serif`} : undefined}>{selectedName}</span></button>
-            {open && <div className="app-select-options" role="listbox" aria-labelledby={labelId}>
-                {options.map((option) => <button type="button" role="option" aria-selected={option.value === value}
+                    onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}><span style={selected?.fontFamily ? {fontFamily: `"${selected.fontFamily}", "Noto Sans", sans-serif`} : undefined}>{selectedName}</span></button>
+            {open && <div className="app-select-options" style={placement} role="listbox" aria-labelledby={labelId}>
+                {options.map((option) => <button type="button" role="option" aria-selected={option.value === value} disabled={option.disabled}
                                                   className={option.value === value ? "selected" : ""}
                                                   style={option.fontFamily ? {fontFamily: `"${option.fontFamily}", "Noto Sans", sans-serif`} : undefined}
                                                   onClick={() => choose(option.value)}

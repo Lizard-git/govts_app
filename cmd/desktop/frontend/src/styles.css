@@ -204,6 +204,7 @@ h2 { margin: 0; font-size: 1.25rem; }
 .screen-viewer-toolbar span { color: var(--muted); font-size: 0.625rem; }
 .screen-viewer-toolbar button { padding: 7px 11px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--card-strong); cursor: pointer; font-size: 0.6875rem; }
 .screen-viewer-toolbar button:hover { color: var(--text); background: color-mix(in srgb, var(--card-strong) 76%, var(--text)); }
+.screen-viewer-volume { width: 92px; flex: none; }
 .screen-viewer-window video { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; }
 .screen-viewer-error { padding: 8px 12px; color: var(--danger-text); border-bottom: 1px solid var(--danger-line); background: var(--danger-soft); font-size: 0.6875rem; }
 .empty-state, .empty-event { display: grid; min-height: 120px; place-items: center; color: var(--muted); font-size: 0.8125rem; }
