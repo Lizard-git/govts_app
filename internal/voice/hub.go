@@ -2,6 +2,7 @@ package voice
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -31,12 +32,19 @@ var (
 	ErrScreenStreamExists    = errors.New("session already has an active screen stream")
 	ErrScreenStreamNotFound  = errors.New("screen stream not found")
 	ErrScreenStreamForbidden = errors.New("screen stream is not owned by session")
+	ErrServerFull            = errors.New("server is full")
+	ErrAccountSessionLimit   = errors.New("too many sessions for this account")
+	ErrDisplayNameTaken      = errors.New("display name is already in use")
 )
 
 const (
 	DefaultChannelID   domain.ChannelID = 1
 	DefaultChannelName                  = "default"
 	DefaultServerName                   = "ReCon Server"
+	// DefaultMaxSessions bounds online sessions unless SetMaxSessions changes it.
+	DefaultMaxSessions = 1000
+	// MaxSessionsPerAccount bounds the sessions one account holds at once.
+	MaxSessionsPerAccount = 4
 )
 
 type sessionIDGenerator func() (uint64, error)
@@ -54,6 +62,7 @@ type Hub struct {
 	serverVersion appversion.Number
 	voiceBundles  bool
 	publicStatus  bool
+	maxSessions   int
 	outbox        []domain.StateEvent
 	eventReady    chan struct{}
 }
@@ -114,6 +123,7 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		nextChannelID: DefaultChannelID,
 		serverInfo:    info,
 		serverVersion: 1 << 16, // 0.1.0 for in-process test hubs
+		maxSessions:   DefaultMaxSessions,
 		eventReady:    make(chan struct{}, 1),
 	}
 	if includeDefault {
@@ -190,6 +200,16 @@ func (h *Hub) Get(id uint64) (Session, bool) {
 	return *cloneSession(s), true
 }
 
+// SetMaxSessions bounds online sessions; values below 1 keep the current limit.
+func (h *Hub) SetMaxSessions(limit int) {
+	if limit < 1 {
+		return
+	}
+	h.mu.Lock()
+	h.maxSessions = limit
+	h.mu.Unlock()
+}
+
 // SetVoiceBundles enables server → client voice redundancy for sessions that
 // support PacketVoiceBundle.
 func (h *Hub) SetVoiceBundles(enabled bool) {
@@ -235,6 +255,47 @@ func (h *Hub) SwapLastVoiceFrame(id uint64, frame protocol.VoiceBundleFrame) (pr
 		return protocol.VoiceBundleFrame{}, false
 	}
 	return previous, true
+}
+
+// maxVoiceSequenceJump is the forward Sequence step always accepted. Longer
+// steps must be covered by the time since the previous packet, at one frame per
+// voiceSequenceStep: real loss leaves a pause, a forged jump does not.
+const (
+	maxVoiceSequenceJump = 64
+	voiceSequenceStep    = 10 * time.Millisecond // half of the 20 ms frame
+)
+
+// AcceptVoiceSequence reports whether a voice packet with sequence may be
+// forwarded. Duplicates and reordered packets pass; a step back further than
+// maxVoiceSequenceJump is a sender restart and resets the reference.
+func (h *Hub) AcceptVoiceSequence(id uint64, sequence uint32) bool {
+	return h.acceptVoiceSequenceAt(id, sequence, time.Now())
+}
+
+func (h *Hub) acceptVoiceSequenceAt(id uint64, sequence uint32, at time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[id]
+	if s == nil {
+		return false
+	}
+	if s.voiceSequenceAt.IsZero() {
+		s.voiceSequence, s.voiceSequenceAt = sequence, at
+		return true
+	}
+	step := int64(int32(sequence - s.voiceSequence))
+	switch {
+	case step <= 0 && step >= -maxVoiceSequenceJump:
+		return true
+	case step < 0:
+		s.voiceSequence, s.voiceSequenceAt = sequence, at
+		return true
+	}
+	if step > maxVoiceSequenceJump+int64(at.Sub(s.voiceSequenceAt)/voiceSequenceStep) {
+		return false
+	}
+	s.voiceSequence, s.voiceSequenceAt = sequence, at
+	return true
 }
 
 func (h *Hub) RecordVoicePacket(id uint64, sequence uint32) {
@@ -800,11 +861,6 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 	return recipients, nil
 }
 
-func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
-	session, _, err := h.CreateSessionReplacingEndpoint(name, addr)
-	return session, err
-}
-
 // CreateAuthenticatedSession binds a fresh transport session to a verified
 // account. A prior session at the same endpoint is removed, regardless of its
 // display name or account, so endpoint reuse cannot inherit another identity.
@@ -816,6 +872,26 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 	}
 	if addr == nil || userID <= 0 {
 		return Session{}, nil, errors.New("authenticated session requires an account and endpoint")
+	}
+	// Sessions at this endpoint are replaced, so they do not count against the
+	// limits or hold the name.
+	remaining, accountSessions := 0, 0
+	for _, old := range h.sessions {
+		if sameUDPAddr(old.Addr, addr) {
+			continue
+		}
+		remaining++
+		if old.UserID == userID {
+			accountSessions++
+		} else if strings.EqualFold(old.Name, name) {
+			return Session{}, nil, ErrDisplayNameTaken
+		}
+	}
+	if remaining >= h.maxSessions {
+		return Session{}, nil, ErrServerFull
+	}
+	if accountSessions >= MaxSessionsPerAccount {
+		return Session{}, nil, ErrAccountSessionLimit
 	}
 	var replaced []uint64
 	for id, old := range h.sessions {
@@ -837,53 +913,6 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 	h.sessions[id] = session
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, UserID: userID, DisplayName: name}})
-	return *cloneSession(session), replaced, nil
-}
-
-func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Session, []uint64, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := validateParticipantName(name); err != nil {
-		return Session{}, nil, err
-	}
-
-	var replaced []uint64
-	if addr != nil {
-		for oldID, oldSession := range h.sessions {
-			if sameUDPAddr(oldSession.Addr, addr) {
-				// A reconnect uses a new Hello request ID but keeps the UDP
-				// endpoint and display name. Resume that session so transient
-				// control-plane loss does not tear down its media publisher.
-				if oldSession.Name == name {
-					log.Printf("session resumed: id=%d name=%q addr=%v", oldID, name, addr)
-					oldSession.LastSeen = time.Now()
-					oldSession.voiceSeen = nil
-					oldSession.voiceArrivals = nil
-					return *cloneSession(oldSession), nil, nil
-				}
-				log.Printf("session removed: id=%d name=%q addr=%v reason=endpoint_replaced new_name=%q", oldID, oldSession.Name, oldSession.Addr, name)
-				delete(h.sessions, oldID)
-				h.stopScreenShareByOwnerLocked(oldID)
-				h.revision++
-				h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: oldID})
-				replaced = append(replaced, oldID)
-			}
-		}
-	}
-	id, err := h.availableSessionID()
-	if err != nil {
-		return Session{}, nil, err
-	}
-	session := &Session{
-		ID:       id,
-		Name:     name,
-		Addr:     cloneUDPAddr(addr),
-		LastSeen: time.Now(),
-	}
-	h.sessions[id] = session
-	h.revision++
-	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, DisplayName: name}})
-	sort.Slice(replaced, func(i, j int) bool { return replaced[i] < replaced[j] })
 	return *cloneSession(session), replaced, nil
 }
 
@@ -947,7 +976,7 @@ func (h *Hub) AuthenticateMedia(sessionID uint64, credential [32]byte) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	session, ok := h.sessions[sessionID]
-	return ok && credential != ([32]byte{}) && session.MediaCredential == credential
+	return ok && credential != ([32]byte{}) && subtle.ConstantTimeCompare(session.MediaCredential[:], credential[:]) == 1
 }
 
 func (h *Hub) touchAt(sessionID uint64, now time.Time) error {
@@ -1035,9 +1064,11 @@ func validChannelName(name string) bool {
 		strings.TrimSpace(name) == name
 }
 
+// hasNameControlCharacters reports control and format (Cf) characters. Bidi
+// overrides and zero-width marks could make one name pass for another.
 func hasNameControlCharacters(name string) bool {
 	return strings.ContainsFunc(name, func(r rune) bool {
-		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r)
 	})
 }
 

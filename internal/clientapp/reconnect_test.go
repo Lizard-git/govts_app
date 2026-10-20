@@ -56,7 +56,7 @@ func TestUnusableSocketRequiresReplacement(t *testing.T) {
 func TestWaitForReconnectStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	app := New(Options{})
+	app := newTestApp(t)
 	if app.waitForReconnect(ctx, time.Hour) {
 		t.Fatal("waitForReconnect returned retry after cancellation")
 	}

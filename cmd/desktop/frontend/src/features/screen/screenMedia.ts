@@ -4,6 +4,7 @@ import {ScreenStatsCollector, type ScreenStats} from "./screenStats";
 import {ScreenStatsLog} from "./screenStatsLog";
 import {defaultScreenSettings, profileFromSettings, screenSizes, type ScreenSettings} from "./screenProfiles";
 import {closeAudioContext, ScreenAudioBridge, type ScreenAudioChoice} from "./screenAudio";
+import {confirmMediaServer} from "./MediaTrustConfirm";
 
 type ServerCodecs = {legacy?: boolean; codecs?: {mimeType: string; sdpFmtpLine: string; payloadType: number}[]; audio?: {mimeType: string}[]};
 export class ScreenCodecLimitError extends Error {
@@ -181,11 +182,20 @@ function peerClosed(pc: RTCPeerConnection): boolean {
     return pc.signalingState === "closed" || pc.connectionState === "closed";
 }
 
-async function ensureTrusted(): Promise<void> {
-    const identity = await desktopAPI.mediaServerIdentity();
-    if (identity.trusted) return;
-    if (identity.known) throw new Error(mediaKeyError(identity.fingerprint));
-    await desktopAPI.trustMediaServer(identity.fingerprint);
+let trustInFlight: Promise<void> | undefined;
+
+// ensureTrusted pins the media server key on first use after the user confirms
+// its fingerprint; a changed key is always rejected. Concurrent publish and
+// subscribe calls share one confirmation.
+function ensureTrusted(): Promise<void> {
+    trustInFlight ??= (async () => {
+        const identity = await desktopAPI.mediaServerIdentity();
+        if (identity.trusted) return;
+        if (identity.known) throw new Error(mediaKeyError(identity.fingerprint));
+        if (!await confirmMediaServer(identity.fingerprint)) throw new DOMException(errorCode("screen-aborted"), "AbortError");
+        await desktopAPI.trustMediaServer(identity.fingerprint);
+    })().finally(() => { trustInFlight = undefined; });
+    return trustInFlight;
 }
 
 export class ScreenMediaController {

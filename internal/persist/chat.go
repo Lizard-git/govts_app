@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
 	"uniclog.io/sonoryx/internal/domain"
 )
 
@@ -73,12 +74,12 @@ func (s *Store) SaveChat(ctx context.Context, user int64, name string, target do
 	defer tx.Rollback()
 	var banned bool
 	if err := tx.QueryRowContext(ctx, `SELECT banned FROM users WHERE id=?`, user).Scan(&banned); err != nil || banned {
-		return domain.ChatMessage{}, errors.New("отправка запрещена")
+		return domain.ChatMessage{}, domain.ChatRejection("отправка запрещена")
 	}
 	m, err := scanChat(tx.QueryRowContext(ctx, `SELECT `+chatColumns+` FROM chat_messages WHERE sender_id=? AND client_id=?`, user, clientID[:]))
 	if err == nil {
 		if m.Text != text || (target.Kind == domain.ChatChannel && (m.ChannelID != target.ID || m.RecipientID != 0)) || (target.Kind == domain.ChatDirect && (m.RecipientID != target.ID || m.ChannelID != 0)) {
-			return m, errors.New("идентификатор уже использован для другого сообщения")
+			return m, domain.ChatRejection("идентификатор уже использован для другого сообщения")
 		}
 		return m, tx.Commit()
 	}
@@ -90,10 +91,10 @@ func (s *Store) SaveChat(ctx context.Context, user int64, name string, target do
 		channel = target.ID
 	} else {
 		if target.ID == user {
-			return m, errors.New("нельзя отправить сообщение самому себе")
+			return m, domain.ChatRejection("нельзя отправить сообщение самому себе")
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT banned FROM users WHERE id=?`, target.ID).Scan(&banned); err != nil || banned {
-			return m, errors.New("получатель недоступен")
+			return m, domain.ErrChatRecipientUnavailable
 		}
 		recipient = target.ID
 		low, high := user, target.ID

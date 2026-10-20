@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
 	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/auth"
 	"uniclog.io/sonoryx/internal/persist"
@@ -22,6 +23,7 @@ import (
 
 type pendingAuth struct {
 	init      auth.Init
+	name      string // init.Name in NFKC form
 	challenge auth.Challenge
 	ephemeral *ecdh.PrivateKey
 	version   uint32
@@ -39,22 +41,36 @@ type authRateWindow struct {
 	count   uint16
 }
 
-const maxNewHandshakesPerIPPerMinute = 60
+// Handshake limits count per network, a /24 for IPv4 and a /64 for IPv6, so a
+// host cannot multiply its budget by cycling addresses inside its own subnet.
+const (
+	maxPendingHandshakes               = 512
+	maxPendingHandshakesPerNetwork     = 32
+	maxNewHandshakesPerNetworkPerMin   = 60
+	maxFinishesPerNetworkPerMin        = 180 // three Finish attempts per handshake
+	maxNewAccountsPerNetworkPerHour    = 10
+	pendingHandshakeLifetime           = 30 * time.Second
+	newAccountWindow                   = time.Hour
+	handshakeWindow                    = time.Minute
+	authenticationServerErrorForClient = "authentication failed: server error"
+)
 
 // AuthInit.Sequence carries the requested protocol/server compatibility level,
 // not the desktop executable's independently incremented release version.
-const minimumSecureClientVersion appversion.Number = 3<<16 // 0.3.0: snapshot v7 and presence
+const minimumSecureClientVersion appversion.Number = 3 << 16 // 0.3.0: snapshot v7 and presence
 
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.
 type Authenticator struct {
-	mu         sync.Mutex
-	signer     ed25519.PrivateKey
-	store      *persist.Store
-	codec      *protocol.SecureDatagramCodec
-	pending    map[authRequestKey]*pendingAuth
-	rate       map[netip.Addr]authRateWindow
-	policyGate *sync.Mutex
+	mu          sync.Mutex
+	signer      ed25519.PrivateKey
+	store       *persist.Store
+	codec       *protocol.SecureDatagramCodec
+	pending     map[authRequestKey]*pendingAuth
+	initRate    map[netip.Prefix]authRateWindow
+	finishRate  map[netip.Prefix]authRateWindow
+	accountRate map[netip.Prefix]authRateWindow
+	policyGate  *sync.Mutex
 }
 
 // SetPolicyGate serializes UDP authorization with local account/channel changes.
@@ -65,7 +81,15 @@ func NewAuthenticator(signer ed25519.PrivateKey, store *persist.Store, codec *pr
 	if len(signer) != ed25519.PrivateKeySize || store == nil || codec == nil {
 		return nil, errors.New("authentication dependencies are required")
 	}
-	return &Authenticator{signer: signer, store: store, codec: codec, pending: make(map[authRequestKey]*pendingAuth), rate: make(map[netip.Addr]authRateWindow)}, nil
+	return &Authenticator{
+		signer:      signer,
+		store:       store,
+		codec:       codec,
+		pending:     make(map[authRequestKey]*pendingAuth),
+		initRate:    make(map[netip.Prefix]authRateWindow),
+		finishRate:  make(map[netip.Prefix]authRateWindow),
+		accountRate: make(map[netip.Prefix]authRateWindow),
+	}, nil
 }
 
 func (a *Authenticator) Handle(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
@@ -100,52 +124,62 @@ func (a *Authenticator) handleInit(conn *udp.ServerPacketConn, hub *Hub, packet 
 	if err != nil {
 		return err
 	}
-	if err := validateParticipantName(init.Name); err != nil {
+	// Compatibility forms (fullwidth letters, ligatures) fold to one spelling,
+	// so they cannot imitate another participant's name.
+	name := norm.NFKC.String(init.Name)
+	if err := validateParticipantName(name); err != nil {
 		return err
 	}
 	key := authRequestKey{endpoint: addr.AddrPort(), request: packet.RequestID}
+	network := addressNetwork(key.endpoint.Addr())
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pruneLocked()
+	now := time.Now()
+	a.pruneLocked(now)
 	if previous := a.pending[key]; previous != nil {
 		if previous.init != init || previous.version != packet.Sequence {
 			return errors.New("authentication request ID reused with different identity")
 		}
 		return conn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketAuthChallenge, RequestID: packet.RequestID, Sequence: packet.Sequence, Payload: previous.challenge.Encode()})
 	}
-	if len(a.pending) >= 512 {
+	if a.pendingInNetworkLocked(network) >= maxPendingHandshakesPerNetwork {
 		return errors.New("too many pending authentication handshakes")
 	}
-	ip := addr.AddrPort().Addr().Unmap()
-	now := time.Now()
-	window := a.rate[ip]
-	if now.Sub(window.started) >= time.Minute {
-		window = authRateWindow{started: now}
-	}
-	if window.count >= maxNewHandshakesPerIPPerMinute {
+	if !allowRateLocked(a.initRate, network, now, handshakeWindow, maxNewHandshakesPerNetworkPerMin) {
 		return errors.New("too many authentication attempts; retry later")
+	}
+	// A full table drops its oldest entry: forged requests from many networks
+	// cannot keep a new, genuine handshake out.
+	if len(a.pending) >= maxPendingHandshakes {
+		a.evictOldestPendingLocked()
 	}
 	challenge, ephemeral, err := auth.NewChallenge(init, a.signer, packet.RequestID, packet.Sequence)
 	if err != nil {
 		return err
 	}
-	window.count++
-	a.rate[ip] = window
-	a.pending[key] = &pendingAuth{init: init, challenge: challenge, ephemeral: ephemeral, version: packet.Sequence, created: time.Now()}
+	a.pending[key] = &pendingAuth{init: init, name: name, challenge: challenge, ephemeral: ephemeral, version: packet.Sequence, created: now}
 	return conn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketAuthChallenge, RequestID: packet.RequestID, Sequence: packet.Sequence, Payload: challenge.Encode()})
 }
 
 func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {
 	key := authRequestKey{endpoint: addr.AddrPort(), request: packet.RequestID}
+	network := addressNetwork(key.endpoint.Addr())
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pruneLocked()
+	now := time.Now()
+	a.pruneLocked(now)
+	if !allowRateLocked(a.finishRate, network, now, handshakeWindow, maxFinishesPerNetworkPerMin) {
+		return errors.New("too many authentication attempts; retry later")
+	}
 	pending := a.pending[key]
 	if pending == nil {
 		return errors.New("authentication challenge expired")
 	}
 	digest := auth.Transcript(pending.init, pending.challenge, packet.RequestID, pending.version)
 	if err := auth.VerifyFinish(pending.init.PublicKey, digest, packet.Payload); err != nil {
+		// One signature check per challenge: a repeated bad Finish finds no
+		// challenge and costs no Ed25519 verification.
+		delete(a.pending, key)
 		return err
 	}
 	if pending.ack != nil {
@@ -153,9 +187,18 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	account, err := a.store.FindOrCreateAccount(ctx, pending.init.PublicKey, pending.init.Name)
+	known, err := a.store.AccountExists(ctx, pending.init.PublicKey)
 	if err != nil {
-		return fmt.Errorf("resolve account: %w", err)
+		log.Printf("authentication account lookup failed: addr=%s request_id=%d error=%v", addr, packet.RequestID, err)
+		return errors.New(authenticationServerErrorForClient)
+	}
+	if !known && !allowRateLocked(a.accountRate, network, now, newAccountWindow, maxNewAccountsPerNetworkPerHour) {
+		return errors.New("too many new accounts from this network; retry later")
+	}
+	account, err := a.store.FindOrCreateAccount(ctx, pending.init.PublicKey, pending.name)
+	if err != nil {
+		log.Printf("authentication account resolve failed: addr=%s request_id=%d error=%v", addr, packet.RequestID, err)
+		return errors.New(authenticationServerErrorForClient)
 	}
 	if account.Banned {
 		return errors.New("account is banned")
@@ -164,7 +207,7 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	if err != nil {
 		return err
 	}
-	session, replaced, err := hub.CreateAuthenticatedSession(pending.init.Name, addr, account.ID, account.JoinLevel, account.Permissions, account.Owner)
+	session, replaced, err := hub.CreateAuthenticatedSession(pending.name, addr, account.ID, account.JoinLevel, account.Permissions, account.Owner)
 	if err != nil {
 		return err
 	}
@@ -174,7 +217,8 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	}
 	if err := a.codec.Install(session.ID, c2s, s2c); err != nil {
 		hub.Remove(session.ID)
-		return err
+		log.Printf("authentication key install failed: session_id=%d error=%v", session.ID, err)
+		return errors.New(authenticationServerErrorForClient)
 	}
 	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= appversion.VoiceBundlesMinimum)
 	mac := auth.AckMAC(ackKey, digest, session.ID, account.JoinLevel, account.Permissions)
@@ -187,17 +231,74 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	return conn.WritePacket(0, addr, ack)
 }
 
-func (a *Authenticator) pruneLocked() {
-	now := time.Now()
-	cutoff := now.Add(-30 * time.Second)
+func (a *Authenticator) pruneLocked(now time.Time) {
+	cutoff := now.Add(-pendingHandshakeLifetime)
 	for key, pending := range a.pending {
 		if pending.created.Before(cutoff) {
 			delete(a.pending, key)
 		}
 	}
-	for ip, window := range a.rate {
-		if now.Sub(window.started) >= time.Minute {
-			delete(a.rate, ip)
+	pruneRateLocked(a.initRate, now, handshakeWindow)
+	pruneRateLocked(a.finishRate, now, handshakeWindow)
+	pruneRateLocked(a.accountRate, now, newAccountWindow)
+}
+
+func (a *Authenticator) pendingInNetworkLocked(network netip.Prefix) int {
+	count := 0
+	for key := range a.pending {
+		if network.Contains(key.endpoint.Addr().Unmap()) {
+			count++
 		}
 	}
+	return count
+}
+
+func (a *Authenticator) evictOldestPendingLocked() {
+	var oldestKey authRequestKey
+	var oldest *pendingAuth
+	for key, pending := range a.pending {
+		if oldest == nil || pending.created.Before(oldest.created) {
+			oldestKey, oldest = key, pending
+		}
+	}
+	if oldest != nil {
+		delete(a.pending, oldestKey)
+	}
+}
+
+// allowRateLocked counts one event for network and reports whether it fits
+// within limit events per window.
+func allowRateLocked(windows map[netip.Prefix]authRateWindow, network netip.Prefix, now time.Time, window time.Duration, limit uint16) bool {
+	current := windows[network]
+	if now.Sub(current.started) >= window {
+		current = authRateWindow{started: now}
+	}
+	if current.count >= limit {
+		return false
+	}
+	current.count++
+	windows[network] = current
+	return true
+}
+
+func pruneRateLocked(windows map[netip.Prefix]authRateWindow, now time.Time, window time.Duration) {
+	for network, current := range windows {
+		if now.Sub(current.started) >= window {
+			delete(windows, network)
+		}
+	}
+}
+
+// addressNetwork returns the /24 (IPv4) or /64 (IPv6) network holding addr.
+func addressNetwork(addr netip.Addr) netip.Prefix {
+	addr = addr.Unmap()
+	bits := 24
+	if addr.Is6() {
+		bits = 64
+	}
+	network, err := addr.Prefix(bits)
+	if err != nil {
+		return netip.PrefixFrom(addr, addr.BitLen())
+	}
+	return network
 }

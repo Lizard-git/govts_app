@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"errors"
 	"strings"
 	"unicode/utf8"
 )
@@ -20,19 +19,29 @@ type ChatTarget struct {
 	ID   int64
 }
 
+// ChatRejection is a chat error that is safe to show the user. The server sends
+// any other chat error as a generic storage failure and logs the details.
+type ChatRejection string
+
+func (e ChatRejection) Error() string { return string(e) }
+
+// ErrChatRecipientUnavailable covers both a missing and a banned recipient, so
+// the reply does not tell which accounts exist or are banned.
+const ErrChatRecipientUnavailable = ChatRejection("получатель недоступен")
+
 func (t ChatTarget) Validate() error {
 	if (t.Kind != ChatChannel && t.Kind != ChatDirect) || t.ID <= 0 {
-		return errors.New("некорректный адресат сообщения")
+		return ChatRejection("некорректный адресат сообщения")
 	}
 	return nil
 }
 
 func ValidateChatText(text string) error {
 	if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || strings.ContainsRune(text, 0) {
-		return errors.New("сообщение должно содержать текст UTF-8")
+		return ChatRejection("сообщение должно содержать текст UTF-8")
 	}
 	if len(text) > MaxChatTextBytes {
-		return errors.New("сообщение превышает 1000 байт UTF-8")
+		return ChatRejection("сообщение превышает 1000 байт UTF-8")
 	}
 	return nil
 }

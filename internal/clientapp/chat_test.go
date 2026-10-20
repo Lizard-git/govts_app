@@ -6,8 +6,10 @@ import (
 	"net"
 	"testing"
 	"time"
+
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -21,7 +23,8 @@ func TestChatRequestsAreCancelledAndDrainedWithSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := udp.NewClientPacketConn(raw, protocol.PlainDatagramCodec{})
+	_, codec := protocoltest.Pair(t, 9)
+	conn, err := udp.NewClientPacketConn(raw, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +32,7 @@ func TestChatRequestsAreCancelledAndDrainedWithSession(t *testing.T) {
 	if err := conn.BindSession(9); err != nil {
 		t.Fatal(err)
 	}
-	a := New(Options{})
+	a := newTestApp(t)
 	defer a.cancelLifetime()
 	a.state = voiceclient.NewState(9, "alice")
 	a.state.SetConnectionStatus(voiceclient.ConnectionConnected)

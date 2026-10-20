@@ -232,6 +232,10 @@ export const ky = {
         showing: "экран көрсөтүүдө",
         nobody: "Азыр эч ким экран көрсөтпөйт.",
         mediaKeyChanged: (fingerprint: string) => `Media сервердин ачкычы өзгөрдү. Жаңы из: ${fingerprint}`,
+        mediaTrustTitle: "Бул media серверге ишенесизби?",
+        mediaTrustText: "Экран көрсөтүү бул сервердин media кызматына биринчи жолу туташууда. Из сервер администратору берген из менен дал келерин текшериңиз.",
+        mediaTrustCancel: "Жокко чыгаруу",
+        mediaTrustAccept: "Ишенүү",
     },
     settings: {
         title: "Жөндөөлөр",

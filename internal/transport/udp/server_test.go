@@ -16,7 +16,7 @@ func TestReadVoicePacketRejectsOversizedDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packetConn, err := NewServerPacketConn(serverConn, protocol.PlainDatagramCodec{})
+	packetConn, err := NewServerPacketConn(serverConn, protocol.NewSecureDatagramCodec(true))
 	if err != nil {
 		_ = serverConn.Close()
 		t.Fatal(err)

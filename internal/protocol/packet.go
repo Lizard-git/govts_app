@@ -15,9 +15,9 @@ var (
 )
 
 const (
-	PacketHello uint8 = iota + 1
+	PacketHello uint8 = iota + 1 // pre-authentication handshake; servers reply "client upgrade required"
 	PacketVoice
-	PacketHelloAck
+	PacketHelloAck // reserved: acknowledged the removed plain handshake
 	PacketHeartbeat
 	PacketDisconnect
 	PacketJoinChannel

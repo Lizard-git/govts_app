@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestAppValidatesConnectAndClosesIdempotently(t *testing.T) {
-	app := New(Options{})
+	app := newTestApp(t)
 	if err := app.Connect(ConnectOptions{Server: "127.0.0.1:9000"}); err == nil {
 		t.Fatal("Connect accepted an empty display name")
 	}
@@ -52,7 +53,7 @@ func TestAppConnectDisconnectAndReconnectLifecycle(t *testing.T) {
 	defer server.Close()
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(server.LocalAddr().(*net.UDPAddr).Port))
 
-	app := New(Options{})
+	app := newTestApp(t)
 	connect := func() {
 		if err := app.Connect(ConnectOptions{Name: "alice", Server: address}); err != nil {
 			t.Fatal(err)
@@ -77,14 +78,14 @@ func TestAppConnectDisconnectAndReconnectLifecycle(t *testing.T) {
 }
 
 func TestAppDefaultsToSystemAudioDevices(t *testing.T) {
-	selection := New(Options{}).AudioDeviceSelection()
+	selection := newTestApp(t).AudioDeviceSelection()
 	if selection.CaptureID != "" || selection.PlaybackID != "" {
 		t.Fatalf("default audio devices = %+v, want empty system-default IDs", selection)
 	}
 }
 
 func TestAppSelectsOnlyAvailableAudioDevices(t *testing.T) {
-	app := New(Options{})
+	app := newTestApp(t)
 	app.listAudioDevices = func() (audio.DeviceList, error) {
 		return audio.DeviceList{
 			Capture:  []audio.DeviceInfo{{ID: "capture-1", Name: "Microphone"}},
@@ -113,7 +114,7 @@ func TestAppSelectsOnlyAvailableAudioDevices(t *testing.T) {
 }
 
 func TestAppHotSwitchesAudioDeviceWithoutChangingConnectionState(t *testing.T) {
-	app := New(Options{})
+	app := newTestApp(t)
 	app.listAudioDevices = func() (audio.DeviceList, error) {
 		return audio.DeviceList{Capture: []audio.DeviceInfo{{ID: "capture-1", Name: "Microphone"}}}, nil
 	}
@@ -142,4 +143,15 @@ func TestAppHotSwitchesAudioDeviceWithoutChangingConnectionState(t *testing.T) {
 	if got := app.AudioDeviceSelection().CaptureID; got != "capture-1" {
 		t.Fatalf("stored capture device = %q", got)
 	}
+}
+
+// newTestApp returns an App whose client identity and server pins live in the
+// test's temporary directory instead of the user's Sonoryx profile.
+func newTestApp(t *testing.T) *App {
+	t.Helper()
+	dir := t.TempDir()
+	return New(Options{
+		IdentityPath: filepath.Join(dir, "client.seed"),
+		PinsPath:     filepath.Join(dir, "voice-pins.json"),
+	})
 }

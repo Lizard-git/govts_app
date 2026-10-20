@@ -20,6 +20,8 @@ var (
 	ErrPublisherExists    = errors.New("publisher already exists")
 	ErrStreamNotReady     = errors.New("screen stream is not ready")
 	ErrSubscriptionDenied = errors.New("screen stream subscription denied")
+	// ErrMediaLimit rejects a peer connection over a session or server limit.
+	ErrMediaLimit = errors.New("screen sharing limit reached")
 )
 
 const (
@@ -46,6 +48,12 @@ const (
 	// Per viewer, for queue overflow or stale frames.
 	queueRecoveryInterval = 5 * time.Second
 	startupPLIRequests    = 5
+	// Subscriptions one session may hold on one stream (a viewer reconnecting
+	// overlaps its old and new connection) and across all streams.
+	maxSessionStreamSubscriptions = 2
+	maxSessionSubscriptions       = 8
+	// Peer connections without a UDP port range; a range caps it at its size.
+	defaultMaxPeerConnections = 256
 )
 
 type Manager struct {
@@ -62,6 +70,7 @@ type Manager struct {
 	process      processSampler // owned by the metrics worker
 	adaptive     bool
 	closing      atomic.Int64
+	maxPeers     int
 }
 
 type Config struct {
@@ -207,6 +216,10 @@ func (m *Manager) Publish(ctx context.Context, ownerID uint64, offer mediasignal
 		m.mu.Unlock()
 		return PublishResult{}, ErrPublisherExists
 	}
+	if err := m.checkPeerLimitLocked(0, 0); err != nil {
+		m.mu.Unlock()
+		return PublishResult{}, err
+	}
 	streamID, err := newStreamID(m.publishers)
 	if err != nil {
 		m.mu.Unlock()
@@ -308,9 +321,13 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	}
 	m.mu.RLock()
 	p := m.publishers[streamID]
+	limitErr := m.checkPeerLimitLocked(sessionID, streamID)
 	m.mu.RUnlock()
 	if p == nil {
 		return SubscribeResult{}, ErrStreamNotReady
+	}
+	if limitErr != nil {
+		return SubscribeResult{}, limitErr
 	}
 	p.mu.Lock()
 	if !p.ready || isClosed(p.closed) {
@@ -324,7 +341,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	codec := p.codec
 	p.mu.Unlock()
 	if !offerSupportsCodec(offer.SDP, codec) {
-		return SubscribeResult{}, fmt.Errorf("viewer does not support stream codec/profile %s (%s); ask the sender to restart with VP8", codec.MimeType, codec.SDPFmtpLine)
+		return SubscribeResult{}, &publicError{message: fmt.Sprintf("viewer does not support stream codec/profile %s (%s); ask the sender to restart with VP8", codec.MimeType, codec.SDPFmtpLine)}
 	}
 	pc, err := m.api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -385,7 +402,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	answer, err := acceptOffer(ctx, pc, offer)
 	if err != nil {
 		m.removeSubscriber(p, s)
-		return SubscribeResult{}, fmt.Errorf("viewer cannot negotiate stream codec %s: %w", codec.MimeType, err)
+		return SubscribeResult{}, &publicError{message: fmt.Sprintf("viewer cannot negotiate stream codec %s", codec.MimeType), cause: err}
 	}
 	return SubscribeResult{Answer: answer}, nil
 }
@@ -527,4 +544,37 @@ func (m *Manager) startWorker(run func()) {
 	m.workers.Add(1)
 	m.mu.RUnlock()
 	go func() { defer m.workers.Done(); run() }()
+}
+
+// checkPeerLimitLocked reports whether another peer connection fits under the
+// server limit and, for a viewer, under its per-session limits. The caller
+// holds m.mu; each publisher's lock is taken in turn.
+func (m *Manager) checkPeerLimitLocked(viewerID uint64, streamID domain.StreamID) error {
+	peers := len(m.publishers)
+	viewerTotal, viewerStream := 0, 0
+	for id, p := range m.publishers {
+		p.mu.RLock()
+		peers += len(p.subscribers)
+		if viewerID != 0 {
+			for _, s := range p.subscribers {
+				if s.sessionID != viewerID {
+					continue
+				}
+				viewerTotal++
+				if id == streamID {
+					viewerStream++
+				}
+			}
+		}
+		p.mu.RUnlock()
+	}
+	switch {
+	case peers >= m.maxPeers:
+		return fmt.Errorf("%w: server has %d screen connections", ErrMediaLimit, peers)
+	case viewerStream >= maxSessionStreamSubscriptions:
+		return fmt.Errorf("%w: %d connections to this stream", ErrMediaLimit, viewerStream)
+	case viewerTotal >= maxSessionSubscriptions:
+		return fmt.Errorf("%w: %d screen subscriptions", ErrMediaLimit, viewerTotal)
+	}
+	return nil
 }

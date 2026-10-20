@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"time"
+
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
 	"uniclog.io/sonoryx/internal/transport/udp"
@@ -106,11 +107,11 @@ func (w *chatWorker) run(ctx context.Context) {
 
 func (w *chatWorker) check(job chatJob) (Session, error) {
 	if err := ValidateSessionAddr(w.hub, job.packet.SessionID, job.addr); err != nil {
-		return Session{}, err
+		return Session{}, domain.ChatRejection("сессия изменилась")
 	}
 	s, ok := w.hub.Get(job.packet.SessionID)
 	if !ok || s.UserID != job.user {
-		return s, errors.New("сессия изменилась")
+		return s, domain.ChatRejection("сессия изменилась")
 	}
 	if job.request.Operation == protocol.ChatDialogs {
 		return s, nil
@@ -118,7 +119,7 @@ func (w *chatWorker) check(job chatJob) (Session, error) {
 	t := job.request.Target
 	if t.Kind == domain.ChatChannel {
 		if s.ChannelID != domain.ChannelID(t.ID) {
-			return s, errors.New("чат доступен только участникам текущего канала")
+			return s, domain.ChatRejection("чат доступен только участникам текущего канала")
 		}
 		for _, c := range w.hub.ListChannels() {
 			if c.ID == s.ChannelID && s.JoinLevel >= c.MinJoinLevel {
@@ -128,7 +129,7 @@ func (w *chatWorker) check(job chatJob) (Session, error) {
 		return s, ErrPermissionDenied
 	}
 	if t.ID == s.UserID {
-		return s, errors.New("нельзя открыть диалог с самим собой")
+		return s, domain.ChatRejection("нельзя открыть диалог с самим собой")
 	}
 	return s, nil
 }
@@ -154,12 +155,12 @@ func (w *chatWorker) handle(parent context.Context, job chatJob) {
 	if err == nil {
 		account, e := w.auth.store.Account(ctx, actor.UserID)
 		if e != nil || account.Banned {
-			err = errors.New("доступ к чату запрещён")
+			err = domain.ChatRejection("доступ к чату запрещён")
 		}
 	}
 	if err == nil && job.request.Operation != protocol.ChatDialogs && job.request.Target.Kind == domain.ChatDirect {
 		if _, e := w.auth.store.Account(ctx, job.request.Target.ID); e != nil {
-			err = errors.New("получатель не найден")
+			err = domain.ErrChatRecipientUnavailable
 		}
 	}
 	if err == nil {
@@ -181,6 +182,21 @@ func (w *chatWorker) handle(parent context.Context, job chatJob) {
 	w.complete(ctx, job, actor, page, err)
 }
 
+// chatErrorText returns the reply for a failed chat request. Rejections and
+// permission errors are shown as is; storage and session errors are logged and
+// replaced with a generic text.
+func chatErrorText(job chatJob, err error) string {
+	var rejection domain.ChatRejection
+	if errors.As(err, &rejection) {
+		return rejection.Error()
+	}
+	if errors.Is(err, ErrPermissionDenied) {
+		return ErrPermissionDenied.Error()
+	}
+	log.Printf("chat request failed: session_id=%d user_id=%d operation=%d error=%v", job.packet.SessionID, job.user, job.request.Operation, err)
+	return "хранилище чата недоступно; повторите позже"
+}
+
 // complete keeps post-commit delivery separate from authorization and storage.
 func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, page domain.ChatPage, err error) {
 	var payload []byte
@@ -198,10 +214,7 @@ func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, p
 	}
 	w.unlockPolicy()
 	if err != nil {
-		if ctx.Err() != nil {
-			err = errors.New("хранилище чата недоступно; повторите позже")
-		}
-		_ = SendError(w.conn, job.addr, job.packet.SessionID, job.packet.RequestID, err.Error())
+		_ = SendError(w.conn, job.addr, job.packet.SessionID, job.packet.RequestID, chatErrorText(job, err))
 		return
 	}
 	ack := protocol.VoicePacket{Type: protocol.PacketChatAck, SessionID: actor.ID, RequestID: job.packet.RequestID, Payload: payload}

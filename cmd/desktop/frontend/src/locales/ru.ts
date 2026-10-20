@@ -233,6 +233,10 @@ export const ru = {
         showing: "показывает экран",
         nobody: "Сейчас никто не демонстрирует экран.",
         mediaKeyChanged: (fingerprint: string) => `Ключ media-сервера изменился. Новый отпечаток: ${fingerprint}`,
+        mediaTrustTitle: "Доверять этому media-серверу?",
+        mediaTrustText: "Демонстрация экрана впервые подключается к media-сервису этого сервера. Проверьте, что отпечаток совпадает с тем, который сообщил администратор сервера.",
+        mediaTrustCancel: "Отмена",
+        mediaTrustAccept: "Доверять",
     },
     settings: {
         title: "Настройки",

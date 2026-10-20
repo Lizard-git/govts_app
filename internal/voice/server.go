@@ -27,8 +27,6 @@ func HandlePacket(
 			return nil
 		}
 		return err
-	case protocol.PacketHello:
-		return HandleHelloPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketDisconnect:
@@ -55,8 +53,11 @@ func ServeUDP(
 	conn *udp.ServerPacketConn,
 	hub *Hub,
 	cache *RequestCache,
-	authenticators ...*Authenticator,
+	authenticator *Authenticator,
 ) error {
+	if authenticator == nil {
+		return errors.New("UDP authenticator is required")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -68,14 +69,11 @@ func ServeUDP(
 	rejected := logging.NewFailures("server_udp_decode")
 	defer rejected.Close()
 	var statusLimit statusLimiter
-	var chat *chatWorker
-	if len(authenticators) > 0 && authenticators[0] != nil {
-		chat = newChatWorker(authenticators[0], conn, hub)
-		chatCtx, cancel := context.WithCancel(ctx)
-		done := make(chan struct{})
-		go func() { defer close(done); chat.run(chatCtx) }()
-		defer func() { cancel(); <-done }()
-	}
+	chat := newChatWorker(authenticator, conn, hub)
+	chatCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); chat.run(chatCtx) }()
+	defer func() { cancel(); <-done }()
 
 	for {
 		packet, addr, err := conn.ReadPacket()
@@ -97,27 +95,29 @@ func ServeUDP(
 			handleServerStatus(conn, hub, &statusLimit, packet, addr)
 			continue
 		}
-		if packet.Type == protocol.PacketChatRequest && chat != nil {
+		if packet.Type == protocol.PacketChatRequest {
 			if err := chat.enqueue(packet, addr); err != nil {
 				log.Printf("chat request rejected: session_id=%d request_id=%d error=%v", packet.SessionID, packet.RequestID, err)
 			}
 			continue
 		}
 		var handleErr error
-		if len(authenticators) > 0 && authenticators[0] != nil && authenticators[0].policyGate != nil {
-			authenticators[0].policyGate.Lock()
+		if authenticator.policyGate != nil {
+			authenticator.policyGate.Lock()
 		}
-		if len(authenticators) > 0 && authenticators[0] != nil && packet.Type == protocol.PacketHello {
+		switch packet.Type {
+		case protocol.PacketHello:
+			// Clients that predate secure authentication open with a plain Hello.
 			handleErr = conn.WritePacket(0, addr, protocol.NewErrorPacket(0, packet.RequestID, "client upgrade required: secure authentication"))
-		} else if len(authenticators) > 0 && authenticators[0] != nil && (packet.Type == protocol.PacketAuthInit || packet.Type == protocol.PacketAuthFinish) {
-			handleErr = authenticators[0].Handle(conn, hub, cache, packet, addr)
-		} else if len(authenticators) > 0 && authenticators[0] != nil && (packet.Type == protocol.PacketKick || packet.Type == protocol.PacketBan || packet.Type == protocol.PacketDrag) {
-			handleErr = authenticators[0].HandleModeration(conn, hub, cache, packet, addr)
-		} else {
+		case protocol.PacketAuthInit, protocol.PacketAuthFinish:
+			handleErr = authenticator.Handle(conn, hub, cache, packet, addr)
+		case protocol.PacketKick, protocol.PacketBan, protocol.PacketDrag:
+			handleErr = authenticator.HandleModeration(conn, hub, cache, packet, addr)
+		default:
 			handleErr = HandlePacket(conn, hub, cache, packet, addr)
 		}
-		if len(authenticators) > 0 && authenticators[0] != nil && authenticators[0].policyGate != nil {
-			authenticators[0].policyGate.Unlock()
+		if authenticator.policyGate != nil {
+			authenticator.policyGate.Unlock()
 		}
 		if err := handleErr; err != nil {
 			log.Printf("cannot handle packet: type=%d session_id=%d request_id=%d addr=%v error=%v", packet.Type, packet.SessionID, packet.RequestID, addr, err)
