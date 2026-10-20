@@ -41,10 +41,6 @@ func (s *loopSupervisor) Cancel() {
 	s.cancel()
 }
 
-func (s *loopSupervisor) Go(loop func(context.Context) error) {
-	s.GoNamed("unnamed", loop)
-}
-
 func (s *loopSupervisor) GoNamed(name string, loop func(context.Context) error) {
 	s.wg.Add(1)
 	go func() {

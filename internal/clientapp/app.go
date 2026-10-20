@@ -48,8 +48,6 @@ type audioDeviceChange struct {
 }
 
 type Options struct {
-	Commands     <-chan voiceclient.Command
-	Output       io.Writer
 	Logger       *log.Logger
 	Secure       bool
 	IdentityPath string
@@ -67,8 +65,6 @@ type App struct {
 	cancelLifetime      context.CancelFunc
 	state               *voiceclient.State
 	events              *EventLog
-	commands            <-chan voiceclient.Command
-	output              io.Writer
 	logger              *log.Logger
 	secure              bool
 	identityPath        string
@@ -107,9 +103,6 @@ func New(options Options) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 	state := voiceclient.NewState(0, "")
 	state.SetConnectionStatus(voiceclient.ConnectionDisconnected)
-	if options.Output == nil {
-		options.Output = io.Discard
-	}
 	if options.Logger == nil {
 		options.Logger = log.New(io.Discard, "", 0)
 	}
@@ -120,8 +113,6 @@ func New(options Options) *App {
 		cancelLifetime:     cancel,
 		state:              state,
 		events:             events,
-		commands:           options.Commands,
-		output:             options.Output,
 		logger:             options.Logger,
 		secure:             options.Secure,
 		identityPath:       options.IdentityPath,
@@ -322,8 +313,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
 		sessionStarted := time.Now()
-		noticeOutput := io.MultiWriter(a.output, eventWriter{log: a.events})
-		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, a.commands, a.output, noticeOutput, func() { a.cancelRun() }, a.logger, !everConnected, func() {
+		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, eventWriter{log: a.events}, a.logger, !everConnected, func() {
 			backoff.Reset()
 			if everConnected {
 				a.events.append("connection", "Соединение восстановлено", uint64(a.state.SnapshotView().Revision))
@@ -454,28 +444,11 @@ func (a *App) setAudioDevice(id string, capture bool) error {
 func (a *App) waitForReconnect(ctx context.Context, delay time.Duration) bool {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-timer.C:
-			return true
-		case command, ok := <-a.commands:
-			if !ok {
-				a.commands = nil
-				continue
-			}
-			voiceclient.HandleOfflineCommand(command, a.output, func() { a.cancelRun() }, a.state)
-		}
-	}
-}
-
-func (a *App) cancelRun() {
-	a.mu.Lock()
-	cancel := a.runCancel
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

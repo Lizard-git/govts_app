@@ -176,7 +176,7 @@ func (a *App) mediaRequest(ctx context.Context, path string, requestBody any, pi
 
 func mediaEndpointError(endpoint netip.AddrPort, err error) error {
 	var netErr net.Error
-	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return fmt.Errorf("неверная конфигурация сервера: media signaling недоступен по адресу %s; проверьте TCP-порт, firewall и проброс порта", endpoint)
 	}
 	var opErr *net.OpError

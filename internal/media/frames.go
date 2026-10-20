@@ -65,11 +65,6 @@ func (f *videoFrame) stale(now time.Time, backlog bool) bool {
 	return now.After(f.expiresAt(backlog))
 }
 
-func frameStart(codec string, payload []byte) (start, key bool) {
-	start, key, _ = frameMetadata(codec, payload)
-	return
-}
-
 func frameMetadata(codec string, payload []byte) (start, key, valid bool) {
 	if len(payload) == 0 {
 		return

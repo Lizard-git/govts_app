@@ -78,20 +78,6 @@ type Recorder interface {
 	Close() error
 }
 
-type PCM16Encoder struct {
-	config CodecConfig
-}
-
-func NewPCM16Encoder(config CodecConfig) *PCM16Encoder {
-	return &PCM16Encoder{
-		config: config,
-	}
-}
-
-func (PCM16Encoder) Encode(samples []int16) ([]byte, error) {
-	return int16ToBytes(samples), nil
-}
-
 func int16ToBytes(samples []int16) []byte {
 	data := make([]byte, len(samples)*2)
 

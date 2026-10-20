@@ -15,17 +15,6 @@ const (
 	CleanupInterval = 5 * time.Second
 )
 
-func CleanupLoop(
-	ctx context.Context,
-	hub *voice.Hub,
-	cache *voice.RequestCache,
-	timeout time.Duration,
-	interval time.Duration,
-	codecs ...*protocol.SecureDatagramCodec,
-) error {
-	return cleanupLoop(ctx, hub, cache, timeout, interval, nil, codecs...)
-}
-
 // CleanupLoopWithPolicyGate keeps timeout removals from racing with durable
 // moderation audits and console privilege changes.
 func CleanupLoopWithPolicyGate(

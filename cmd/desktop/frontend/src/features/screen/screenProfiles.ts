@@ -48,8 +48,6 @@ export const screenProfiles: ScreenProfile[] = [
     },
 ];
 
-export const defaultScreenProfile = screenProfiles[2];
-
 export type ScreenCodec = "auto" | "VP8" | "H264" | "VP9" | "AV1";
 export type ScreenSettings = {version: 1; fps: 10 | 15 | 30 | 60; resolution: "720p" | "1080p" | "1440p" | "2160p" | "native"; codec: ScreenCodec; content: "detail" | "motion"; bitrate: number};
 export const defaultScreenSettings: ScreenSettings = {version: 1, fps: 15, resolution: "1080p", codec: "auto", content: "detail", bitrate: 2_000_000};

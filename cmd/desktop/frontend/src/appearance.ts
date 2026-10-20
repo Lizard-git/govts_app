@@ -206,10 +206,6 @@ export function normalizeTheme(value: string): ThemeMode {
     return themeModes.find((mode) => mode === value) ?? "dark";
 }
 
-export function isBuiltinTheme(value: string): value is BuiltinTheme {
-    return builtinThemes.some((theme) => theme === value);
-}
-
 function nearestFontSize(value: number): FontSize {
     let best: FontSize = defaultFontSize;
     for (const size of fontSizes) {

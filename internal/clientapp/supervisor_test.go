@@ -11,10 +11,10 @@ func TestLoopSupervisorCancelsOtherLoopsAfterError(t *testing.T) {
 	supervisor := newLoopSupervisor(context.Background())
 	wantErr := errors.New("send failed")
 
-	supervisor.Go(func(context.Context) error {
+	supervisor.GoNamed("test", func(context.Context) error {
 		return wantErr
 	})
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("test", func(ctx context.Context) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -31,7 +31,7 @@ func TestLoopSupervisorRunsShutdownBeforeWaiting(t *testing.T) {
 	blocked := make(chan struct{})
 	wantErr := errors.New("close device failed")
 
-	supervisor.Go(func(context.Context) error {
+	supervisor.GoNamed("test", func(context.Context) error {
 		<-blocked
 		return nil
 	})
@@ -59,7 +59,7 @@ func TestLoopSupervisorShutdownStopsWithoutLoopResult(t *testing.T) {
 	supervisor := newLoopSupervisor(context.Background())
 	loopStopped := make(chan struct{})
 
-	supervisor.Go(func(ctx context.Context) error {
+	supervisor.GoNamed("test", func(ctx context.Context) error {
 		<-ctx.Done()
 		close(loopStopped)
 		return ctx.Err()

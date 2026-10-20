@@ -643,15 +643,6 @@ func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 
 const SpeakingHangover = 300 * time.Millisecond
 
-type SpeakingDetector struct{ ActiveUntil time.Time }
-
-func (d *SpeakingDetector) Observe(samples []int16, now time.Time) bool {
-	if activePCM(samples) {
-		d.ActiveUntil = now.Add(SpeakingHangover)
-	}
-	return d.Speaking(now)
-}
-func (d *SpeakingDetector) Speaking(now time.Time) bool { return now.Before(d.ActiveUntil) }
 func activePCM(samples []int16) bool {
 	// Show even the quietest noise so its sender can be identified.
 	for _, sample := range samples {
