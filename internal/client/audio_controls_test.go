@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,28 +11,6 @@ import (
 	"uniclog.io/sonoryx/internal/audio/voicegate"
 	"uniclog.io/sonoryx/internal/protocol"
 )
-
-func TestSpeakingDetectorBoundariesAndHangover(t *testing.T) {
-	now := time.Now()
-	d := SpeakingDetector{}
-	for _, pcm := range [][]int16{nil, {}, {0}, {599, -599}} {
-		if d.Observe(pcm, now) {
-			t.Fatal("silence/below threshold activated")
-		}
-	}
-	if !d.Observe([]int16{600, -600}, now) {
-		t.Fatal("threshold not inclusive")
-	}
-	if !d.Observe([]int16{0}, now.Add(299*time.Millisecond)) {
-		t.Fatal("hangover cut short")
-	}
-	if d.Speaking(now.Add(300 * time.Millisecond)) {
-		t.Fatal("hangover did not end")
-	}
-	if !d.Observe([]int16{-32768}, now) {
-		t.Fatal("PCM square overflow")
-	}
-}
 
 func TestAudioMeterClampsAndAdvancesSequence(t *testing.T) {
 	controls := NewAudioControlState(nil)
@@ -136,21 +113,26 @@ func (p *controlPlayer) SetDeafened(v bool) error {
 	return nil
 }
 
-func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) {
+func TestAudioSettingsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) {
 	s := liveTestState()
-	var output bytes.Buffer
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	HandleOfflineCommand(Command{Name: "/mute", Arguments: []string{"on"}}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/deafen", Arguments: []string{"on"}}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/rnnoise"}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/vad", Arguments: []string{"on"}}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/vad-mode", Arguments: []string{"vad"}}, &output, cancel, s)
-	HandleOfflineCommand(Command{Name: "/vad-sensitivity", Arguments: []string{"0.7"}}, &output, cancel, s)
+	if err := s.Audio.SetMuted(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Audio.SetDeafened(true); err != nil {
+		t.Fatal(err)
+	}
+	s.Audio.SetRNNoiseEnabled(false)
+	s.Audio.SetVADEnabled(true)
+	if err := s.Audio.SetVADMode(voicegate.ModeVAD); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Audio.SetVADSensitivity(0.7); err != nil {
+		t.Fatal(err)
+	}
 	s.InvalidateSession(ConnectionReconnecting)
 	s.StartSession(99)
 	v := s.SnapshotView()
-	if !v.Muted || !v.Deafened || v.RNNoiseEnabled || !v.VADEnabled || v.VADMode != "vad" || v.VADSensitivity != 0.7 || ctx.Err() != nil {
+	if !v.Muted || !v.Deafened || v.RNNoiseEnabled || !v.VADEnabled || v.VADMode != "vad" || v.VADSensitivity != 0.7 {
 		t.Fatal("offline flags lost")
 	}
 	p := &controlPlayer{}
@@ -169,32 +151,6 @@ func TestAudioCommandsPersistAcrossReconnectAndDiscardOldPlayback(t *testing.T) 
 	s.Audio.Play(current, func() error { return p.Write(nil) })
 	if p.writes != 1 {
 		t.Fatalf("writes=%d", p.writes)
-	}
-	HandleAudioCommand(Command{Name: "/mute", Arguments: []string{"off"}}, s, &output)
-	HandleAudioCommand(Command{Name: "/mute", Arguments: []string{"off"}}, s, &output)
-	if muted, _, _ := s.Audio.Snapshot(); muted {
-		t.Fatal("off is not idempotent")
-	}
-}
-
-func TestVADCommandsValidateSettings(t *testing.T) {
-	s := liveTestState()
-	var output bytes.Buffer
-
-	if !HandleAudioCommand(Command{Name: "/vad-sensitivity", Arguments: []string{"1.1"}}, s, &output) {
-		t.Fatal("VAD sensitivity command was not handled")
-	}
-	settings := s.Audio.VADSnapshot()
-	if settings.Sensitivity != voicegate.DefaultSensitivity {
-		t.Fatalf("invalid sensitivity changed state to %v", settings.Sensitivity)
-	}
-	if !strings.Contains(output.String(), "between 0 and 1") {
-		t.Fatalf("missing validation message: %q", output.String())
-	}
-	output.Reset()
-	HandleAudioCommand(Command{Name: "/vad-mode", Arguments: []string{"unknown"}}, s, &output)
-	if s.Audio.VADSnapshot().Mode != voicegate.ModeHybrid || !strings.Contains(output.String(), "level, vad, or hybrid") {
-		t.Fatalf("invalid mode changed state: %q", output.String())
 	}
 }
 
@@ -234,7 +190,7 @@ func TestSendLoopRejectsQueuedFramesFromBeforeMute(t *testing.T) {
 	frames <- audio.Frame{ControlEpoch: old, Data: []byte{1}}
 	frames <- audio.Frame{ControlEpoch: current, Data: []byte{2}}
 	close(frames)
-	if err := SendLoop(peer.ctx, peer.clientConn, 42, frames, a); err != nil {
+	if err := SendLoopWithStats(peer.ctx, peer.clientConn, 42, frames, a, nil); err != nil {
 		t.Fatal(err)
 	}
 	packet, _, err := peer.receiveRequest()

@@ -52,7 +52,13 @@ func NewManagerWithConfig(hub *voice.Hub, config Config) (*Manager, error) {
 		}
 	}
 	if config.AdvertisedIP != "" {
-		settingEngine.SetNAT1To1IPs([]string{config.AdvertisedIP}, webrtc.ICECandidateTypeHost)
+		if err := settingEngine.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+			External:        []string{config.AdvertisedIP},
+			AsCandidateType: webrtc.ICECandidateTypeHost,
+			Mode:            webrtc.ICEAddressRewriteReplace,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	m := &Manager{hub: hub, meters: meters, network: network, adaptive: config.AdaptiveBitrate, api: webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settingEngine)), publishers: make(map[domain.StreamID]*publisher), ownerStreams: make(map[uint64]domain.StreamID), done: make(chan struct{})}
 	m.startWorker(m.reconcileLoop)

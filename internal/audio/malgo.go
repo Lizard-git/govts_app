@@ -22,10 +22,6 @@ type MalgoRecorder struct {
 	closeErr  error
 }
 
-func NewMalgoRecorder(config CodecConfig) (*MalgoRecorder, error) {
-	return NewMalgoRecorderForDevice(config, "")
-}
-
 func NewMalgoRecorderForDevice(config CodecConfig, deviceID string) (*MalgoRecorder, error) {
 	dataCh := make(chan []byte, 8)
 	callbacks := malgo.DeviceCallbacks{

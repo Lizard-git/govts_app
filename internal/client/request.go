@@ -32,32 +32,6 @@ func (e *ServerVersionTooOldError) Error() string {
 	return fmt.Sprintf("Не удалось подключиться: сервер версии %s. Для этой сборки клиента нужен сервер версии %s или новее.", e.Server, e.Required)
 }
 
-func PerformHandshake(
-	ctx context.Context,
-	conn *udp.ClientPacketConn,
-	name string,
-) (uint64, error) {
-	if len(name) == 0 {
-		return 0, errors.New("client name is required")
-	}
-	if len([]byte(name)) > maxClientNameBytes {
-		return 0, fmt.Errorf("client name too long: %d bytes", len([]byte(name)))
-	}
-
-	requestID, err := newHandshakeRequestID()
-	if err != nil {
-		return 0, fmt.Errorf("create handshake request ID: %w", err)
-	}
-
-	return performHandshakeWithRequestID(
-		ctx,
-		conn,
-		name,
-		requestID,
-		handshakeRequestTimeout,
-	)
-}
-
 func PerformHandshakeAttempt(
 	ctx context.Context,
 	conn *udp.ClientPacketConn,

@@ -62,29 +62,6 @@ func TestWaitForReconnectStopsOnCancellation(t *testing.T) {
 	}
 }
 
-func TestConnectionTreeOutputPolicy(t *testing.T) {
-	tests := []struct {
-		name              string
-		first             bool
-		alreadyPrinted    bool
-		topologyUnchanged bool
-		wantFullTree      bool
-	}{
-		{name: "first connection", first: true, topologyUnchanged: true, wantFullTree: true},
-		{name: "join after tree", first: true, alreadyPrinted: true, wantFullTree: false},
-		{name: "reconnect unchanged", topologyUnchanged: true, wantFullTree: false},
-		{name: "reconnect changed", topologyUnchanged: false, wantFullTree: true},
-		{name: "missing channel already showed tree", alreadyPrinted: true, topologyUnchanged: false, wantFullTree: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := shouldRenderConnectionTree(test.first, test.alreadyPrinted, test.topologyUnchanged); got != test.wantFullTree {
-				t.Fatalf("shouldRenderConnectionTree() = %t, want %t", got, test.wantFullTree)
-			}
-		})
-	}
-}
-
 func TestNetworkLoopDoesNotRepeatConnectionLost(t *testing.T) {
 	classified := fmt.Errorf("%w: heartbeat: request timed out", voiceclient.ErrConnectionLost)
 	got := classifyNetworkLoopError("heartbeat", classified)

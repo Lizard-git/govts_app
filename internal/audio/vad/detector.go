@@ -2,7 +2,6 @@ package vad
 
 import (
 	"errors"
-	"fmt"
 	"math"
 )
 
@@ -44,11 +43,4 @@ func LevelDBFS(samples []int16) float32 {
 		return 0
 	}
 	return float32(level)
-}
-
-func ValidateProbability(value float32) error {
-	if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < 0 || value > 1 {
-		return fmt.Errorf("probability must be between 0 and 1, got %g", value)
-	}
-	return nil
 }

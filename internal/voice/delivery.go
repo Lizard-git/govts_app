@@ -36,10 +36,6 @@ func SendToSessions(
 	return nil
 }
 
-func UpdateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
-	return hub.UpdateAddr(sessionID, addr)
-}
-
 func ValidateSessionAddr(hub *Hub, sessionID uint64, addr *net.UDPAddr) error {
 	if addr == nil {
 		return errors.New("client UDP address is required")

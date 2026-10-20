@@ -75,27 +75,6 @@ func NewVoicePacket(sessionID uint64, sequence uint32, payload []byte) VoicePack
 	}
 }
 
-func packetName(packetType uint8) string {
-	switch packetType {
-	case PacketHello:
-		return "hello"
-	case PacketVoice:
-		return "voice"
-	default:
-		return "unknown"
-	}
-}
-
-func makePayload(text string) []byte {
-	return []byte(text)
-}
-
-func encodeSessionID(id uint64) []byte {
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint64(data, id)
-	return data
-}
-
 // index
 // 0        Type       1 byte
 // 1..8     SessionID  8 bytes

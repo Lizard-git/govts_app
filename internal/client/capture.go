@@ -29,16 +29,6 @@ func normalizedMeterLevel(levelDBFS float32) float32 {
 	return (levelDBFS - meterFloorDBFS) / -meterFloorDBFS
 }
 
-func EncodeLoop(
-	ctx context.Context,
-	encoder audio.Encoder,
-	pcmCh <-chan audio.PCMFrame,
-	audioCh chan<- audio.Frame,
-	states ...*State,
-) error {
-	return EncodeLoopWithPipeline(ctx, encoder, nil, nil, nil, pcmCh, audioCh, states...)
-}
-
 // EncodeLoopWithPipeline applies filtering, voice detection, gate policy and
 // encoding in order. Nil audio stages preserve the legacy passthrough path.
 func EncodeLoopWithPipeline(
@@ -181,20 +171,6 @@ func EncodeLoopWithPipeline(
 			}
 		}
 	}
-}
-
-func SendLoop(
-	ctx context.Context,
-	conn *udp.ClientPacketConn,
-	sessionID uint64,
-	audioCh <-chan audio.Frame,
-	controls ...*AudioControlState,
-) error {
-	var control *AudioControlState
-	if len(controls) > 0 {
-		control = controls[0]
-	}
-	return sendLoop(ctx, conn, sessionID, audioCh, control, nil)
 }
 
 func SendLoopWithStats(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64, audioCh <-chan audio.Frame, control *AudioControlState, state *State) error {

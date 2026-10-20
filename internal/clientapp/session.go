@@ -19,14 +19,13 @@ import (
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
-func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, commands <-chan voiceclient.Command, output, noticeOutput io.Writer, cancelApp context.CancelFunc, logger *log.Logger, firstConnection bool, onReady func(), onStop ...func()) (runErr error) {
+func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voiceclient.State, devices AudioDeviceSelection, audioDeviceChanges <-chan audioDeviceChange, name string, noticeOutput io.Writer, logger *log.Logger, firstConnection bool, onReady func(), onStop ...func()) (runErr error) {
 	stopSession := func() {
 		for _, stop := range onStop {
 			stop()
 		}
 	}
 	defer stopSession()
-	output = &lockedOutput{writer: output}
 	noticeOutput = &lockedOutput{writer: noticeOutput}
 	sessionID := state.SessionID()
 	oldSnapshot := state.Snapshot()
@@ -108,11 +107,6 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	supervisor.GoNamed("control", func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
 	supervisor.GoNamed("speaking", func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
 	supervisor.GoNamed("notices", func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
-	if commands != nil {
-		supervisor.GoNamed("commands", func(ctx context.Context) error {
-			return voiceclient.SessionCommandLoop(ctx, conn, state, commands, output, cancelApp, nil)
-		})
-	}
 
 	finish := func(cause error) error {
 		shutdownErr := supervisor.Shutdown(func() error {
@@ -136,8 +130,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err := voiceclient.JoinChannel(ctx, conn, state, channelID); err != nil {
 		return finish(fmt.Errorf("cannot join default channel %d: %w", channelID, err))
 	}
-	snapshot, err = syncer.Load(ctx)
-	if err != nil {
+	if _, err := syncer.Load(ctx); err != nil {
 		return finish(fmt.Errorf("%w: refresh server snapshot: %v", voiceclient.ErrConnectionLost, err))
 	}
 	currentSnapshot := state.Snapshot()
@@ -149,11 +142,8 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
-	if shouldRenderConnectionTree(firstConnection, false, topologyUnchanged) {
-		if !firstConnection {
-			logger.Printf("reconnected; channel structure changed")
-		}
-		_ = voiceclient.RenderServerTree(output, currentSnapshot, sessionID, state.ChannelID(), false)
+	if !firstConnection && !topologyUnchanged {
+		logger.Printf("reconnected; channel structure changed")
 	} else if !firstConnection {
 		logger.Printf("reconnected; channel restored: id=%d", state.ChannelID())
 	}
@@ -301,13 +291,6 @@ func (w *lockedOutput) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writer.Write(p)
-}
-
-func shouldRenderConnectionTree(firstConnection, alreadyPrinted, topologyUnchanged bool) bool {
-	if alreadyPrinted {
-		return false
-	}
-	return firstConnection || !topologyUnchanged
 }
 
 func classifyNetworkLoopError(operation string, err error) error {

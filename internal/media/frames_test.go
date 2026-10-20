@@ -104,7 +104,7 @@ func TestFrameStartRejectsMalformedPayloads(t *testing.T) {
 		{"H264 trailing STAP-A byte", "video/H264", []byte{0x78, 0, 2, 0x65, 0x80, 0}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			start, key := frameStart(test.codec, test.payload)
+			start, key, _ := frameMetadata(test.codec, test.payload)
 			if start || key {
 				t.Fatalf("malformed payload recognized as start=%v key=%v", start, key)
 			}
@@ -120,7 +120,7 @@ func FuzzFrameStart(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, codec byte, payload []byte) {
 		names := [...]string{"video/VP8", "video/VP9", "video/AV1", "video/H264"}
-		start, key := frameStart(names[codec%4], payload)
+		start, key, _ := frameMetadata(names[codec%4], payload)
 		if key && !start {
 			t.Fatal("continuation packet identified as a keyframe start")
 		}
@@ -144,7 +144,7 @@ func TestFrameStartsForSupportedCodecs(t *testing.T) {
 		{"video/H264", []byte{0x7c, 0x85, 0x80}, true},
 		{"video/H264", []byte{0x78, 0, 2, 0x67, 0x80, 0, 2, 0x65, 0x80}, true},
 	} {
-		start, key := frameStart(test.codec, test.payload)
+		start, key, _ := frameMetadata(test.codec, test.payload)
 		if !start || key != test.key {
 			t.Errorf("%s %x: start=%v key=%v, want key=%v", test.codec, test.payload, start, key, test.key)
 		}
