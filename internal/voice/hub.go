@@ -257,6 +257,47 @@ func (h *Hub) SwapLastVoiceFrame(id uint64, frame protocol.VoiceBundleFrame) (pr
 	return previous, true
 }
 
+// maxVoiceSequenceJump is the forward Sequence step always accepted. Longer
+// steps must be covered by the time since the previous packet, at one frame per
+// voiceSequenceStep: real loss leaves a pause, a forged jump does not.
+const (
+	maxVoiceSequenceJump = 64
+	voiceSequenceStep    = 10 * time.Millisecond // half of the 20 ms frame
+)
+
+// AcceptVoiceSequence reports whether a voice packet with sequence may be
+// forwarded. Duplicates and reordered packets pass; a step back further than
+// maxVoiceSequenceJump is a sender restart and resets the reference.
+func (h *Hub) AcceptVoiceSequence(id uint64, sequence uint32) bool {
+	return h.acceptVoiceSequenceAt(id, sequence, time.Now())
+}
+
+func (h *Hub) acceptVoiceSequenceAt(id uint64, sequence uint32, at time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[id]
+	if s == nil {
+		return false
+	}
+	if s.voiceSequenceAt.IsZero() {
+		s.voiceSequence, s.voiceSequenceAt = sequence, at
+		return true
+	}
+	step := int64(int32(sequence - s.voiceSequence))
+	switch {
+	case step <= 0 && step >= -maxVoiceSequenceJump:
+		return true
+	case step < 0:
+		s.voiceSequence, s.voiceSequenceAt = sequence, at
+		return true
+	}
+	if step > maxVoiceSequenceJump+int64(at.Sub(s.voiceSequenceAt)/voiceSequenceStep) {
+		return false
+	}
+	s.voiceSequence, s.voiceSequenceAt = sequence, at
+	return true
+}
+
 func (h *Hub) RecordVoicePacket(id uint64, sequence uint32) {
 	h.recordVoicePacketAt(id, sequence, time.Now())
 }

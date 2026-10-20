@@ -8,6 +8,11 @@ import (
 const statsWindow = 30 * time.Second
 const maxStatsPackets = 4096
 
+// maxSequenceGap is the longest forward jump counted as loss. A longer jump is
+// a discontinuity: the gap is not filled, so a sender cannot inflate the
+// statistics with large Sequence steps.
+const maxSequenceGap = 64
+
 type ConnectionStats struct {
 	SessionID              uint64
 	Generation             uint64
@@ -48,6 +53,26 @@ type voiceSequence struct {
 	started  bool
 	lastSeen time.Time
 	missing  map[uint32]time.Time
+	// missingOrder lists missing sequences oldest first, so expiry and the
+	// size bound drop from the front without scanning the map.
+	missingOrder []uint32
+}
+
+// dropOldestMissing removes expired entries and keeps at most limit.
+func (s *voiceSequence) dropOldestMissing(cutoff time.Time, limit int) {
+	i := 0
+	for i < len(s.missingOrder) {
+		sequence := s.missingOrder[i]
+		at, ok := s.missing[sequence]
+		if ok && !at.Before(cutoff) && len(s.missingOrder)-i <= limit {
+			break
+		}
+		if ok {
+			delete(s.missing, sequence)
+		}
+		i++
+	}
+	s.missingOrder = s.missingOrder[i:]
 }
 
 type connectionMeasurements struct {
@@ -168,13 +193,14 @@ func (m *connectionMeasurements) recordVoice(sender uint64, sequence uint32, at 
 		stream.started = true
 		stream.last = sequence
 		stream.lastSeen = at
-		m.arrivals = append(m.arrivals, voiceArrival{at: at})
+		m.appendArrival(voiceArrival{at: at})
 		return
 	}
 	if missingAt, ok := stream.missing[sequence]; ok {
 		delete(stream.missing, sequence)
 		stream.lastSeen = at
-		for i := range m.arrivals {
+		// Gaps are recorded recently, so search from the newest arrival.
+		for i := len(m.arrivals) - 1; i >= 0 && !m.arrivals[i].at.Before(missingAt); i-- {
 			if m.arrivals[i].lost && m.arrivals[i].at.Equal(missingAt) {
 				m.arrivals[i].lost = false
 				return
@@ -186,18 +212,28 @@ func (m *connectionMeasurements) recordVoice(sender uint64, sequence uint32, at 
 		return // duplicate or old packet
 	}
 	gap := sequence - stream.last - 1
-	if gap > 1024 { // discontinuity: avoid treating a restarted stream as massive loss
-		stream.missing = make(map[uint32]time.Time)
+	if gap > maxSequenceGap { // discontinuity: avoid treating a restarted stream as massive loss
+		clear(stream.missing)
+		stream.missingOrder = stream.missingOrder[:0]
 		gap = 0
 	}
 	for i := uint32(1); i <= gap; i++ {
 		missing := stream.last + i
 		stream.missing[missing] = at
-		m.arrivals = append(m.arrivals, voiceArrival{at: at, lost: true})
+		stream.missingOrder = append(stream.missingOrder, missing)
+		m.appendArrival(voiceArrival{at: at, lost: true})
 	}
+	stream.dropOldestMissing(at.Add(-statsWindow), maxStatsPackets)
 	stream.last = sequence
 	stream.lastSeen = at
-	m.arrivals = append(m.arrivals, voiceArrival{at: at})
+	m.appendArrival(voiceArrival{at: at})
+}
+
+func (m *connectionMeasurements) appendArrival(arrival voiceArrival) {
+	m.arrivals = append(m.arrivals, arrival)
+	if len(m.arrivals) > maxStatsPackets {
+		m.arrivals = m.arrivals[len(m.arrivals)-maxStatsPackets:]
+	}
 }
 
 // recordRedundant counts a redundant copy that fills a frame the primary
@@ -230,7 +266,7 @@ func (m *connectionMeasurements) recordConcealed(at time.Time) {
 }
 
 func (m *connectionMeasurements) recordLossBurst(length uint32, at time.Time) {
-	if length == 0 || length > 1024 { // discontinuity, as in recordVoice
+	if length == 0 || length > maxSequenceGap { // discontinuity, as in recordVoice
 		return
 	}
 	m.mu.Lock()
@@ -265,11 +301,7 @@ func (m *connectionMeasurements) trim(now time.Time) {
 	}
 	m.lossBursts = m.lossBursts[i:]
 	for id, stream := range m.senders {
-		for sequence, at := range stream.missing {
-			if at.Before(cutoff) {
-				delete(stream.missing, sequence)
-			}
-		}
+		stream.dropOldestMissing(cutoff, maxStatsPackets)
 		if len(stream.missing) == 0 && stream.lastSeen.Before(cutoff) {
 			delete(m.senders, id)
 		}

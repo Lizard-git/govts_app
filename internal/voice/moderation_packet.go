@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -60,7 +61,8 @@ func (a *Authenticator) HandleModeration(conn *udp.ServerPacketConn, hub *Hub, c
 		cache.RemoveSession(targetID)
 	case protocol.PacketBan:
 		if err := a.store.SetBan(ctx, fmt.Sprint(actor.UserID), target.UserID, true, "moderator action"); err != nil {
-			return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+			log.Printf("moderation ban failed: actor_user_id=%d target_user_id=%d error=%v", actor.UserID, target.UserID, err)
+			return cacheAndSendSessionError(conn, cache, packet, addr, "ban failed")
 		}
 		for _, id := range hub.RemoveUserSessions(target.UserID) {
 			a.codec.Remove(id)
