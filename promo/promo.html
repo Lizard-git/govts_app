@@ -60,7 +60,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <header class="hero"><div class="hero-in">
 <div class="eyebrow">Sonoryx · технический справочник</div>
 <h1>Протокол <span>Sonoryx</span></h1>
-<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.4.8, сервер 0.3.0). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
+<p>Как устроены голос, control и чат поверх защищённого UDP и демонстрация экрана поверх WebRTC. Описание по коду ветки <code>develop</code> (клиент 0.5.4, сервер 0.3.4). Источники: <code>internal/protocol</code>, <code>internal/auth</code>, <code>internal/voice</code>, <code>internal/client</code>, <code>internal/media</code>, <code>protocol-encryption.md</code>.</p>
 <div class="kpis">
 <div class="kpi"><b>17 B</b><span>заголовок пакета</span></div>
 <div class="kpi"><b>1200 B</b><span>макс. payload</span></div>
@@ -142,7 +142,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <h3>Transcript T</h3>
 <pre>T = H("govts-auth-v1" ‖ RequestID ‖ version ‖ AuthInit целиком ‖
       serverEd25519Pub ‖ serverX25519Eph ‖ nonceS)</pre>
-<p>Обе подписи (сервера и клиента) — Ed25519 над T. Изменение любого поля — в том числе версии и RequestID — ломает проверку. В <code>Sequence</code> клиент передаёт минимальную версию сервера из <code>version/release.json</code> (сейчас <code>0.3.0</code>; <code>internal/client/request.go</code>, <code>internal/client/secure_handshake.go</code>). Если версия сервера ниже, он отвечает <code>ServerVersionTooOld</code> (<code>internal/voice/auth.go</code>, <code>internal/voice/control.go</code>). Отдельно сервер отвергает клиента, который запрашивает уровень ниже <code>0.3.0</code> (snapshot v7 и presence; <code>minimumSecureClientVersion</code> в <code>internal/voice/auth.go</code>).</p>
+<p>Подписи с разными метками домена: сервер — <code>Ed25519("govts-server-auth-v1" ‖ T)</code>, клиент — <code>Ed25519("govts-client-auth-v1" ‖ T)</code> (<code>internal/auth/handshake.go</code>), поэтому подпись одной стороны нельзя выдать за подпись другой. Изменение любого поля — в том числе версии и RequestID — ломает проверку. В <code>Sequence</code> клиент передаёт минимальную версию сервера из <code>version/release.json</code> (сейчас <code>0.3.0</code>; <code>internal/client/request.go</code>, <code>internal/client/secure_handshake.go</code>). Если версия сервера ниже, он отвечает <code>ServerVersionTooOld</code> (<code>internal/voice/auth.go</code>, <code>internal/voice/control.go</code>). Отдельно сервер отвергает клиента, который запрашивает уровень ниже <code>0.3.0</code> (snapshot v7 и presence; <code>minimumSecureClientVersion</code> в <code>internal/voice/auth.go</code>).</p>
 <h3>Вывод ключей</h3>
 <pre>shared = X25519(eph_priv_own, eph_pub_peer)
 c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
@@ -156,11 +156,13 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 <ul>
 <li>Ключ — <code>(IP:port, RequestID)</code>, живёт 30 с.</li>
 <li>Повтор идентичного AuthInit/AuthFinish → тот же challenge/ack (UDP-ретраи безопасны). Тот же RequestID с другими данными → отказ.</li>
-<li>Лимиты: 60 новых handshake/мин с IP, 512 одновременных pending.</li>
+<li>Лимиты считаются по сети клиента: /24 для IPv4, /64 для IPv6 (<code>addressNetwork</code>). На сеть — 60 новых AuthInit/мин, ≤ 32 pending, 180 AuthFinish/мин и 10 новых аккаунтов/ч (новым считается ключ, которого нет в <code>users</code>, <code>Store.AccountExists</code>). Глобально ≤ 512 pending; при переполнении вытесняется самый старый.</li>
+<li>Неверная подпись в AuthFinish удаляет challenge: следующий Finish получает «authentication challenge expired», новая попытка — только через новый AuthInit. Ed25519-проверка на один challenge выполняется не чаще одного раза.</li>
+<li>Ошибки хранилища и установки ключей клиенту приходят как «authentication failed: server error», подробности — в лог сервера.</li>
 <li>Следствие: если NAT поменяет порт во время ретрая, handshake начнётся заново.</li>
 </ul>
 <h3>TOFU</h3>
-<p>Клиент хранит <code>%APPDATA%\Sonoryx\voice-pins.json</code>: <code>host:port → serverEd25519Pub</code>. Первый контакт закрепляет ключ, смена ключа — отказ подключения. Идентичность клиента — seed в <code>client.seed</code> (Base64, не зашифрован); учётная запись на сервере = публичный ключ, имя — только отображение.</p>
+<p>Клиент хранит <code>%APPDATA%\Sonoryx\voice-pins.json</code>: <code>host:port → serverEd25519Pub</code>. Первый контакт закрепляет ключ, смена ключа — отказ подключения. Идентичность клиента — seed в <code>client.seed</code> (Base64, не зашифрован); учётная запись на сервере = публичный ключ, имя — только отображение. Имя проходит NFKC-нормализацию и не может содержать управляющие символы и символы формата Unicode (Cf: bidi-override, ZWSP/ZWJ/ZWNJ, BOM); запрет Cf действует и для имён каналов и сервера. Два онлайн-аккаунта не могут занимать одно имя без учёта регистра — AuthFinish получает «display name is already in use». У забаненного аккаунта имя при входе не обновляется (<code>internal/voice/hub.go</code>, <code>internal/persist/store.go</code>).</p>
 
 </section>
 <section id="rec"><h2><span class="n">05</span>Защищённая запись на проводе</h2>
@@ -209,7 +211,7 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 </ul>
 <div class="note">Узкое место: <code>policyGate</code> берётся и для голосовых пакетов, а <code>AuthFinish</code> делает SQLite-запрос под ним. См. <code>project-review.md</code> §1.1.</div>
 <h3>Hub</h3>
-<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, away, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии. <code>AcceptAttention</code> пропускает 2 вызова серии и резервирует слот в том же захвате мьютекса. <code>ReleaseAttention</code> возвращает слот, если кадр цели не отправлен. Отказ пишет блокировку 10 с–10 мин и не снимает её следующим запросом. Обнуление ступени — только по истечении срока.</p>
+<p><code>internal/voice/hub.go</code> — источник истины под <code>sync.RWMutex</code>: сессии (ID, адрес, user_id, права, канал, mute/deafen, away, media credential, время активности), дерево каналов, <code>StateRevision</code>. Каждая мутация увеличивает ревизию и кладёт <code>StateEvent</code> в outbox. Наружу отдаются только копии. Новая сессия отклоняется, если онлайн уже <code>-max-sessions</code> сессий (по умолчанию 1000) или у аккаунта их 4 (<code>MaxSessionsPerAccount</code>); сессии того же endpoint, которые заменяются, не учитываются. Media credential сравнивается за постоянное время (<code>subtle.ConstantTimeCompare</code>). <code>AcceptAttention</code> пропускает 2 вызова серии и резервирует слот в том же захвате мьютекса. <code>ReleaseAttention</code> возвращает слот, если кадр цели не отправлен. Отказ пишет блокировку 10 с–10 мин и не снимает её следующим запросом. Обнуление ступени — только по истечении срока.</p>
 <h3>RequestCache</h3>
 <p><code>internal/voice/cache.go</code>. Ключ — (SessionID, RequestID). Повтор control-запроса получает сохранённый ответ, мутация не выполняется дважды. Клиент повторяет запрос до ответа или таймаута (<code>internal/client/request.go</code>).</p>
 
@@ -225,6 +227,7 @@ pre-roll 60 мс, hangover 300 мс) → Opus encode, кадр 20 мс
 <h3>Сервер</h3>
 <ol>
 <li>Проверка: сессия существует, адрес совпадает (иначе пакет молча отброшен).</li>
+<li>Проверка скачка Sequence (<code>Hub.AcceptVoiceSequence</code>): вперёд допускается не больше 64 кадров плюс один кадр на каждые 10 мс с предыдущего принятого пакета; дальше пакет молча отбрасывается. Настоящая потеря оставляет паузу и проходит, поддельный скачок — нет. Шаг назад больше 64 считается перезапуском отправителя и сбрасывает точку отсчёта.</li>
 <li>Учёт прибытия (<code>RecordVoicePacket</code>) для статистики потерь.</li>
 <li>Получатели = все сессии в канале отправителя, кроме него самого (deafen учитывается по событиям/клиенту).</li>
 <li>При включённом <code>-voice-redundancy</code> и клиенте ≥ 0.2.13 — <code>VoiceBundle</code> с текущим и предыдущим кадром, иначе обычный Voice (подробно — раздел 08).</li>
@@ -353,7 +356,7 @@ repeat frame_count:
 <table>
 <tr><th>Направление</th><th>Как измеряется</th></tr>
 <tr><td>client → server</td><td>Сервер ведёт окно прибытия Sequence за 35 с (≤ 4096 записей, дубли не считаются). Heartbeat клиента несёт в <code>Sequence</code>: младшие 14 бит — сколько кадров отправлено за ~30 с, старшие — последний Sequence (16 бит). Сервер отвечает в <code>HeartbeatAck.Sequence</code> долей потерь в сотых процента (0–10000).</td></tr>
-<tr><td>server → client</td><td>Счётчики jitter buffer клиента: <code>Lost</code>, <code>Concealed</code>, <code>Duplicates</code>, <code>TooOld</code> и гистограмма длин пропусков (<code>onGap</code>).</td></tr>
+<tr><td>server → client</td><td>Счётчики jitter buffer клиента: <code>Lost</code>, <code>Concealed</code>, <code>Duplicates</code>, <code>TooOld</code> и гистограмма длин пропусков (<code>onGap</code>). Окно потерь (<code>connection_stats.go</code>) считает пропуском скачок не больше 64 кадров (<code>maxSequenceGap</code>); больший скачок — разрыв без заполнения. Записи прибытия и пропусков ограничены 4096 и удаляются от старых к новым без обхода всей таблицы.</td></tr>
 </table>
 <p>Обе стороны отображаются в окне статистики «Подключено» (<code>internal/client/connection_stats.go</code>, <code>ConnectionStatsPopup.tsx</code>).</p>
 
@@ -385,7 +388,7 @@ repeat frame_count:
 <tr><td>Замена</td><td>Новая аутентификация того же аккаунта/endpoint заменяет старую сессию: её ключи и кэш удаляются.</td></tr>
 <tr><td>Timeout</td><td>Сервер удаляет сессию после 30 с без пакетов, рассылает событие ухода.</td></tr>
 <tr><td>Disconnect</td><td>Явный пакет Disconnect → немедленное удаление.</td></tr>
-<tr><td>Kick/Ban</td><td>Сессия удаляется; бан помечает аккаунт в SQLite и проверяется при каждом AuthFinish.</td></tr>
+<tr><td>Kick/Ban</td><td>Сессия удаляется; бан помечает аккаунт в SQLite и проверяется при каждом AuthFinish. Сбой записи бана клиенту приходит как «ban failed», причина — в лог.</td></tr>
 </table>
 
 </section>
@@ -394,6 +397,7 @@ repeat frame_count:
 <li>Адресат: текущий канал или личный диалог с <code>user_id</code> (в том числе офлайн).</li>
 <li>Операции <code>ChatRequest</code>: send, history (курсор, вперёд/назад), dialogs, read-позиция. Текст ≤ 1000 B UTF-8, страница ≤ 1200 B.</li>
 <li>Сервер: очередь 128, ≤ 4 ожидающих на пользователя, таймаут 3 с. Права проверяются под policyGate, SQLite — вне голосового цикла.</li>
+<li>Ошибки: клиенту показываются только отказы <code>domain.ChatRejection</code> (проверка текста, адресата, прав); сбои SQLite приходят как «хранилище чата недоступно; повторите позже», подробности — в лог (<code>chatErrorText</code>). Несуществующий и забаненный получатель личного сообщения дают одинаковый ответ «получатель недоступен».</li>
 <li>Идемпотентность: уникальная пара <code>(sender_id, client_id)</code> — повтор после reconnect не создаёт дубль.</li>
 <li><code>ChatChanged</code> — уведомление «есть новое»; клиент дополнительно опрашивает раз в 5 с для восстановления потерь.</li>
 </ul>
@@ -407,9 +411,10 @@ repeat frame_count:
 media.Manager (Pion SFU) ── SDP answer ──► клиент
 WebRTC DTLS-SRTP, VP8 / H.264 / VP9 / AV1 + необязательный звук Opus, UDP 20000–20100</pre>
 <ul>
-<li>TLS-сертификат самоподписанный (<code>sonoryx-media.crt/.key</code>); клиент сверяет SHA-256 отпечаток — отдельный TOFU, хранится в <code>clientsettings</code>.</li>
+<li>TLS-сертификат самоподписанный (<code>sonoryx-media.crt/.key</code>); клиент сверяет SHA-256 отпечаток — отдельный TOFU, хранится в <code>clientsettings</code>. Перед первым закреплением клиент показывает отпечаток в диалоге (<code>MediaTrustConfirm.tsx</code>); без подтверждения демонстрация и просмотр не начинаются. Сервер пишет отпечаток в лог при старте. Смена известного ключа по-прежнему отвергается.</li>
 <li>Доступ к потоку проверяется по состоянию Hub (тот же канал, права); раз в секунду идёт сверка подписок.</li>
-<li>Публичный адрес ICE задаётся <code>-media-advertised-ip</code>; TURN/TCP fallback нет.</li>
+<li>Публичный адрес ICE задаётся <code>-media-advertised-ip</code>; TURN/TCP fallback нет. Сервер — ICE-lite (<code>SetLite(true)</code>): сам не шлёт STUN-проверки, только отвечает клиенту. Loopback-, private-, link-local- и unspecified-кандидаты из SDP клиента отбрасываются до <code>SetRemoteDescription</code> (<code>withoutLocalCandidates</code>), так что клиент не может направить сервер на его же внутреннюю сеть.</li>
+<li>Лимиты подписок (<code>internal/media/manager.go</code>): ≤ 2 подписки одной сессии на один поток, ≤ 8 всего на сессию; число PeerConnection на сервере ≤ 256 и не больше размера диапазона UDP-портов. Превышение — HTTP 429, отказ в доступе — 403, прочие ошибки — 400 с общим текстом «media operation failed», если ошибка не публичная (<code>writeMediaError</code>).</li>
 <li>Обновление сервера: <code>scripts/deploy-server.ps1</code> до загрузки проверяет существование каталога, право записи и config. Default: <code>/opt/sonoryx</code>, tmux <code>sonoryx-server</code>; для старой установки передаются <code>-RemoteDir /opt/govts -TmuxSession govts-server</code>. <code>scripts/redeploy-server.sh</code> распознаёт бинарники <code>sonoryx-server*</code> и <code>govts-server*</code> только в заданном APP_DIR с совпадающим cwd процесса; штатная остановка предшествует замене бинарника. Рабочий каталог сохраняет существующие БД и identity-файлы, rollback использует предыдущий бинарник. Источники: <code>scripts/deploy-server.ps1</code>, <code>scripts/redeploy-server.sh</code>, <code>cmd/server/main.go</code>.</li>
 <li><code>POST /media/capabilities</code> использует те же credential и TLS pin; ответ <code>{codecs:[{mimeType,sdpFmtpLine,payloadType}], audio:[{mimeType,sdpFmtpLine,payloadType}]}</code>; поле <code>audio</code> (Opus) значит, что сервер пересылает звук демонстрации, без него клиент публикует только видео. Только HTTP 404 означает старый VP8-only сервер; сетевые ошибки и смена pin остаются ошибками. Источники: <code>internal/media/http.go</code>, <code>internal/clientapp/media.go</code>, <code>internal/ui/wails/service.go</code>.</li>
 <li>RTP/SDP: VP8 PT 96 (RTX 97); H.264 PT 102 (RTX 103), constrained baseline <code>profile-level-id=42e034</code>, <code>packetization-mode=1</code>, <code>level-asymmetry-allowed=1</code>; VP9 profile 0 PT 98 (RTX 99); AV1 PT 104 (RTX 105). Звук демонстрации: Opus 48000/2 PT 111, <code>minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1</code>, без NACK feedback (Pion не создаёт для него NACK responder/generator). PT согласуются отдельно для каждого PeerConnection. Сервер не перекодирует ни видео, ни звук; H.265 не включён. Источник: <code>internal/media/codecs.go</code>.</li>
@@ -448,12 +453,16 @@ WebRTC DTLS-SRTP, VP8 / H.264 / VP9 / AV1 + необязательный зву�
 <tr><td>Heartbeat / ACK</td><td>5 с / 3 с</td><td>client</td></tr>
 <tr><td>Session timeout</td><td>30 с</td><td>server</td></tr>
 <tr><td>Reconnect backoff</td><td>1, 2, 4, 4… с</td><td>clientapp</td></tr>
-<tr><td>Pending handshake</td><td>512, TTL 30 с, 60/мин на IP</td><td>voice/auth.go</td></tr>
+<tr><td>Pending handshake</td><td>512 (вытеснение старейшего), TTL 30 с; на сеть /24 или /64: 32 pending, 60 AuthInit/мин, 180 AuthFinish/мин</td><td>voice/auth.go</td></tr>
+<tr><td>Новые аккаунты</td><td>10/ч на сеть /24 или /64</td><td>voice/auth.go</td></tr>
+<tr><td>Сессии</td><td>1000 (<code>-max-sessions</code>), 4 на аккаунт</td><td>voice/hub.go</td></tr>
+<tr><td>Скачок Sequence</td><td>сервер: 64 + 1 кадр на 10 мс паузы; клиент: пропуск ≤ 64, ≤ 4096 записей</td><td>voice/hub.go, client/connection_stats.go</td></tr>
 <tr><td>Anti-replay окно</td><td>64</td><td>protocol/secure</td></tr>
 <tr><td>Event outbox</td><td>256</td><td>voice/events.go</td></tr>
 <tr><td>Чат</td><td>очередь 128, 4 на пользователя, текст 1000 B</td><td>voice/chat.go</td></tr>
 <tr><td>Status</td><td>100/с глобально, 120/мин на IP, 4096 IP</td><td>voice/server_status.go</td></tr>
 <tr><td>Signaling body</td><td>256 KiB</td><td>media/http.go</td></tr>
+<tr><td>Подписки на экран</td><td>2 на поток, 8 на сессию, ≤ 256 PeerConnection (не больше UDP-портов), иначе HTTP 429</td><td>media/manager.go, media/webrtc.go</td></tr>
 <tr><td>SQLite</td><td>1 соединение, WAL, busy_timeout 5 с</td><td>persist/store.go</td></tr>
 </table>
 
