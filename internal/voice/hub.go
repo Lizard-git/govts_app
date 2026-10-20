@@ -2,6 +2,7 @@ package voice
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -31,12 +32,19 @@ var (
 	ErrScreenStreamExists    = errors.New("session already has an active screen stream")
 	ErrScreenStreamNotFound  = errors.New("screen stream not found")
 	ErrScreenStreamForbidden = errors.New("screen stream is not owned by session")
+	ErrServerFull            = errors.New("server is full")
+	ErrAccountSessionLimit   = errors.New("too many sessions for this account")
+	ErrDisplayNameTaken      = errors.New("display name is already in use")
 )
 
 const (
 	DefaultChannelID   domain.ChannelID = 1
 	DefaultChannelName                  = "default"
 	DefaultServerName                   = "ReCon Server"
+	// DefaultMaxSessions bounds online sessions unless SetMaxSessions changes it.
+	DefaultMaxSessions = 1000
+	// MaxSessionsPerAccount bounds the sessions one account holds at once.
+	MaxSessionsPerAccount = 4
 )
 
 type sessionIDGenerator func() (uint64, error)
@@ -54,6 +62,7 @@ type Hub struct {
 	serverVersion appversion.Number
 	voiceBundles  bool
 	publicStatus  bool
+	maxSessions   int
 	outbox        []domain.StateEvent
 	eventReady    chan struct{}
 }
@@ -114,6 +123,7 @@ func newHubWithServerInfo(newSessionID sessionIDGenerator, info domain.ServerInf
 		nextChannelID: DefaultChannelID,
 		serverInfo:    info,
 		serverVersion: 1 << 16, // 0.1.0 for in-process test hubs
+		maxSessions:   DefaultMaxSessions,
 		eventReady:    make(chan struct{}, 1),
 	}
 	if includeDefault {
@@ -188,6 +198,16 @@ func (h *Hub) Get(id uint64) (Session, bool) {
 		return Session{}, false
 	}
 	return *cloneSession(s), true
+}
+
+// SetMaxSessions bounds online sessions; values below 1 keep the current limit.
+func (h *Hub) SetMaxSessions(limit int) {
+	if limit < 1 {
+		return
+	}
+	h.mu.Lock()
+	h.maxSessions = limit
+	h.mu.Unlock()
 }
 
 // SetVoiceBundles enables server → client voice redundancy for sessions that
@@ -812,6 +832,26 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 	if addr == nil || userID <= 0 {
 		return Session{}, nil, errors.New("authenticated session requires an account and endpoint")
 	}
+	// Sessions at this endpoint are replaced, so they do not count against the
+	// limits or hold the name.
+	remaining, accountSessions := 0, 0
+	for _, old := range h.sessions {
+		if sameUDPAddr(old.Addr, addr) {
+			continue
+		}
+		remaining++
+		if old.UserID == userID {
+			accountSessions++
+		} else if strings.EqualFold(old.Name, name) {
+			return Session{}, nil, ErrDisplayNameTaken
+		}
+	}
+	if remaining >= h.maxSessions {
+		return Session{}, nil, ErrServerFull
+	}
+	if accountSessions >= MaxSessionsPerAccount {
+		return Session{}, nil, ErrAccountSessionLimit
+	}
 	var replaced []uint64
 	for id, old := range h.sessions {
 		if !sameUDPAddr(old.Addr, addr) {
@@ -895,7 +935,7 @@ func (h *Hub) AuthenticateMedia(sessionID uint64, credential [32]byte) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	session, ok := h.sessions[sessionID]
-	return ok && credential != ([32]byte{}) && session.MediaCredential == credential
+	return ok && credential != ([32]byte{}) && subtle.ConstantTimeCompare(session.MediaCredential[:], credential[:]) == 1
 }
 
 func (h *Hub) touchAt(sessionID uint64, now time.Time) error {
@@ -983,9 +1023,11 @@ func validChannelName(name string) bool {
 		strings.TrimSpace(name) == name
 }
 
+// hasNameControlCharacters reports control and format (Cf) characters. Bidi
+// overrides and zero-width marks could make one name pass for another.
 func hasNameControlCharacters(name string) bool {
 	return strings.ContainsFunc(name, func(r rune) bool {
-		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r)
 	})
 }
 

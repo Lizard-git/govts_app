@@ -200,6 +200,9 @@ func scanAccount(row *sql.Row) (Account, error) {
 	return account, nil
 }
 
+// FindOrCreateAccount returns the account for key, creating it on first use. A
+// known account takes the new display name unless it is banned: a banned
+// account keeps the name it was banned under.
 func (s *Store) FindOrCreateAccount(ctx context.Context, key [32]byte, name string) (Account, error) {
 	if name == "" {
 		return Account{}, errors.New("account display name is required")
@@ -207,11 +210,21 @@ func (s *Store) FindOrCreateAccount(ctx context.Context, key [32]byte, name stri
 	if key == ([32]byte{}) {
 		return Account{}, errors.New("account public key is required")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO users(public_key, display_name, created_at) VALUES(?,?,?) ON CONFLICT(public_key) DO UPDATE SET display_name=excluded.display_name`, key[:], name, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users(public_key, display_name, created_at) VALUES(?,?,?) ON CONFLICT(public_key) DO UPDATE SET display_name=excluded.display_name WHERE banned=0`, key[:], name, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return Account{}, err
 	}
 	return scanAccount(s.db.QueryRowContext(ctx, `SELECT id, public_key, display_name, join_level, permissions, banned, owner FROM users WHERE public_key=?`, key[:]))
+}
+
+// AccountExists reports whether an account is registered for key.
+func (s *Store) AccountExists(ctx context.Context, key [32]byte) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE public_key=?`, key[:]).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Store) Account(ctx context.Context, id int64) (Account, error) {
