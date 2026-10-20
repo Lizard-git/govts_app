@@ -232,6 +232,10 @@ export const en = {
         showing: "is sharing a screen",
         nobody: "Nobody is sharing a screen.",
         mediaKeyChanged: (fingerprint: string) => `The media server key changed. New fingerprint: ${fingerprint}`,
+        mediaTrustTitle: "Trust this media server?",
+        mediaTrustText: "Screen sharing is connecting to this server's media service for the first time. Check that the fingerprint matches the one the server administrator gave you.",
+        mediaTrustCancel: "Cancel",
+        mediaTrustAccept: "Trust",
     },
     settings: {
         title: "Settings",

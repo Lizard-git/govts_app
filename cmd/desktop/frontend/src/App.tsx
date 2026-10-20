@@ -7,6 +7,7 @@ import {buildChannelGroups, canMoveParticipant, mergeEventTail} from "./model";
 import {ScreenMediaController} from "./features/screen/screenMedia";
 import {ScreenSharing, ScreenStageTile, ScreenViewerWindow} from "./features/screen/ScreenViews";
 import {LinkConfirmDialog} from "./features/chat/LinkConfirm";
+import {MediaTrustDialog} from "./features/screen/MediaTrustConfirm";
 import {ScreenShareDialog, useScreenSharing, type ScreenSharingState} from "./features/screen/ScreenShareDialog";
 import {AudioControls, ConnectionPage, LobbyBar, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
@@ -442,6 +443,7 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         <ScreenShareDialog sharing={sharing}/>
         <UpdateDialog updates={updates}/>
         <LinkConfirmDialog/>
+        <MediaTrustDialog/>
     </div>;
 }
 
