@@ -3,6 +3,7 @@ package media
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 
 func TestHTTPHandlerRequiresBoundSessionCredential(t *testing.T) {
 	hub := voice.NewHub()
-	session, err := hub.CreateSession("alice", nil)
+	session, _, err := hub.CreateAuthenticatedSession("alice", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}, 1, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestHTTPHandlerRequiresBoundSessionCredential(t *testing.T) {
 
 func TestCapabilitiesAreAuthenticatedAndStrictJSON(t *testing.T) {
 	hub := voice.NewHub()
-	session, err := hub.CreateSession("alice", nil)
+	session, _, err := hub.CreateAuthenticatedSession("alice", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}, 1, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,25 +31,17 @@ func (w *droppingEventWriter) WritePacket(id uint64, addr *net.UDPAddr, p protoc
 }
 
 func TestLiveClientsAndLostLastEventRecovery(t *testing.T) {
-	raw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := udp.NewServerPacketConn(raw, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
+	server := newSecureTestServer(t)
 	hub := voice.NewHub()
 	channel, err := hub.CreateChannel(domain.Channel{Name: "other"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopServer := serveTestHub(t, server, hub)
+	stopServer := server.serve(t, hub)
 	defer stopServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := &droppingEventWriter{conn: server}
+	w := &droppingEventWriter{conn: server.conn}
 	dispatchDone := make(chan error, 1)
 	go func() { dispatchDone <- voice.DispatchEvents(ctx, hub, w) }()
 	defer func() {
@@ -65,22 +57,9 @@ func TestLiveClientsAndLostLastEventRecovery(t *testing.T) {
 	}()
 	connect := func(name string) (*State, *udp.ClientPacketConn) {
 		t.Helper()
-		rawClient, err := net.DialUDP("udp4", nil, raw.LocalAddr().(*net.UDPAddr))
-		if err != nil {
-			t.Fatal(err)
-		}
-		conn, err := udp.NewClientPacketConn(rawClient, protocol.PlainDatagramCodec{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { conn.Close() })
-		id, err := PerformHandshakeAttempt(ctx, conn, name, time.Second)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := conn.BindSession(id); err != nil {
-			t.Fatal(err)
-		}
+		client := newSecureTestClient(t, server.addr())
+		conn := client.conn
+		id := client.connect(t, ctx, name)
 		s := NewState(id, name)
 		stop := startTestControlPipeline(t, conn, s)
 		t.Cleanup(stop)

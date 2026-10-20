@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,11 +32,11 @@ func TestBootstrapHubUsesOnlyBuiltinDefaultChannel(t *testing.T) {
 		t.Fatalf("default channel = %+v", defaultChannel)
 	}
 
-	alice, err := hub.CreateSession("alice", nil)
+	alice, _, err := hub.CreateAuthenticatedSession("alice", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}, 1, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := hub.CreateSession("bob", nil)
+	bob, _, err := hub.CreateAuthenticatedSession("bob", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9001}, 2, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

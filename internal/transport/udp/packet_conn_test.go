@@ -36,7 +36,7 @@ func TestClientPacketConnClearsOnlyExpectedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := NewClientPacketConn(clientRaw, protocol.PlainDatagramCodec{})
+	conn, err := NewClientPacketConn(clientRaw, protocol.NewSecureDatagramCodec(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestPacketConnConstructorsEnforceSocketMode(t *testing.T) {
 	}
 	defer serverRaw.Close()
 
-	if _, err := NewClientPacketConn(serverRaw, protocol.PlainDatagramCodec{}); err == nil {
+	if _, err := NewClientPacketConn(serverRaw, protocol.NewSecureDatagramCodec(false)); err == nil {
 		t.Fatal("NewClientPacketConn() accepted an unconnected socket")
 	}
 
@@ -250,7 +250,7 @@ func TestPacketConnConstructorsEnforceSocketMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clientRaw.Close()
-	if _, err := NewServerPacketConn(clientRaw, protocol.PlainDatagramCodec{}); err == nil {
+	if _, err := NewServerPacketConn(clientRaw, protocol.NewSecureDatagramCodec(true)); err == nil {
 		t.Fatal("NewServerPacketConn() accepted a connected socket")
 	}
 }
@@ -265,7 +265,7 @@ func TestClientPacketConnSessionBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := NewClientPacketConn(clientRaw, protocol.PlainDatagramCodec{})
+	conn, err := NewClientPacketConn(clientRaw, protocol.NewSecureDatagramCodec(false))
 	if err != nil {
 		_ = clientRaw.Close()
 		t.Fatal(err)
@@ -304,7 +304,7 @@ func TestClientPacketConnCloseIsIdempotentAndUnblocksRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := NewClientPacketConn(clientRaw, protocol.PlainDatagramCodec{})
+	conn, err := NewClientPacketConn(clientRaw, protocol.NewSecureDatagramCodec(false))
 	if err != nil {
 		_ = clientRaw.Close()
 		t.Fatal(err)

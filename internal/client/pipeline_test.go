@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -41,8 +45,9 @@ func newJoinTestPeer(t *testing.T) *joinTestPeer {
 		_ = serverConn.Close()
 		t.Fatal(err)
 	}
-	serverPacketConn := mustServerPacketConn(t, serverConn)
-	clientPacketConn := mustClientPacketConn(t, clientConn)
+	serverCodec, clientCodec := protocoltest.Pair(t, 42)
+	serverPacketConn := mustServerPacketConn(t, serverConn, serverCodec)
+	clientPacketConn := mustClientPacketConn(t, clientConn, clientCodec)
 	if err := clientPacketConn.BindSession(42); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +89,8 @@ func (p *joinTestPeer) sendResponse(
 	addr *net.UDPAddr,
 	response protocol.VoicePacket,
 ) error {
-	return p.serverConn.WritePacket(response.SessionID, addr, response)
+	// Responses carrying another session ID still use the peer's keys.
+	return p.serverConn.WritePacket(42, addr, response)
 }
 
 func TestJoinChannelRejectsZeroID(t *testing.T) {
@@ -99,8 +105,12 @@ func TestJoinChannelRejectsZeroID(t *testing.T) {
 	}
 }
 
-func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
-	serverConn, clientConn := newHandshakeTestConnections(t)
+func authTestRequest(requestID uint32) protocol.VoicePacket {
+	return protocol.VoicePacket{Type: protocol.PacketAuthInit, RequestID: requestID, Sequence: 3 << 16}
+}
+
+func TestExchangeAuthRetriesWithSameRequestID(t *testing.T) {
+	serverConn, clientConn := newTestConnections(t)
 	serverErrCh := make(chan error, 1)
 
 	go func() {
@@ -126,34 +136,26 @@ func TestPerformHandshakeRetriesWithSameRequestID(t *testing.T) {
 			)
 			return
 		}
-		serverErrCh <- serverConn.WritePacket(99, addr, protocol.VoicePacket{
-			Type:      protocol.PacketHelloAck,
-			SessionID: 99,
+		serverErrCh <- serverConn.WritePacket(0, addr, protocol.VoicePacket{
+			Type:      protocol.PacketAuthChallenge,
 			RequestID: second.RequestID,
-			Sequence:  1 << 16,
 		})
 	}()
 
-	sessionID, err := performHandshakeWithRequestID(
-		context.Background(),
-		clientConn,
-		"alice",
-		17,
-		20*time.Millisecond,
-	)
+	response, err := exchangeAuth(context.Background(), clientConn, authTestRequest(17), protocol.PacketAuthChallenge, 17, 20*time.Millisecond, requestAttempts, 3<<16)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if serverErr := <-serverErrCh; serverErr != nil {
 		t.Fatal(serverErr)
 	}
-	if sessionID != 99 {
-		t.Fatalf("session ID = %d, want 99", sessionID)
+	if response.Type != protocol.PacketAuthChallenge || response.RequestID != 17 {
+		t.Fatalf("response = %+v, want challenge for request 17", response)
 	}
 }
 
-func TestPerformHandshakeFinalTimeout(t *testing.T) {
-	serverConn, clientConn := newHandshakeTestConnections(t)
+func TestExchangeAuthFinalTimeout(t *testing.T) {
+	serverConn, clientConn := newTestConnections(t)
 	serverErrCh := make(chan error, 1)
 
 	go func() {
@@ -170,23 +172,17 @@ func TestPerformHandshakeFinalTimeout(t *testing.T) {
 		serverErrCh <- nil
 	}()
 
-	_, err := performHandshakeWithRequestID(
-		context.Background(),
-		clientConn,
-		"alice",
-		17,
-		10*time.Millisecond,
-	)
-	if err == nil || !strings.Contains(err.Error(), "timed out after 3 attempts") {
-		t.Fatalf("performHandshakeWithRequestID() error = %v, want final timeout", err)
+	_, err := exchangeAuth(context.Background(), clientConn, authTestRequest(17), protocol.PacketAuthChallenge, 17, 10*time.Millisecond, requestAttempts, 3<<16)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("exchangeAuth() error = %v, want final timeout", err)
 	}
 	if serverErr := <-serverErrCh; serverErr != nil {
 		t.Fatal(serverErr)
 	}
 }
 
-func TestPerformHandshakeRejectsServerBelowMinimum(t *testing.T) {
-	serverConn, clientConn := newHandshakeTestConnections(t)
+func TestSecureHandshakeRejectsServerBelowMinimum(t *testing.T) {
+	serverConn, clientConn := newTestConnections(t)
 	serverErr := make(chan error, 1)
 	go func() {
 		request, addr, err := serverConn.ReadPacket()
@@ -194,15 +190,20 @@ func TestPerformHandshakeRejectsServerBelowMinimum(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		if request.Sequence != 2<<16 {
-			serverErr <- fmt.Errorf("minimum = %x, want 0.2.0", request.Sequence)
+		if request.Type != protocol.PacketAuthInit || request.Sequence != 3<<16 {
+			serverErr <- fmt.Errorf("request type=%d minimum=%x, want AuthInit for 0.3.0", request.Type, request.Sequence)
 			return
 		}
-		serverErr <- serverConn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketServerVersionTooOld, RequestID: request.RequestID, Sequence: 1 << 16})
+		serverErr <- serverConn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketServerVersionTooOld, RequestID: request.RequestID, Sequence: 2 << 16})
 	}()
-	_, err := PerformHandshakeAttempts(context.Background(), clientConn, "alice", time.Second, 1, "0.2.0")
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins := filepath.Join(t.TempDir(), "voice-pins.json")
+	_, err = PerformSecureHandshakeAttempts(context.Background(), clientConn, protocol.NewSecureDatagramCodec(false), "alice", key, pins, clientConn.RemoteAddr().String(), time.Second, 1, "0.3.0")
 	var versionErr *ServerVersionTooOldError
-	if !errors.As(err, &versionErr) || versionErr.Server.String() != "0.1.0" || versionErr.Required.String() != "0.2.0" {
+	if !errors.As(err, &versionErr) || versionErr.Server.String() != "0.2.0" || versionErr.Required.String() != "0.3.0" {
 		t.Fatalf("version error = %v", err)
 	}
 	if err := <-serverErr; err != nil {
@@ -210,7 +211,7 @@ func TestPerformHandshakeRejectsServerBelowMinimum(t *testing.T) {
 	}
 }
 
-func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
+func TestExchangeAuthSkipsRejectedDatagram(t *testing.T) {
 	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
@@ -220,8 +221,8 @@ func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
 		_ = serverRaw.Close()
 		t.Fatal(err)
 	}
-	serverConn := mustServerPacketConn(t, serverRaw)
-	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{})
+	serverConn := mustServerPacketConn(t, serverRaw, protocol.NewSecureDatagramCodec(true))
+	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{inner: protocol.NewSecureDatagramCodec(false)})
 	if err != nil {
 		_ = clientRaw.Close()
 		_ = serverConn.Close()
@@ -240,38 +241,30 @@ func TestPerformHandshakeSkipsRejectedDatagram(t *testing.T) {
 			return
 		}
 		response := protocol.VoicePacket{
-			Type:      protocol.PacketHelloAck,
-			SessionID: 99,
+			Type:      protocol.PacketAuthChallenge,
 			RequestID: request.RequestID,
-			Sequence:  1 << 16,
 		}
-		if err := serverConn.WritePacket(99, addr, response); err != nil {
+		if err := serverConn.WritePacket(0, addr, response); err != nil {
 			serverErrCh <- err
 			return
 		}
-		serverErrCh <- serverConn.WritePacket(99, addr, response)
+		serverErrCh <- serverConn.WritePacket(0, addr, response)
 	}()
 
-	sessionID, err := performHandshakeWithRequestID(
-		context.Background(),
-		clientConn,
-		"alice",
-		17,
-		time.Second,
-	)
+	response, err := exchangeAuth(context.Background(), clientConn, authTestRequest(17), protocol.PacketAuthChallenge, 17, time.Second, requestAttempts, 3<<16)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sessionID != 99 {
-		t.Fatalf("session ID = %d, want 99", sessionID)
+	if response.RequestID != 17 {
+		t.Fatalf("response request ID = %d, want 17", response.RequestID)
 	}
 	if err := <-serverErrCh; err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestPerformHandshakeSkipsStaleControlPacket(t *testing.T) {
-	serverConn, clientConn := newHandshakeTestConnections(t)
+func TestExchangeAuthSkipsStaleResponse(t *testing.T) {
+	serverConn, clientConn := newTestConnections(t)
 	serverErr := make(chan error, 1)
 	go func() {
 		request, addr, err := serverConn.ReadPacket()
@@ -279,18 +272,18 @@ func TestPerformHandshakeSkipsStaleControlPacket(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		if err := serverConn.WritePacket(88, addr, protocol.VoicePacket{Type: protocol.PacketJoinChannelAck, SessionID: 88, RequestID: request.RequestID + 1}); err != nil {
+		if err := serverConn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketAuthChallenge, RequestID: request.RequestID + 1, Payload: []byte("stale")}); err != nil {
 			serverErr <- err
 			return
 		}
-		serverErr <- serverConn.WritePacket(99, addr, protocol.VoicePacket{Type: protocol.PacketHelloAck, SessionID: 99, RequestID: request.RequestID, Sequence: 1 << 16})
+		serverErr <- serverConn.WritePacket(0, addr, protocol.VoicePacket{Type: protocol.PacketAuthChallenge, RequestID: request.RequestID})
 	}()
-	sessionID, err := performHandshakeWithRequestID(context.Background(), clientConn, "alice", 17, time.Second)
+	response, err := exchangeAuth(context.Background(), clientConn, authTestRequest(17), protocol.PacketAuthChallenge, 17, time.Second, requestAttempts, 3<<16)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sessionID != 99 {
-		t.Fatalf("session ID = %d", sessionID)
+	if response.RequestID != 17 || len(response.Payload) != 0 {
+		t.Fatalf("response = %+v, want the current challenge", response)
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)
@@ -499,7 +492,9 @@ func TestHeartbeatLoopRejectsInvalidTiming(t *testing.T) {
 	}
 }
 
-func newHandshakeTestConnections(
+// newTestConnections returns loopback connections whose codecs share keys for
+// session 42. Handshake packets travel unprotected, as on the real wire.
+func newTestConnections(
 	t *testing.T,
 ) (*udp.ServerPacketConn, *udp.ClientPacketConn) {
 	t.Helper()
@@ -520,8 +515,9 @@ func newHandshakeTestConnections(
 		_ = serverConn.Close()
 		t.Fatal(err)
 	}
-	serverPacketConn := mustServerPacketConn(t, serverConn)
-	clientPacketConn := mustClientPacketConn(t, clientConn)
+	serverCodec, clientCodec := protocoltest.Pair(t, 42)
+	serverPacketConn := mustServerPacketConn(t, serverConn, serverCodec)
+	clientPacketConn := mustClientPacketConn(t, clientConn, clientCodec)
 
 	t.Cleanup(func() {
 		_ = clientPacketConn.Close()
@@ -530,20 +526,20 @@ func newHandshakeTestConnections(
 	return serverPacketConn, clientPacketConn
 }
 
-func mustClientPacketConn(t *testing.T, conn *net.UDPConn) *udp.ClientPacketConn {
+func mustClientPacketConn(t *testing.T, conn *net.UDPConn, codec protocol.DatagramCodec) *udp.ClientPacketConn {
 	t.Helper()
 
-	packetConn, err := udp.NewClientPacketConn(conn, protocol.PlainDatagramCodec{})
+	packetConn, err := udp.NewClientPacketConn(conn, codec)
 	if err != nil {
 		t.Fatalf("NewClientPacketConn() error = %v", err)
 	}
 	return packetConn
 }
 
-func mustServerPacketConn(t *testing.T, conn *net.UDPConn) *udp.ServerPacketConn {
+func mustServerPacketConn(t *testing.T, conn *net.UDPConn, codec protocol.DatagramCodec) *udp.ServerPacketConn {
 	t.Helper()
 
-	packetConn, err := udp.NewServerPacketConn(conn, protocol.PlainDatagramCodec{})
+	packetConn, err := udp.NewServerPacketConn(conn, codec)
 	if err != nil {
 		t.Fatalf("NewServerPacketConn() error = %v", err)
 	}
@@ -551,7 +547,7 @@ func mustServerPacketConn(t *testing.T, conn *net.UDPConn) *udp.ServerPacketConn
 }
 
 func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
-	serverConn, clientConn := newHandshakeTestConnections(t)
+	serverConn, clientConn := newTestConnections(t)
 	if err := clientConn.BindSession(42); err != nil {
 		t.Fatal(err)
 	}
@@ -602,6 +598,7 @@ func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 }
 
 type rejectOnceCodec struct {
+	inner    protocol.DatagramCodec
 	rejected bool
 }
 
@@ -609,7 +606,7 @@ func (c *rejectOnceCodec) Encode(
 	ctx protocol.DatagramContext,
 	packet protocol.VoicePacket,
 ) ([]byte, error) {
-	return (protocol.PlainDatagramCodec{}).Encode(ctx, packet)
+	return c.inner.Encode(ctx, packet)
 }
 
 func (c *rejectOnceCodec) Decode(
@@ -623,7 +620,7 @@ func (c *rejectOnceCodec) Decode(
 			protocol.ErrRejectedDatagram,
 		)
 	}
-	return (protocol.PlainDatagramCodec{}).Decode(ctx, datagram)
+	return c.inner.Decode(ctx, datagram)
 }
 
 func TestReceiveLoopSkipsRejectedDatagram(t *testing.T) {
@@ -637,8 +634,9 @@ func TestReceiveLoopSkipsRejectedDatagram(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	serverConn := mustServerPacketConn(t, serverRaw)
-	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{})
+	serverCodec, clientCodec := protocoltest.Pair(t, 42)
+	serverConn := mustServerPacketConn(t, serverRaw, serverCodec)
+	clientConn, err := udp.NewClientPacketConn(clientRaw, &rejectOnceCodec{inner: clientCodec})
 	if err != nil {
 		_ = clientRaw.Close()
 		_ = serverConn.Close()

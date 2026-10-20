@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/persist"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -58,7 +60,8 @@ func TestChatCommittedSendIsAcknowledgedAfterChannelChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := udp.NewServerPacketConn(rawServer, protocol.PlainDatagramCodec{})
+	serverCodec, clientCodec := protocoltest.Pair(t)
+	server, err := udp.NewServerPacketConn(rawServer, serverCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +70,7 @@ func TestChatCommittedSendIsAcknowledgedAfterChannelChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := udp.NewClientPacketConn(rawClient, protocol.PlainDatagramCodec{})
+	client, err := udp.NewClientPacketConn(rawClient, clientCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +79,7 @@ func TestChatCommittedSendIsAcknowledgedAfterChannelChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	protocoltest.Install(t, session.ID, serverCodec, clientCodec)
 	channel := h.ListChannels()[0].ID
 	if err := h.JoinChannel(session.ID, channel); err != nil {
 		t.Fatal(err)

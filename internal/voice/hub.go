@@ -800,11 +800,6 @@ func (h *Hub) RecipientsFor(senderID uint64) ([]Session, error) {
 	return recipients, nil
 }
 
-func (h *Hub) CreateSession(name string, addr *net.UDPAddr) (Session, error) {
-	session, _, err := h.CreateSessionReplacingEndpoint(name, addr)
-	return session, err
-}
-
 // CreateAuthenticatedSession binds a fresh transport session to a verified
 // account. A prior session at the same endpoint is removed, regardless of its
 // display name or account, so endpoint reuse cannot inherit another identity.
@@ -837,53 +832,6 @@ func (h *Hub) CreateAuthenticatedSession(name string, addr *net.UDPAddr, userID 
 	h.sessions[id] = session
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, UserID: userID, DisplayName: name}})
-	return *cloneSession(session), replaced, nil
-}
-
-func (h *Hub) CreateSessionReplacingEndpoint(name string, addr *net.UDPAddr) (Session, []uint64, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := validateParticipantName(name); err != nil {
-		return Session{}, nil, err
-	}
-
-	var replaced []uint64
-	if addr != nil {
-		for oldID, oldSession := range h.sessions {
-			if sameUDPAddr(oldSession.Addr, addr) {
-				// A reconnect uses a new Hello request ID but keeps the UDP
-				// endpoint and display name. Resume that session so transient
-				// control-plane loss does not tear down its media publisher.
-				if oldSession.Name == name {
-					log.Printf("session resumed: id=%d name=%q addr=%v", oldID, name, addr)
-					oldSession.LastSeen = time.Now()
-					oldSession.voiceSeen = nil
-					oldSession.voiceArrivals = nil
-					return *cloneSession(oldSession), nil, nil
-				}
-				log.Printf("session removed: id=%d name=%q addr=%v reason=endpoint_replaced new_name=%q", oldID, oldSession.Name, oldSession.Addr, name)
-				delete(h.sessions, oldID)
-				h.stopScreenShareByOwnerLocked(oldID)
-				h.revision++
-				h.emitLocked(domain.StateEvent{Kind: domain.ParticipantLeft, SessionID: oldID})
-				replaced = append(replaced, oldID)
-			}
-		}
-	}
-	id, err := h.availableSessionID()
-	if err != nil {
-		return Session{}, nil, err
-	}
-	session := &Session{
-		ID:       id,
-		Name:     name,
-		Addr:     cloneUDPAddr(addr),
-		LastSeen: time.Now(),
-	}
-	h.sessions[id] = session
-	h.revision++
-	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantJoined, Participant: domain.Participant{SessionID: id, DisplayName: name}})
-	sort.Slice(replaced, func(i, j int) bool { return replaced[i] < replaced[j] })
 	return *cloneSession(session), replaced, nil
 }
 

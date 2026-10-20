@@ -8,6 +8,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -59,7 +60,8 @@ func TestHandleStateSnapshotPacketReturnsCachedDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err := udp.NewServerPacketConn(rawServer, protocol.PlainDatagramCodec{})
+	serverCodec, clientCodec := protocoltest.Pair(t)
+	serverConn, err := udp.NewServerPacketConn(rawServer, serverCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +70,14 @@ func TestHandleStateSnapshotPacketReturnsCachedDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientConn, err := udp.NewClientPacketConn(rawClient, protocol.PlainDatagramCodec{})
+	clientConn, err := udp.NewClientPacketConn(rawClient, clientCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clientConn.Close()
 	hub := NewHub()
 	session := mustCreateSession(t, hub, "alice", clientConn.LocalAddr().(*net.UDPAddr))
+	protocoltest.Install(t, session.ID, serverCodec, clientCodec)
 	if err := clientConn.BindSession(session.ID); err != nil {
 		t.Fatal(err)
 	}

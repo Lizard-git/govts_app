@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"net"
 	"testing"
 	"time"
 
@@ -15,34 +14,13 @@ import (
 )
 
 func TestClientRecoversAfterServerHubRestart(t *testing.T) {
-	rawServer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverConn, err := udp.NewServerPacketConn(rawServer, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer serverConn.Close()
-	rawClient, err := net.DialUDP("udp4", nil, rawServer.LocalAddr().(*net.UDPAddr))
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientConn, err := udp.NewClientPacketConn(rawClient, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn.Close()
+	server := newSecureTestServer(t)
+	alice := newSecureTestClient(t, server.addr())
+	clientConn := alice.conn
 
 	firstHub := voice.NewHub()
-	stopFirst := serveTestHub(t, serverConn, firstHub)
-	firstID, err := PerformHandshakeAttempt(context.Background(), clientConn, "alice", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := clientConn.BindSession(firstID); err != nil {
-		t.Fatal(err)
-	}
+	stopFirst := server.serve(t, firstHub)
+	firstID := alice.connect(t, context.Background(), "alice")
 	state := NewState(0, "alice")
 	if _, err := state.StartSession(firstID); err != nil {
 		t.Fatal(err)
@@ -54,7 +32,7 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 	stopFirst()
 
 	secondHub := voice.NewHub()
-	stopSecond := serveTestHub(t, serverConn, secondHub)
+	stopSecond := server.serve(t, secondHub)
 	defer stopSecond()
 	if err := heartbeatProbe(context.Background(), clientConn, state, time.Second); !errors.Is(err, ErrConnectionLost) {
 		t.Fatalf("old heartbeat error = %v", err)
@@ -64,15 +42,10 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 	if err := clientConn.ClearSession(firstID); err != nil {
 		t.Fatal(err)
 	}
-	secondID, err := PerformHandshakeAttempt(context.Background(), clientConn, "alice", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	alice.codec.Remove(firstID)
+	secondID := alice.connect(t, context.Background(), "alice")
 	if secondID == firstID {
 		t.Fatal("server restart reused session ID")
-	}
-	if err := clientConn.BindSession(secondID); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := state.StartSession(secondID); err != nil {
 		t.Fatal(err)
@@ -98,23 +71,10 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 		t.Fatalf("final snapshot = %+v", final)
 	}
 
-	rawReceiver, err := net.DialUDP("udp4", nil, rawServer.LocalAddr().(*net.UDPAddr))
-	if err != nil {
-		t.Fatal(err)
-	}
-	receiverConn, err := udp.NewClientPacketConn(rawReceiver, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiverConn.Close()
-	receiver, err := secondHub.CreateSession("bob", receiverConn.LocalAddr().(*net.UDPAddr))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := secondHub.JoinChannel(receiver.ID, channelID); err != nil {
-		t.Fatal(err)
-	}
-	if err := receiverConn.BindSession(receiver.ID); err != nil {
+	bob := newSecureTestClient(t, server.addr())
+	receiverConn := bob.conn
+	receiverID := bob.connect(t, context.Background(), "bob")
+	if err := secondHub.JoinChannel(receiverID, channelID); err != nil {
 		t.Fatal(err)
 	}
 	wantVoice := []byte{1, 2, 3, 4}
@@ -134,55 +94,19 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 }
 
 func TestHandshakeCanRetryWhenClientStartsBeforeServer(t *testing.T) {
-	rawServer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverConn, err := udp.NewServerPacketConn(rawServer, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer serverConn.Close()
-	rawClient, err := net.DialUDP("udp4", nil, rawServer.LocalAddr().(*net.UDPAddr))
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientConn, err := udp.NewClientPacketConn(rawClient, protocol.PlainDatagramCodec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn.Close()
+	server := newSecureTestServer(t)
+	alice := newSecureTestClient(t, server.addr())
 
-	if _, err := PerformHandshakeAttempt(context.Background(), clientConn, "alice", 20*time.Millisecond); err == nil {
+	if _, err := alice.handshake(context.Background(), "alice", 20*time.Millisecond, 1); err == nil {
 		t.Fatal("handshake succeeded before server started")
 	}
-	stopServer := serveTestHub(t, serverConn, voice.NewHub())
+	stopServer := server.serve(t, voice.NewHub())
 	defer stopServer()
-	if sessionID, err := PerformHandshakeAttempt(context.Background(), clientConn, "alice", time.Second); err != nil || sessionID == 0 {
+	if sessionID, err := alice.handshake(context.Background(), "alice", time.Second, 1); err != nil || sessionID == 0 {
 		t.Fatalf("handshake after server start = (%d, %v)", sessionID, err)
 	}
 }
 
-func serveTestHub(t *testing.T, conn *udp.ServerPacketConn, hub *voice.Hub) func() {
-	t.Helper()
-	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- voice.ServeUDP(ctx, conn, hub, voice.NewRequestCache()) }()
-	return func() {
-		cancel()
-		select {
-		case err := <-done:
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("ServeUDP() error = %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Error("ServeUDP() did not stop")
-		}
-	}
-}
 func startTestControlPipeline(t *testing.T, conn *udp.ClientPacketConn, state *State) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

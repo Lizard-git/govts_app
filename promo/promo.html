@@ -119,7 +119,7 @@ footer{text-align:center;color:var(--muted);font-size:.82rem;padding:0 16px 40px
 <tr><td>Чат</td><td>ChatRequest / ChatAck, ChatChanged</td><td>Отдельная очередь на сервере (§10).</td></tr>
 <tr><td>Статус</td><td>ServerStatusRequest / Ack</td><td>Без сессии и шифрования; только при <code>-public-status</code>. Клиент (<code>serverstatus/client.go</code>) шлёт один и тот же запрос на 0, 400 и 1000 мс в окне 2 с, дубликаты Ack игнорируются.</td></tr>
 <tr><td>Ошибки</td><td>Error</td><td>Текст ошибки; с SessionID=0 может идти открыто.</td></tr>
-<tr><td>Legacy</td><td>Hello / HelloAck</td><td>Анонимный вход отключён: на Hello сервер отвечает «client upgrade required».</td></tr>
+<tr><td>Legacy</td><td>Hello / HelloAck</td><td>Анонимный вход удалён: на Hello сервер отвечает Error «client upgrade required: secure authentication» (<code>internal/voice/server.go</code>). HelloAck больше не отправляется, номер типа зарезервирован. Клиент открытым рукопожатием не владеет.</td></tr>
 </table>
 
 </section>
@@ -188,7 +188,7 @@ c2s ‖ s2c ‖ ack = HKDF-SHA256(ikm = shared, salt = T,
 
 </section>
 <section id="srv"><h2><span class="n">06</span>Сервер: цикл обработки</h2>
-<p><code>internal/voice/server.go</code> — <code>ServeUDP</code>. Один goroutine читает сокет и обрабатывает пакеты последовательно.</p>
+<p><code>internal/voice/server.go</code> — <code>ServeUDP</code>. Один goroutine читает сокет и обрабатывает пакеты последовательно. <code>Authenticator</code> обязателен: без него <code>ServeUDP</code> не запускается.</p>
 <pre>ReadPacket (decode + decrypt)
  ├─ rejected            → счётчик причин, continue
  ├─ ServerStatusRequest → лимитер (100/с глобально, 120/мин на IP, ≤4096 IP) → Ack

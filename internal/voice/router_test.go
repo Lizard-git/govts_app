@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -69,17 +69,18 @@ func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn := mustPacketConn(t, serverRaw)
+	serverConn, serverCodec := mustPacketConn(t, serverRaw)
 	defer serverConn.Close()
 	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientConn := mustClientPacketConn(t, clientRaw)
+	clientConn, clientCodec := mustClientPacketConn(t, clientRaw)
 	defer clientConn.Close()
 	hub := NewHub()
 	addr := clientConn.LocalAddr().(*net.UDPAddr)
 	session := mustCreateSession(t, hub, "alice", addr)
+	protocoltest.Install(t, session.ID, serverCodec, clientCodec)
 	if err := clientConn.BindSession(session.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -108,12 +109,25 @@ func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
 	if response.Sequence != 2500 {
 		t.Fatalf("voice feedback = %x, want 25%% loss", response.Sequence)
 	}
-	request.SessionID++
-	request.RequestID++
-	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, addr); err != nil {
+
+	// A session whose keys outlive its hub entry is told to reconnect.
+	staleRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
+	if err != nil {
 		t.Fatal(err)
 	}
-	response = receiveTestPacket(t, clientConn)
+	staleConn, staleCodec := mustClientPacketConn(t, staleRaw)
+	defer staleConn.Close()
+	staleID := session.ID + 1
+	protocoltest.Install(t, staleID, serverCodec, staleCodec)
+	if err := staleConn.BindSession(staleID); err != nil {
+		t.Fatal(err)
+	}
+	request.SessionID = staleID
+	request.RequestID++
+	if err := HandleHeartbeatPacket(serverConn, hub, cache, request, staleConn.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	response = receiveTestPacket(t, staleConn)
 	if response.Type != protocol.PacketSessionInvalid || response.RequestID != request.RequestID {
 		t.Fatalf("invalid-session response = %+v", response)
 	}
@@ -122,8 +136,12 @@ func TestHandleHeartbeatPacketAcknowledgesAndRejectsSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherConn := mustClientPacketConn(t, otherRaw)
+	otherConn, otherCodec := mustClientPacketConn(t, otherRaw)
 	defer otherConn.Close()
+	protocoltest.Install(t, session.ID, otherCodec)
+	if err := otherConn.BindSession(session.ID); err != nil {
+		t.Fatal(err)
+	}
 	request.SessionID = session.ID
 	request.RequestID++
 	otherAddr := otherConn.LocalAddr().(*net.UDPAddr)
@@ -227,14 +245,14 @@ func (c *contextRecordingCodec) Encode(
 ) ([]byte, error) {
 	c.encodedContext = ctx
 	c.encodedPacket = packet
-	return (protocol.PlainDatagramCodec{}).Encode(ctx, packet)
+	return protocol.EncodePacket(packet)
 }
 
 func (c *contextRecordingCodec) Decode(
-	ctx protocol.DatagramContext,
+	_ protocol.DatagramContext,
 	datagram []byte,
 ) (protocol.VoicePacket, error) {
-	return (protocol.PlainDatagramCodec{}).Decode(ctx, datagram)
+	return protocol.DecodePacket(datagram)
 }
 
 func TestSendToSessionUsesRecipientAsKeyOwner(t *testing.T) {
@@ -255,7 +273,7 @@ func TestSendToSessionUsesRecipientAsKeyOwner(t *testing.T) {
 		_ = clientRaw.Close()
 		t.Fatal(err)
 	}
-	clientConn := mustClientPacketConn(t, clientRaw)
+	clientConn, _ := mustClientPacketConn(t, clientRaw)
 	t.Cleanup(func() {
 		_ = serverConn.Close()
 		_ = clientConn.Close()
@@ -305,7 +323,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverPacketConn := mustPacketConn(t, serverConn)
+	serverPacketConn, serverCodec := mustPacketConn(t, serverConn)
 	defer serverPacketConn.Close()
 
 	clientConn, err := net.DialUDP(
@@ -316,13 +334,14 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientPacketConn := mustClientPacketConn(t, clientConn)
+	clientPacketConn, clientCodec := mustClientPacketConn(t, clientConn)
 	defer clientPacketConn.Close()
 
 	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
 	hub := NewHub()
 	music := mustCreateChannel(t, hub, domain.Channel{Name: "music"})
 	session := mustCreateSession(t, hub, "alice", clientAddr)
+	protocoltest.Install(t, session.ID, serverCodec, clientCodec)
 	if err := clientPacketConn.BindSession(session.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -385,14 +404,14 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverPacketConn := mustPacketConn(t, serverConn)
+	serverPacketConn, serverCodec := mustPacketConn(t, serverConn)
 	defer serverPacketConn.Close()
 
 	clientConn, err := net.DialUDP("udp4", nil, serverConn.LocalAddr().(*net.UDPAddr))
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientPacketConn := mustClientPacketConn(t, clientConn)
+	clientPacketConn, clientCodec := mustClientPacketConn(t, clientConn)
 	defer clientPacketConn.Close()
 
 	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
@@ -403,6 +422,7 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := mustCreateSession(t, hub, "alice", clientAddr)
+	protocoltest.Install(t, session.ID, serverCodec, clientCodec)
 	if err := clientPacketConn.BindSession(session.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -482,93 +502,6 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 	}
 }
 
-func TestHandleHelloPacketReturnsSameSessionForDuplicate(t *testing.T) {
-	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
-		IP: net.ParseIP("127.0.0.1"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverPacketConn := mustPacketConn(t, serverConn)
-	defer serverPacketConn.Close()
-
-	clientConn, err := net.DialUDP(
-		"udp4",
-		nil,
-		serverConn.LocalAddr().(*net.UDPAddr),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientPacketConn := mustClientPacketConn(t, clientConn)
-	defer clientPacketConn.Close()
-
-	clientAddr := clientPacketConn.LocalAddr().(*net.UDPAddr)
-	hub := NewHub()
-	cache := NewRequestCache()
-	hello := protocol.VoicePacket{
-		Type:      protocol.PacketHello,
-		RequestID: 17,
-		Payload:   []byte("alice"),
-	}
-
-	if err := HandleHelloPacket(serverPacketConn, hub, cache, hello, clientAddr); err != nil {
-		t.Fatal(err)
-	}
-	firstResponse := receiveTestPacket(t, clientPacketConn)
-
-	if err := HandleHelloPacket(serverPacketConn, hub, cache, hello, clientAddr); err != nil {
-		t.Fatal(err)
-	}
-	secondResponse := receiveTestPacket(t, clientPacketConn)
-
-	if hub.Count() != 1 {
-		t.Fatalf("Hub.Count() = %d, want 1", hub.Count())
-	}
-	if firstResponse.SessionID == 0 {
-		t.Fatal("first response returned zero session ID")
-	}
-	if secondResponse.SessionID != firstResponse.SessionID {
-		t.Fatalf(
-			"duplicate hello returned session %d, want %d",
-			secondResponse.SessionID,
-			firstResponse.SessionID,
-		)
-	}
-	if secondResponse.RequestID != hello.RequestID {
-		t.Fatalf(
-			"duplicate hello response RequestID = %d, want %d",
-			secondResponse.RequestID,
-			hello.RequestID,
-		)
-	}
-}
-
-func TestHelloRejectsMinimumAboveServerVersion(t *testing.T) {
-	serverRaw, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverConn := mustPacketConn(t, serverRaw)
-	defer serverConn.Close()
-	clientRaw, err := net.DialUDP("udp4", nil, serverRaw.LocalAddr().(*net.UDPAddr))
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientConn := mustClientPacketConn(t, clientRaw)
-	defer clientConn.Close()
-	hub := NewHub()
-	minimum, _ := appversion.Parse("0.2.0")
-	request := protocol.VoicePacket{Type: protocol.PacketHello, RequestID: 19, Sequence: uint32(minimum), Payload: []byte("alice")}
-	if err := HandleHelloPacket(serverConn, hub, NewRequestCache(), request, clientConn.LocalAddr().(*net.UDPAddr)); err != nil {
-		t.Fatal(err)
-	}
-	response := receiveTestPacket(t, clientConn)
-	if response.Type != protocol.PacketServerVersionTooOld || response.Sequence != uint32(hub.ServerVersion()) || hub.Count() != 0 {
-		t.Fatalf("version rejection = %+v, sessions=%d", response, hub.Count())
-	}
-}
-
 func receiveTestPacket(t *testing.T, conn *udp.ClientPacketConn) protocol.VoicePacket {
 	t.Helper()
 
@@ -582,24 +515,39 @@ func receiveTestPacket(t *testing.T, conn *udp.ClientPacketConn) protocol.VoiceP
 	return packet
 }
 
-func mustClientPacketConn(t *testing.T, conn *net.UDPConn) *udp.ClientPacketConn {
+func mustClientPacketConn(t *testing.T, conn *net.UDPConn) (*udp.ClientPacketConn, *protocol.SecureDatagramCodec) {
 	t.Helper()
 
-	packetConn, err := udp.NewClientPacketConn(conn, protocol.PlainDatagramCodec{})
+	codec := protocol.NewSecureDatagramCodec(false)
+	packetConn, err := udp.NewClientPacketConn(conn, codec)
 	if err != nil {
 		t.Fatalf("NewClientPacketConn() error = %v", err)
 	}
-	return packetConn
+	return packetConn, codec
 }
 
-func mustPacketConn(t *testing.T, conn *net.UDPConn) *udp.ServerPacketConn {
+func mustPacketConn(t *testing.T, conn *net.UDPConn) (*udp.ServerPacketConn, *protocol.SecureDatagramCodec) {
 	t.Helper()
 
-	packetConn, err := udp.NewServerPacketConn(conn, protocol.PlainDatagramCodec{})
+	codec := protocol.NewSecureDatagramCodec(true)
+	packetConn, err := udp.NewServerPacketConn(conn, codec)
 	if err != nil {
 		t.Fatalf("NewServerPacketConn() error = %v", err)
 	}
-	return packetConn
+	return packetConn, codec
+}
+
+func TestServeUDPRequiresAuthenticator(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packetConn, _ := mustPacketConn(t, conn)
+	defer packetConn.Close()
+
+	if err := ServeUDP(context.Background(), packetConn, NewHub(), NewRequestCache(), nil); err == nil {
+		t.Fatal("ServeUDP() accepted a nil authenticator")
+	}
 }
 
 func TestServeUDPStopsOnContextCancellation(t *testing.T) {
@@ -609,13 +557,14 @@ func TestServeUDPStopsOnContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packetConn := mustPacketConn(t, conn)
+	packetConn, codec := mustPacketConn(t, conn)
 	defer packetConn.Close()
+	authenticator := newTestAuthenticator(t, codec)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan error, 1)
 	go func() {
-		resultCh <- ServeUDP(ctx, packetConn, NewHub(), NewRequestCache())
+		resultCh <- ServeUDP(ctx, packetConn, NewHub(), NewRequestCache(), authenticator)
 	}()
 
 	cancel()
@@ -636,26 +585,28 @@ func TestServeUDPReturnsClosedConnectionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packetConn := mustPacketConn(t, conn)
+	packetConn, codec := mustPacketConn(t, conn)
+	authenticator := newTestAuthenticator(t, codec)
 	if err := packetConn.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	err = ServeUDP(context.Background(), packetConn, NewHub(), NewRequestCache())
+	err = ServeUDP(context.Background(), packetConn, NewHub(), NewRequestCache(), authenticator)
 	if !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("ServeUDP() error = %v, want %v", err, net.ErrClosed)
 	}
 }
 
-func TestServeUDPSkipsMalformedPacket(t *testing.T) {
+func TestServeUDPSkipsMalformedPacketAndAsksPlainClientsToUpgrade(t *testing.T) {
 	serverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
 		IP: net.ParseIP("127.0.0.1"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverPacketConn := mustPacketConn(t, serverConn)
+	serverPacketConn, serverCodec := mustPacketConn(t, serverConn)
 	defer serverPacketConn.Close()
+	authenticator := newTestAuthenticator(t, serverCodec)
 
 	clientConn, err := net.DialUDP(
 		"udp4",
@@ -669,25 +620,30 @@ func TestServeUDPSkipsMalformedPacket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan error, 1)
 	go func() {
-		resultCh <- ServeUDP(ctx, serverPacketConn, NewHub(), NewRequestCache())
+		resultCh <- ServeUDP(ctx, serverPacketConn, NewHub(), NewRequestCache(), authenticator)
 	}()
 
 	if _, err := clientConn.Write([]byte{protocol.PacketHello}); err != nil {
 		t.Fatal(err)
 	}
-	clientPacketConn := mustClientPacketConn(t, clientConn)
-	defer clientPacketConn.Close()
-	if err := clientPacketConn.SendPacket(protocol.VoicePacket{
+	// Clients that predate secure authentication send an unprotected Hello.
+	hello, err := protocol.EncodePacket(protocol.VoicePacket{
 		Type:      protocol.PacketHello,
 		RequestID: 17,
 		Payload:   []byte("alice"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := clientConn.Write(hello); err != nil {
+		t.Fatal(err)
+	}
+	clientPacketConn, _ := mustClientPacketConn(t, clientConn)
+	defer clientPacketConn.Close()
 
 	response := receiveTestPacket(t, clientPacketConn)
-	if response.Type != protocol.PacketHelloAck {
-		t.Fatalf("response type = %d, want %d", response.Type, protocol.PacketHelloAck)
+	if response.Type != protocol.PacketError || response.RequestID != 17 || !strings.Contains(string(response.Payload), "client upgrade required") {
+		t.Fatalf("plain Hello response = %+v", response)
 	}
 
 	cancel()

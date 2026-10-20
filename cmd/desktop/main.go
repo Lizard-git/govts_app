@@ -48,7 +48,7 @@ func main() {
 		log.Printf("migrate legacy profile: %v", err)
 	}
 
-	client := clientapp.New(clientapp.Options{Logger: log.Default(), Secure: true})
+	client := clientapp.New(clientapp.Options{Logger: log.Default()})
 	service := wailsui.NewService(client)
 	updates := clientupdate.New(filepath.Join(configDir, "Sonoryx"), func() bool { return string(client.Snapshot().ConnectionStatus) == "connected" })
 	if err := wailsui.EnableDefaultSettings(service); err != nil {
