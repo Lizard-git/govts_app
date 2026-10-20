@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/protocol/protocoltest"
 	"uniclog.io/sonoryx/internal/transport/udp"
 )
 
@@ -23,7 +25,8 @@ func chatTestConnection(t *testing.T) (*net.UDPConn, *udp.ClientPacketConn, *Sta
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := udp.NewClientPacketConn(raw, protocol.PlainDatagramCodec{})
+	_, codec := protocoltest.Pair(t, 9)
+	conn, err := udp.NewClientPacketConn(raw, codec)
 	if err != nil {
 		t.Fatal(err)
 	}

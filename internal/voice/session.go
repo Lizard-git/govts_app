@@ -37,6 +37,10 @@ type Session struct {
 	// lastVoice is the sender's previous frame kept for server → client
 	// redundancy; it lives and dies with the session.
 	lastVoice protocol.VoiceBundleFrame
+	// voiceSequence and voiceSequenceAt are the newest accepted Sequence and
+	// its arrival time; AcceptVoiceSequence bounds forward jumps from them.
+	voiceSequence   uint32
+	voiceSequenceAt time.Time
 }
 
 type voiceSample struct {

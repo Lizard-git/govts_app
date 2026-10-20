@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -230,11 +229,45 @@ func writeJSON(w http.ResponseWriter, value any) {
 func signalingContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), 15*time.Second)
 }
+
+// publicError carries a message that is safe to show the client. Its cause,
+// which may hold library or system detail, reaches only the server log.
+type publicError struct {
+	message string
+	cause   error
+}
+
+func (e *publicError) Error() string {
+	if e.cause == nil {
+		return e.message
+	}
+	return e.message + ": " + e.cause.Error()
+}
+
+func (e *publicError) Unwrap() error { return e.cause }
+
+// publicMediaErrors are sentinel errors whose own text the client may see.
+var publicMediaErrors = []error{ErrSubscriptionDenied, ErrMediaLimit, ErrPublisherExists, ErrStreamNotReady, voice.ErrSessionNotInChannel}
+
 func writeMediaError(w http.ResponseWriter, err error) {
 	log.Printf("media operation failed: error=%v", err)
 	status := http.StatusBadRequest
-	if errors.Is(err, ErrSubscriptionDenied) {
+	switch {
+	case errors.Is(err, ErrSubscriptionDenied):
 		status = http.StatusForbidden
+	case errors.Is(err, ErrMediaLimit):
+		status = http.StatusTooManyRequests
 	}
-	http.Error(w, fmt.Sprintf("%v", err), status)
+	message := "media operation failed"
+	var public *publicError
+	if errors.As(err, &public) {
+		message = public.message
+	}
+	for _, known := range publicMediaErrors {
+		if errors.Is(err, known) {
+			message = known.Error()
+			break
+		}
+	}
+	http.Error(w, message, status)
 }

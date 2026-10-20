@@ -49,7 +49,6 @@ type audioDeviceChange struct {
 
 type Options struct {
 	Logger       *log.Logger
-	Secure       bool
 	IdentityPath string
 	PinsPath     string
 }
@@ -66,7 +65,6 @@ type App struct {
 	state               *voiceclient.State
 	events              *EventLog
 	logger              *log.Logger
-	secure              bool
 	identityPath        string
 	pinsPath            string
 	listAudioDevices    func() (audio.DeviceList, error)
@@ -114,7 +112,6 @@ func New(options Options) *App {
 		state:              state,
 		events:             events,
 		logger:             options.Logger,
-		secure:             options.Secure,
 		identityPath:       options.IdentityPath,
 		pinsPath:           options.PinsPath,
 		listAudioDevices:   audio.ListDevices,
@@ -127,11 +124,7 @@ func (a *App) Connect(options ConnectOptions) error {
 		return errors.New("display name is required")
 	}
 	if options.MinServerVersion == "" {
-		if a.secure {
-			options.MinServerVersion = appversion.MinimumServerVersion
-		} else {
-			options.MinServerVersion = voiceclient.MinimumServerVersion
-		}
+		options.MinServerVersion = appversion.MinimumServerVersion
 	}
 	if _, err := appversion.Parse(options.MinServerVersion); err != nil {
 		return fmt.Errorf("invalid minimum server version: %w", err)
@@ -199,35 +192,14 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 }
 
 func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string) (runErr error) {
-	var private ed25519.PrivateKey
-	if a.secure {
-		configDir, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		seedPath := a.identityPath
-		if seedPath == "" {
-			seedPath = filepath.Join(configDir, "Sonoryx", "client.seed")
-		}
-		private, err = identity.LoadOrCreate(seedPath)
-		if err != nil {
-			return fmt.Errorf("load client identity: %w", err)
-		}
-		a.mu.Lock()
-		a.chatClientIdentity = fmt.Sprintf("%x", private.Public())
-		a.mu.Unlock()
-		if a.pinsPath == "" {
-			a.pinsPath = filepath.Join(configDir, "Sonoryx", "voice-pins.json")
-		}
+	private, err := a.loadClientIdentity()
+	if err != nil {
+		return err
 	}
-	open := func() (*udp.ClientPacketConn, *protocol.SecureDatagramCodec, error) {
-		if a.secure {
-			return openSecureClientPacketConn(endpoint)
-		}
-		conn, err := openClientPacketConn(endpoint)
-		return conn, nil, err
-	}
-	conn, secureCodec, err := open()
+	a.mu.Lock()
+	a.chatClientIdentity = fmt.Sprintf("%x", private.Public())
+	a.mu.Unlock()
+	conn, codec, err := openClientPacketConn(endpoint)
 	if err != nil {
 		return err
 	}
@@ -251,20 +223,11 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 			// The new session starts present, so Away no longer holds anything.
 			a.state.Audio.ReleaseAway()
 		}
-		var sessionID uint64
 		attempt++
-		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s secure=%t", attempt, endpoint, conn.LocalAddr(), a.secure)
-		var joinLevel uint16
-		var permissions uint8
-		var serverIdentity string
-		if a.secure {
-			var result voiceclient.SecureHandshakeResult
-			result, err = voiceclient.PerformSecureHandshakeAttempts(ctx, conn, secureCodec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
-			sessionID, joinLevel, permissions = result.SessionID, result.JoinLevel, result.Permissions
-			serverIdentity = result.ServerIdentity
-		} else {
-			sessionID, err = voiceclient.PerformHandshakeAttempts(ctx, conn, name, handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
-		}
+		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s", attempt, endpoint, conn.LocalAddr())
+		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
+		sessionID, joinLevel, permissions := result.SessionID, result.JoinLevel, result.Permissions
+		serverIdentity := result.ServerIdentity
 		if err != nil {
 			a.logger.Printf("handshake failed: attempt=%d server=%s local=%s error=%v", attempt, endpoint, conn.LocalAddr(), err)
 			if ctx.Err() != nil {
@@ -279,12 +242,12 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 				return err
 			}
 			if shouldReplaceClientSocket(err) {
-				replacement, replacementCodec, replaceErr := open()
+				replacement, replacementCodec, replaceErr := openClientPacketConn(endpoint)
 				if replaceErr == nil {
 					a.logger.Printf("replacing UDP socket: old_local=%s new_local=%s", conn.LocalAddr(), replacement.LocalAddr())
 					_ = conn.Close()
 					conn = replacement
-					secureCodec = replacementCodec
+					codec = replacementCodec
 				} else {
 					a.logger.Printf("replace UDP socket failed: error=%v", replaceErr)
 				}
@@ -337,9 +300,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if err := conn.ClearSession(sessionID); err != nil {
 			return fmt.Errorf("clear UDP session: %w", err)
 		}
-		if secureCodec != nil {
-			secureCodec.Remove(sessionID)
-		}
+		codec.Remove(sessionID)
 		if !errors.Is(sessionErr, voiceclient.ErrConnectionLost) {
 			return sessionErr
 		}
@@ -745,20 +706,30 @@ func ParseServerEndpoint(server string) (netip.AddrPort, error) {
 	return endpoint, nil
 }
 
-func openClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, error) {
-	rawConn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(endpoint))
-	if err != nil {
-		return nil, fmt.Errorf("connect UDP: %w", err)
+// loadClientIdentity loads or creates the client key and resolves the server
+// pin store. Unset paths default to the Sonoryx user config directory.
+func (a *App) loadClientIdentity() (ed25519.PrivateKey, error) {
+	seedPath := a.identityPath
+	if seedPath == "" || a.pinsPath == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		if seedPath == "" {
+			seedPath = filepath.Join(configDir, "Sonoryx", "client.seed")
+		}
+		if a.pinsPath == "" {
+			a.pinsPath = filepath.Join(configDir, "Sonoryx", "voice-pins.json")
+		}
 	}
-	conn, err := udp.NewClientPacketConn(rawConn, protocol.PlainDatagramCodec{})
+	private, err := identity.LoadOrCreate(seedPath)
 	if err != nil {
-		_ = rawConn.Close()
-		return nil, fmt.Errorf("configure UDP packet connection: %w", err)
+		return nil, fmt.Errorf("load client identity: %w", err)
 	}
-	return conn, nil
+	return private, nil
 }
 
-func openSecureClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, *protocol.SecureDatagramCodec, error) {
+func openClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, *protocol.SecureDatagramCodec, error) {
 	rawConn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(endpoint))
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect UDP: %w", err)

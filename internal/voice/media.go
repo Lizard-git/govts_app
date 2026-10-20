@@ -31,6 +31,9 @@ func HandleVoicePacket(
 	if err := hub.Touch(packet.SessionID); err != nil {
 		return err
 	}
+	if !hub.AcceptVoiceSequence(packet.SessionID, packet.Sequence) {
+		return nil // forged Sequence jump; listeners would count it as loss
+	}
 	hub.RecordVoicePacket(packet.SessionID, packet.Sequence)
 	previous, ok := hub.SwapLastVoiceFrame(packet.SessionID, protocol.VoiceBundleFrame{
 		Sequence: packet.Sequence,

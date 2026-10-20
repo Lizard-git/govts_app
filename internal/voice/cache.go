@@ -2,7 +2,6 @@ package voice
 
 import (
 	"bytes"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -17,7 +16,6 @@ const (
 type requestKey struct {
 	SessionID uint64
 	RequestID uint32
-	Endpoint  netip.AddrPort
 }
 
 type requestCacheEntry struct {
@@ -75,16 +73,6 @@ func (c *RequestCache) Get(
 	})
 }
 
-func (c *RequestCache) GetHandshake(
-	endpoint netip.AddrPort,
-	requestID uint32,
-) (protocol.VoicePacket, bool) {
-	return c.get(requestKey{
-		RequestID: requestID,
-		Endpoint:  endpoint,
-	})
-}
-
 func (c *RequestCache) get(key requestKey) (protocol.VoicePacket, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -110,20 +98,6 @@ func (c *RequestCache) Put(
 		requestKey{
 			SessionID: sessionID,
 			RequestID: requestID,
-		},
-		response,
-	)
-}
-
-func (c *RequestCache) PutHandshake(
-	endpoint netip.AddrPort,
-	requestID uint32,
-	response protocol.VoicePacket,
-) {
-	c.put(
-		requestKey{
-			RequestID: requestID,
-			Endpoint:  endpoint,
 		},
 		response,
 	)
@@ -156,19 +130,6 @@ func (c *RequestCache) RemoveSession(sessionID uint64) int {
 	removed := 0
 	for key := range c.responses {
 		if key.SessionID == sessionID {
-			delete(c.responses, key)
-			removed++
-		}
-	}
-	return removed
-}
-
-func (c *RequestCache) RemoveHandshakeEndpoint(endpoint netip.AddrPort) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	removed := 0
-	for key := range c.responses {
-		if key.SessionID == 0 && key.Endpoint == endpoint {
 			delete(c.responses, key)
 			removed++
 		}

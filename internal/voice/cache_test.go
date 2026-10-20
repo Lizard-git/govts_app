@@ -2,7 +2,6 @@ package voice
 
 import (
 	"bytes"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -73,27 +72,6 @@ func TestRequestCacheRemovesSession(t *testing.T) {
 	}
 }
 
-func TestRequestCacheRemovesHandshakeEndpoint(t *testing.T) {
-	cache := NewRequestCache()
-	endpoint := netip.MustParseAddrPort("127.0.0.1:9000")
-	other := netip.MustParseAddrPort("127.0.0.1:9001")
-	cache.PutHandshake(endpoint, 1, protocol.VoicePacket{Type: protocol.PacketHelloAck})
-	cache.PutHandshake(other, 1, protocol.VoicePacket{Type: protocol.PacketHelloAck})
-	cache.Put(7, 1, protocol.VoicePacket{Type: protocol.PacketJoinChannelAck})
-	if removed := cache.RemoveHandshakeEndpoint(endpoint); removed != 1 {
-		t.Fatalf("removed = %d", removed)
-	}
-	if _, ok := cache.GetHandshake(endpoint, 1); ok {
-		t.Fatal("endpoint handshake remains")
-	}
-	if _, ok := cache.GetHandshake(other, 1); !ok {
-		t.Fatal("other handshake removed")
-	}
-	if _, ok := cache.Get(7, 1); !ok {
-		t.Fatal("session response removed")
-	}
-}
-
 func TestRequestCacheCopiesPayload(t *testing.T) {
 	now := time.Date(2026, time.September, 8, 12, 0, 0, 0, time.UTC)
 	cache := newRequestCache(time.Minute, 10, func() time.Time {
@@ -119,34 +97,5 @@ func TestRequestCacheCopiesPayload(t *testing.T) {
 	}
 	if !bytes.Equal(packetAgain.Payload, []byte("music")) {
 		t.Fatalf("second Get() payload = %q, want %q", packetAgain.Payload, "music")
-	}
-}
-
-func TestRequestCacheSeparatesHandshakeEndpoints(t *testing.T) {
-	now := time.Date(2026, time.September, 9, 12, 0, 0, 0, time.UTC)
-	cache := newRequestCache(time.Minute, 10, func() time.Time {
-		return now
-	})
-	firstEndpoint := netip.MustParseAddrPort("127.0.0.1:5001")
-	secondEndpoint := netip.MustParseAddrPort("127.0.0.1:5002")
-
-	cache.PutHandshake(firstEndpoint, 7, protocol.VoicePacket{
-		Type:      protocol.PacketHelloAck,
-		SessionID: 1,
-		RequestID: 7,
-	})
-	cache.PutHandshake(secondEndpoint, 7, protocol.VoicePacket{
-		Type:      protocol.PacketHelloAck,
-		SessionID: 2,
-		RequestID: 7,
-	})
-
-	first, ok := cache.GetHandshake(firstEndpoint, 7)
-	if !ok || first.SessionID != 1 {
-		t.Fatalf("first endpoint response = %+v, found = %t", first, ok)
-	}
-	second, ok := cache.GetHandshake(secondEndpoint, 7)
-	if !ok || second.SessionID != 2 {
-		t.Fatalf("second endpoint response = %+v, found = %t", second, ok)
 	}
 }

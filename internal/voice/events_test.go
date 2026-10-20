@@ -31,7 +31,7 @@ func TestHubEventRevisionsAndReplacement(t *testing.T) {
 	if h.Revision() != rev {
 		t.Fatal("idempotent join changed revision")
 	}
-	two, _, err := h.CreateSessionReplacingEndpoint("two", addr)
+	two, _, err := h.CreateAuthenticatedSession("two", addr, 2, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestDispatcherContinuesAfterRecipientErrorAndStops(t *testing.T) {
 
 func TestSetAudioStatePublishesParticipantFlagsOnce(t *testing.T) {
 	hub := NewHub()
-	session, _, err := hub.CreateSessionReplacingEndpoint("alice", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9})
+	session, err := hub.CreateSession("alice", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9})
 	if err != nil {
 		t.Fatal(err)
 	}
