@@ -240,3 +240,25 @@ func (s *Service) AdminUpdateChannel(channelID string, input AdminChannelDTO) er
 	_, err = s.administer(protocol.AdminRequest{Operation: protocol.AdminUpdateChannel, TargetID: id, Channel: channel})
 	return err
 }
+
+// AdminDeleteAccount forgets an account and disconnects it; its key
+// registers a new account on the next connection.
+func (s *Service) AdminDeleteAccount(accountID string) error {
+	id, err := parseUint64(accountID, "accountId", false)
+	if err != nil {
+		return err
+	}
+	_, err = s.administer(protocol.AdminRequest{Operation: protocol.AdminDeleteAccount, TargetID: id})
+	return err
+}
+
+// AdminDeleteChannel removes a channel without subchannels; the server moves
+// its members to the default channel.
+func (s *Service) AdminDeleteChannel(channelID string) error {
+	id, err := parseUint64(channelID, "channelId", false)
+	if err != nil {
+		return err
+	}
+	_, err = s.administer(protocol.AdminRequest{Operation: protocol.AdminDeleteChannel, TargetID: id})
+	return err
+}

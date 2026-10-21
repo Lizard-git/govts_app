@@ -96,7 +96,8 @@ function AccountsSection({view}: {view: ClientViewDTO}) {
                 <button type="button" className="text-button" disabled={busy} onClick={() => void load("")}>{m.admin.reload}</button>
             </div>
         </section>
-        {selected ? <AccountCard key={selected.id} view={view} account={selected} onChange={replace}/>
+        {selected ? <AccountCard key={selected.id} view={view} account={selected} onChange={replace}
+                                 onDelete={() => { setAccounts((current) => current.filter((item) => item.id !== selected.id)); setSelectedID(""); }}/>
             : <section className="settings-card admin-detail-card"><p className="device-hint">{m.admin.selectAccount}</p></section>}
     </div>;
 }
@@ -116,7 +117,7 @@ function AccountBadges({account, compact = false}: {account: AdminAccount; compa
     </span>;
 }
 
-function AccountCard({view, account, onChange}: {view: ClientViewDTO; account: AdminAccount; onChange: (account: AdminAccount) => void}) {
+function AccountCard({view, account, onChange, onDelete}: {view: ClientViewDTO; account: AdminAccount; onChange: (account: AdminAccount) => void; onDelete: () => void}) {
     const {m} = useLocale();
     const {error, busy, run} = useStatus();
     const [level, setLevel] = useState(String(account.joinLevel));
@@ -177,6 +178,18 @@ function AccountCard({view, account, onChange}: {view: ClientViewDTO; account: A
                         }}>{m.admin.ban}</button>
             </>}
         </div>
+
+        {versionAtLeast(view.server.version, channelEditingServerVersion) && <div className="admin-inline-form admin-ban">
+            <p className="device-hint">{account.banned ? m.admin.deleteAccountBanned : m.admin.deleteAccountHint}</p>
+            <button type="button" className="secondary-button danger-button" disabled={busy || !banAllowed || account.banned}
+                    onClick={() => {
+                        if (!window.confirm(m.admin.deleteAccountConfirm(account.name))) return;
+                        void run(async () => {
+                            await desktopAPI.adminDeleteAccount(account.id);
+                            onDelete();
+                        });
+                    }}>{m.admin.deleteAccount}</button>
+        </div>}
     </section>;
 }
 
@@ -281,15 +294,18 @@ function ChannelEditorSection({view}: {view: ClientViewDTO}) {
                            initial={{parentId: creatingUnder, name: "", topic: "", description: "", position: String(channels.filter((c) => c.parentId === creatingUnder).length),
                                maxUsers: "0", minJoinLevel: "0", bitrateKbps: "24", application: "voip"}}/>
             : selected
-                ? <ChannelForm key={JSON.stringify(selected)} view={view} channels={channels} channel={selected} initial={channelDraft(selected)} onDone={() => undefined}/>
+                ? <ChannelForm key={JSON.stringify(selected)} view={view} channels={channels} channel={selected} initial={channelDraft(selected)}
+                               onDone={(id) => { if (id === "") setSelectedID(""); }}/>
                 : <section className="settings-card admin-detail-card"><p className="device-hint">{m.admin.selectChannel}</p></section>}
     </div>;
 }
 
+// onDone receives the ID of a created channel, or "" after a deletion.
 function ChannelForm({view, channels, channel, initial, onDone}: {view: ClientViewDTO; channels: ChannelDTO[]; channel?: ChannelDTO; initial: ChannelDraft; onDone: (createdID?: string) => void}) {
     const {m} = useLocale();
     const {error, busy, run} = useStatus();
     const [draft, setDraft] = useState(initial);
+    const [confirmDelete, setConfirmDelete] = useState(false);
     const set = (patch: Partial<ChannelDraft>) => setDraft((current) => ({...current, ...patch}));
     const isDefault = channel !== undefined && channel.id === view.server.defaultChannelId;
     const editable = channel === undefined || canEditChannelLevel(view, channel.minJoinLevel ?? 0);
@@ -298,6 +314,17 @@ function ChannelForm({view, channels, channel, initial, onDone}: {view: ClientVi
     const blocked = channel ? descendantIDs(channels, channel.id) : new Set<string>();
     const parentOptions = [{value: "0", label: m.admin.rootChannel},
         ...channelTree(channels).filter(({channel: item}) => !blocked.has(item.id)).map(({channel: item, depth}) => ({value: item.id, label: `${"  ".repeat(depth)}${item.name}`}))];
+
+    const hasChildren = channel !== undefined && channels.some((item) => item.parentId === channel.id);
+    const members = channel ? (view.participants ?? []).filter((participant) => participant.channelId === channel.id).length : 0;
+    const deletable = channel !== undefined && editable && !isDefault && !hasChildren;
+    const remove = () => {
+        if (!channel || !deletable) return;
+        void run(async () => {
+            await desktopAPI.adminDeleteChannel(channel.id);
+            onDone("");
+        });
+    };
 
     const submit = () => {
         if (!parsed || !valid) return;
@@ -344,6 +371,20 @@ function ChannelForm({view, channels, channel, initial, onDone}: {view: ClientVi
                 {!channel && <button type="button" className="text-button" disabled={busy} onClick={() => onDone()}>{m.admin.cancel}</button>}
             </div>
         </form>
+        {channel && !isDefault && <div className="admin-channel-delete">
+            {hasChildren && <p className="device-hint">{m.admin.deleteChannelHasChildren}</p>}
+            {confirmDelete
+                ? <>
+                    <p className="device-hint">{m.admin.deleteChannelConfirm(channel.name, members)}</p>
+                    <div className="admin-list-actions">
+                        <button type="button" className="secondary-button danger-button" disabled={busy || !deletable} onClick={remove}>{m.admin.deleteChannel}</button>
+                        <button type="button" className="text-button" disabled={busy} onClick={() => setConfirmDelete(false)}>{m.admin.cancel}</button>
+                    </div>
+                </>
+                : <div className="admin-list-actions">
+                    <button type="button" className="secondary-button danger-button" disabled={busy || !deletable} onClick={() => setConfirmDelete(true)}>{m.admin.deleteChannel}</button>
+                </div>}
+        </div>}
     </section>;
 }
 

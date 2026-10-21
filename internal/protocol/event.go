@@ -36,6 +36,8 @@ func EncodeStateEvent(e domain.StateEvent) ([]byte, error) {
 	case domain.ChannelUpdated:
 		// Clients that predate this kind fail to decode it and resync.
 		return appendChannel(b, e.Channel)
+	case domain.ChannelDeleted:
+		b = binary.BigEndian.AppendUint64(b, uint64(e.ChannelID))
 	}
 	return b, nil
 }
@@ -107,6 +109,12 @@ func DecodeStateEvent(b []byte) (domain.StateEvent, error) {
 		if err != nil {
 			return e, err
 		}
+	case domain.ChannelDeleted:
+		if len(b) != 8 {
+			return e, errors.New("invalid channel deleted payload")
+		}
+		e.ChannelID = domain.ChannelID(binary.BigEndian.Uint64(b))
+		b = nil
 	default:
 		return e, errors.New("unknown event kind")
 	}

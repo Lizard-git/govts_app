@@ -152,6 +152,14 @@ func (a *Authenticator) executeAdmin(ctx context.Context, hub *Hub, actor AdminA
 		updated, removed, err := a.admin.UpdateChannel(ctx, actor, adminChannelDomain(domain.ChannelID(request.TargetID), request.Channel))
 		response.Next = uint64(updated.ID)
 		return response, removed, err
+	case protocol.AdminDeleteAccount:
+		change, err = a.admin.DeleteAccount(ctx, actor, target)
+		response.Next = request.TargetID
+		return response, change.Removed, err
+	case protocol.AdminDeleteChannel:
+		err = a.admin.DeleteChannel(ctx, actor, domain.ChannelID(request.TargetID))
+		response.Next = request.TargetID
+		return response, nil, err
 	default:
 		return response, nil, errAdminUnavailable
 	}

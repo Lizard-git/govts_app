@@ -186,6 +186,26 @@ func (a *Administration) SetBan(ctx context.Context, actor AdminActor, id int64,
 	return AdminChange{Account: account, Removed: removed}, err
 }
 
+// DeleteAccount forgets an account and disconnects its sessions; its key
+// registers a new account on the next connection. Like a ban, it needs the
+// ban permission unless the actor is the owner.
+func (a *Administration) DeleteAccount(ctx context.Context, actor AdminActor, id int64) (AdminChange, error) {
+	if !actor.allowed() || (!actor.privileged() && actor.Permissions&persist.PermissionBan == 0) {
+		return AdminChange{}, ErrPermissionDenied
+	}
+	target, err := a.account(ctx, id)
+	if err != nil {
+		return AdminChange{}, err
+	}
+	if err := a.checkTarget(actor, target); err != nil {
+		return AdminChange{}, err
+	}
+	if err := a.store.DeleteAccountBy(ctx, actor.auditName(), id); err != nil {
+		return AdminChange{}, err
+	}
+	return AdminChange{Removed: a.hub.RemoveUserSessions(id)}, nil
+}
+
 func (a *Administration) SetChannelJoinLevel(ctx context.Context, actor AdminActor, channelID domain.ChannelID, level uint16) ([]uint64, error) {
 	if !actor.allowed() {
 		return nil, ErrPermissionDenied
@@ -253,6 +273,29 @@ func (a *Administration) UpdateChannel(ctx context.Context, actor AdminActor, ch
 		return domain.Channel{}, nil, fmt.Errorf("saved channel but could not apply it: %w", err)
 	}
 	return next, removed, nil
+}
+
+// DeleteChannel removes a channel without subchannels and moves its members
+// to the default channel. A non-owner administrator can delete only channels
+// at or below their level.
+func (a *Administration) DeleteChannel(ctx context.Context, actor AdminActor, id domain.ChannelID) error {
+	if !actor.allowed() {
+		return ErrPermissionDenied
+	}
+	channel, err := a.hub.CheckChannelDelete(id)
+	if err != nil {
+		return err
+	}
+	if !actor.privileged() && channel.MinJoinLevel > actor.JoinLevel {
+		return ErrPermissionDenied
+	}
+	if err := a.store.DeleteChannelBy(ctx, actor.auditName(), id); err != nil {
+		return err
+	}
+	if _, err := a.hub.DeleteChannel(id); err != nil {
+		return fmt.Errorf("deleted stored channel but could not remove it: %w", err)
+	}
+	return nil
 }
 
 func (a *Administration) notifyAccount(account persist.Account) {

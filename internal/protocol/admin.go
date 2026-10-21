@@ -43,12 +43,18 @@ const (
 	// common header; servers before 0.3.7 reject them as unknown.
 	AdminCreateChannel
 	AdminUpdateChannel
+	// AdminDeleteChannel removes a channel without subchannels and moves its
+	// members to the default channel.
+	AdminDeleteChannel
+	// AdminDeleteAccount forgets an account and disconnects it; its key
+	// registers a new account on the next connection.
+	AdminDeleteAccount
 )
 
 // AdminRequest is one PacketAdminRequest. Cursor pages AdminAccounts (after
 // this account ID) and AdminAudit (before this entry ID, 0 = newest). TargetID
-// is an account ID, or a channel ID for AdminSetChannelJoinLevel and
-// AdminUpdateChannel.
+// is an account ID, or a channel ID for AdminSetChannelJoinLevel,
+// AdminUpdateChannel and AdminDeleteChannel.
 type AdminRequest struct {
 	Operation  AdminOperation
 	Cursor     uint64
@@ -167,7 +173,7 @@ func DecodeAdminRequest(b []byte) (AdminRequest, error) {
 }
 
 func (r AdminRequest) Validate() error {
-	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel {
+	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount {
 		return errors.New("invalid admin operation")
 	}
 	target, permission, enabled, level, reason := r.TargetID != 0, r.Permission != 0, r.Enabled, r.Level != 0, r.Reason != ""
@@ -175,6 +181,8 @@ func (r AdminRequest) Validate() error {
 	switch r.Operation {
 	case AdminAccounts, AdminAudit:
 		ok = !target && !permission && !enabled && !level && !reason
+	case AdminDeleteChannel, AdminDeleteAccount:
+		ok =target && r.Cursor == 0 && !permission && !enabled && !level && !reason
 	case AdminSetPermission:
 		ok = target && r.Cursor == 0 && permission && r.Permission&(r.Permission-1) == 0 && !level && !reason
 	case AdminSetJoinLevel, AdminSetChannelJoinLevel:
@@ -223,8 +231,9 @@ type AdminAuditEntry struct {
 }
 
 // AdminResponse is the payload of PacketAdminAck. Next is the cursor of the
-// following page, 0 when the list is complete; for AdminCreateChannel and
-// AdminUpdateChannel it is the ID of the channel.
+// following page, 0 when the list is complete; for AdminCreateChannel,
+// AdminUpdateChannel and AdminDeleteChannel it is the ID of the channel, for
+// AdminDeleteAccount the ID of the account.
 type AdminResponse struct {
 	Operation AdminOperation
 	Next      uint64
@@ -248,7 +257,7 @@ func AdminAuditEntrySize(e AdminAuditEntry) int {
 const AdminResponseBudget = MaxPayloadSize - adminResponseHeaderSize
 
 func EncodeAdminResponse(r AdminResponse) ([]byte, error) {
-	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
 		return nil, errors.New("invalid admin response")
 	}
 	b := []byte{AdminSchemaVersion, byte(r.Operation), byte(len(r.Accounts)), byte(len(r.Audit))}
@@ -300,7 +309,7 @@ func DecodeAdminResponse(b []byte) (AdminResponse, error) {
 	r.Operation = AdminOperation(b[1])
 	accounts, entries := int(b[2]), int(b[3])
 	r.Next = binary.BigEndian.Uint64(b[4:12])
-	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount || r.Next > 1<<63-1 {
 		return r, errors.New("invalid admin response")
 	}
 	b = b[adminResponseHeaderSize:]
