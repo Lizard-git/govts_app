@@ -122,6 +122,24 @@ snapshot, события, media credentials, модерацию и чат. По�
   `ChatChanged` ускоряет сверку, опрос раз в 5 секунд восстанавливает потери.
   Контекст включает endpoint, публичные ключи сервера/клиента и `user_id`.
 
+## Администрирование
+
+- `internal/persist/store.go` хранит биты kick/ban/drag в `users.permissions`
+  и право admin в `users.admin` (миграция схемы до версии 5); `AccountsPage`
+  и `AuditPage` читают аккаунты и журнал страницами.
+- `internal/voice/admin.go` — `Administration`: общие проверки иерархии,
+  запись в SQLite с аудитом, применение к `Hub` и уведомление клиентов о
+  правах. Его используют и локальная консоль (`internal/server/console_accounts.go`,
+  команды `account set-permission … admin`, `audit`), и `HandleAdmin`
+  (`internal/voice/admin_packet.go`) для пакета `PacketAdminRequest`.
+- `internal/protocol/admin.go` кодирует запросы и ответы администрирования и
+  биты байта привилегий (`PrivilegeAdmin`, `PrivilegeOwner`).
+- `internal/client/admin.go`, `internal/clientapp/app.go` (`Administer`) и
+  `internal/ui/wails/service_admin.go` связывают защищённый UDP с Wails DTO.
+- `cmd/desktop/frontend/src/features/admin/AdminPanel.tsx` — окно
+  «Администрирование» (аккаунты, пороги каналов, журнал); кнопка видна при
+  `canAdmin` в `ClientViewDTO`.
+
 ## Демонстрация экрана
 
 ```text
