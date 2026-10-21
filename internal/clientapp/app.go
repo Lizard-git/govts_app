@@ -504,6 +504,16 @@ func (a *App) Moderate(ctx context.Context, action uint8, targetID uint64, chann
 	return voiceclient.Moderate(ctx, conn, a.state, action, targetID, channelID)
 }
 
+func (a *App) Administer(ctx context.Context, request protocol.AdminRequest) (protocol.AdminResponse, error) {
+	a.mu.Lock()
+	conn := a.currentConn
+	a.mu.Unlock()
+	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
+		return protocol.AdminResponse{}, ErrNotConnected
+	}
+	return voiceclient.Administer(ctx, conn, a.state, request)
+}
+
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }
 
 func (a *App) ConnectionStats() voiceclient.ConnectionStats { return a.state.ConnectionStats() }

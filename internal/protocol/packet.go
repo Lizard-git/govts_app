@@ -54,6 +54,10 @@ const (
 	PacketPresenceAck
 	PacketAttention
 	PacketAttentionAck
+	// PacketAdminRequest and PacketAdminAck carry the remote administration
+	// operations of internal/protocol/admin.go.
+	PacketAdminRequest
+	PacketAdminAck
 
 	PacketEnd
 )

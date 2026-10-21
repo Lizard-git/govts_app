@@ -8,11 +8,14 @@ import (
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientapp"
 	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/protocol"
 )
 
 type ServerDTO struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
+	// DefaultChannelID is the channel new sessions join; it stays unrestricted.
+	DefaultChannelID string `json:"defaultChannelId,omitempty"`
 }
 
 type AudioProfileDTO struct {
@@ -25,15 +28,16 @@ type AudioProfileDTO struct {
 }
 
 type ChannelDTO struct {
-	ID          string          `json:"id"`
-	ParentID    string          `json:"parentId"`
-	Name        string          `json:"name"`
-	Topic       string          `json:"topic"`
-	Description string          `json:"description"`
-	Position    uint32          `json:"position"`
-	MaxUsers    uint32          `json:"maxUsers"`
-	CanJoin     bool            `json:"canJoin"`
-	Audio       AudioProfileDTO `json:"audio"`
+	ID           string          `json:"id"`
+	ParentID     string          `json:"parentId"`
+	Name         string          `json:"name"`
+	Topic        string          `json:"topic"`
+	Description  string          `json:"description"`
+	Position     uint32          `json:"position"`
+	MaxUsers     uint32          `json:"maxUsers"`
+	MinJoinLevel uint16          `json:"minJoinLevel,omitempty"` // administrators only
+	CanJoin      bool            `json:"canJoin"`
+	Audio        AudioProfileDTO `json:"audio"`
 }
 
 type ParticipantDTO struct {
@@ -120,6 +124,9 @@ type ClientViewDTO struct {
 	CanKick          bool              `json:"canKick"`
 	CanBan           bool              `json:"canBan"`
 	CanDrag          bool              `json:"canDrag"`
+	CanAdmin         bool              `json:"canAdmin"`
+	IsOwner          bool              `json:"isOwner"`
+	JoinLevel        uint16            `json:"joinLevel,omitempty"` // administrators only
 	SnapshotFresh    bool              `json:"snapshotFresh"`
 	Channels         []ChannelDTO      `json:"channels"`
 	Participants     []ParticipantDTO  `json:"participants"`
@@ -141,18 +148,28 @@ type ClientEventDTO struct {
 }
 
 func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
+	// Numeric access levels reach the UI only for administrators; everyone
+	// else sees just whether a channel can be joined.
+	admin := view.Permissions&(protocol.PrivilegeAdmin|protocol.PrivilegeOwner) != 0
+	levelFor := func(level uint16) uint16 {
+		if admin {
+			return level
+		}
+		return 0
+	}
 	channels := make([]ChannelDTO, 0, len(view.Channels))
 	for _, channel := range view.Channels {
 		channels = append(channels, ChannelDTO{
-			ID:          formatUint64(uint64(channel.ID)),
-			ParentID:    formatUint64(uint64(channel.ParentID)),
-			Name:        channel.Name,
-			Topic:       channel.Topic,
-			Description: channel.Description,
-			Position:    channel.Position,
-			MaxUsers:    channel.MaxUsers,
-			CanJoin:     view.JoinLevel >= channel.MinJoinLevel,
-			Audio:       audioProfileDTO(channel.Audio),
+			ID:           formatUint64(uint64(channel.ID)),
+			ParentID:     formatUint64(uint64(channel.ParentID)),
+			Name:         channel.Name,
+			Topic:        channel.Topic,
+			Description:  channel.Description,
+			Position:     channel.Position,
+			MaxUsers:     channel.MaxUsers,
+			MinJoinLevel: levelFor(channel.MinJoinLevel),
+			CanJoin:      view.JoinLevel >= channel.MinJoinLevel,
+			Audio:        audioProfileDTO(channel.Audio),
 		})
 	}
 	participants := make([]ParticipantDTO, 0, len(view.Participants))
@@ -184,13 +201,16 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		ChatRevision:     formatUint64(view.ChatRevision),
 		ConnectionStatus: connectionStatus(view.ConnectionStatus),
 		LastError:        lastError,
-		Server:           ServerDTO{Name: view.ServerInfo.Name, Version: view.ServerInfo.Version},
+		Server:           ServerDTO{Name: view.ServerInfo.Name, Version: view.ServerInfo.Version, DefaultChannelID: defaultChannelID(view.ServerInfo.DefaultChannelID)},
 		Revision:         formatUint64(uint64(view.Revision)),
 		SessionID:        formatUint64(view.SessionID),
 		ChannelID:        formatUint64(uint64(view.ChannelID)),
-		CanKick:          view.Permissions&1 != 0,
-		CanBan:           view.Permissions&2 != 0,
-		CanDrag:          view.Permissions&4 != 0,
+		CanKick:          view.Permissions&protocol.PrivilegeKick != 0,
+		CanBan:           view.Permissions&protocol.PrivilegeBan != 0,
+		CanDrag:          view.Permissions&protocol.PrivilegeDrag != 0,
+		CanAdmin:         admin,
+		IsOwner:          view.Permissions&protocol.PrivilegeOwner != 0,
+		JoinLevel:        levelFor(view.JoinLevel),
 		SnapshotFresh:    view.SnapshotFresh,
 		Channels:         channels,
 		Participants:     participants,
@@ -287,4 +307,11 @@ func parseUint64(value, field string, allowZero bool) (uint64, error) {
 		return 0, &validationError{Field: field, Message: "некорректное значение"}
 	}
 	return parsed, nil
+}
+
+func defaultChannelID(id domain.ChannelID) string {
+	if id == 0 {
+		return ""
+	}
+	return formatUint64(uint64(id))
 }

@@ -11,6 +11,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/persist"
+	"uniclog.io/sonoryx/internal/voice"
 )
 
 func accountFingerprint(key [32]byte) string {
@@ -60,9 +61,10 @@ func (console *Console) executeAccount(argument string) error {
 		return err
 	}
 	if len(fields) == 4 && fields[0] == "set-permission" {
+		const usage = "account set-permission <user-id> <kick|ban|drag|admin> <on|off>"
 		id, err := strconv.ParseInt(fields[1], 10, 64)
 		if err != nil || id <= 0 {
-			return console.writeUsage("account set-permission <user-id> <kick|ban|drag> <on|off>")
+			return console.writeUsage(usage)
 		}
 		var permission uint8
 		switch fields[2] {
@@ -72,23 +74,21 @@ func (console *Console) executeAccount(argument string) error {
 			permission = persist.PermissionBan
 		case "drag":
 			permission = persist.PermissionDrag
+		case "admin":
+			permission = persist.PermissionAdmin
 		default:
-			return console.writeUsage("account set-permission <user-id> <kick|ban|drag> <on|off>")
+			return console.writeUsage(usage)
 		}
 		if fields[3] != "on" && fields[3] != "off" {
-			return console.writeUsage("account set-permission <user-id> <kick|ban|drag> <on|off>")
+			return console.writeUsage(usage)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		account, err := console.store.SetPermission(ctx, id, permission, fields[3] == "on")
+		change, err := console.admin.SetPermission(ctx, voice.ConsoleAdmin, id, permission, fields[3] == "on")
 		if err != nil {
 			return err
 		}
-		console.hub.ApplyPermissions(id, account.Permissions)
-		if console.notifyPrivileges != nil {
-			console.notifyPrivileges(id, account.JoinLevel, account.Permissions)
-		}
-		_, err = fmt.Fprintf(console.output, "account %d permissions=%d\n", id, account.Permissions)
+		_, err = fmt.Fprintf(console.output, "account %d permissions=%d\n", id, change.Account.Permissions)
 		return err
 	}
 	if len(fields) == 2 && (fields[0] == "ban" || fields[0] == "unban") {
@@ -98,11 +98,8 @@ func (console *Console) executeAccount(argument string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := console.store.SetBan(ctx, "local-console", id, fields[0] == "ban", "local console"); err != nil {
+		if _, err := console.admin.SetBan(ctx, voice.ConsoleAdmin, id, fields[0] == "ban", "local console"); err != nil {
 			return err
-		}
-		if fields[0] == "ban" {
-			console.hub.RemoveUserSessions(id)
 		}
 		_, err = fmt.Fprintf(console.output, "account %d banned=%t\n", id, fields[0] == "ban")
 		return err
@@ -118,15 +115,8 @@ func (console *Console) executeAccount(argument string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := console.store.SetJoinLevel(ctx, id, uint16(level)); err != nil {
-			return fmt.Errorf("set join level: %w", err)
-		}
-		console.hub.ApplyJoinLevel(id, uint16(level))
-		if console.notifyPrivileges != nil {
-			account, err := console.store.Account(ctx, id)
-			if err == nil {
-				console.notifyPrivileges(id, account.JoinLevel, account.Permissions)
-			}
+		if _, err := console.admin.SetJoinLevel(ctx, voice.ConsoleAdmin, id, uint16(level)); err != nil {
+			return err
 		}
 		_, err = fmt.Fprintf(console.output, "account %d join_level=%d\n", id, level)
 		return err
@@ -168,19 +158,39 @@ func (console *Console) setChannelJoinLevel(argument string) error {
 	if err != nil {
 		return console.writeUsage("channel set-min-join-level <channel-id> <level>")
 	}
-	if _, ok := console.hub.GetChannel(domain.ChannelID(id)); !ok {
-		return fmt.Errorf("channel %d not found", id)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := console.store.SetChannelJoinLevel(ctx, domain.ChannelID(id), uint16(level)); err != nil {
+	if _, err := console.admin.SetChannelJoinLevel(ctx, voice.ConsoleAdmin, domain.ChannelID(id), uint16(level)); err != nil {
 		return err
-	}
-	if _, err := console.hub.SetChannelJoinLevel(domain.ChannelID(id), uint16(level)); err != nil {
-		return fmt.Errorf("saved channel threshold but could not apply it: %w", err)
 	}
 	_, err = fmt.Fprintf(console.output, "channel %d min_join_level=%d\n", id, level)
 	return err
+}
+
+func (console *Console) writeAudit(argument string) error {
+	if console.store == nil {
+		return console.writeStoreUnavailable()
+	}
+	var before int64
+	if argument != "" {
+		id, err := strconv.ParseInt(argument, 10, 64)
+		if err != nil || id <= 0 {
+			return console.writeUsage("audit [before-id]")
+		}
+		before = id
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entries, err := console.admin.Audit(ctx, voice.ConsoleAdmin, before)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, err := fmt.Fprintf(console.output, "id=%d at=%s actor=%q action=%q target=%d detail=%q\n", entry.ID, entry.HappenedAt.Format(time.RFC3339), entry.Actor, entry.Action, entry.TargetUserID, entry.Detail); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (console *Console) writeStoreUnavailable() error {

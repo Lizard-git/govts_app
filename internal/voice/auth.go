@@ -70,7 +70,9 @@ type Authenticator struct {
 	initRate    map[netip.Prefix]authRateWindow
 	finishRate  map[netip.Prefix]authRateWindow
 	accountRate map[netip.Prefix]authRateWindow
+	adminRate   map[uint64]authRateWindow
 	policyGate  *sync.Mutex
+	admin       *Administration
 }
 
 // SetPolicyGate serializes UDP authorization with local account/channel changes.
@@ -221,10 +223,11 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 		return errors.New(authenticationServerErrorForClient)
 	}
 	hub.SetSessionVoiceBundles(session.ID, appversion.Number(pending.version) >= appversion.VoiceBundlesMinimum)
-	mac := auth.AckMAC(ackKey, digest, session.ID, account.JoinLevel, account.Permissions)
+	privileges := account.Privileges()
+	mac := auth.AckMAC(ackKey, digest, session.ID, account.JoinLevel, privileges)
 	payload := append([]byte(nil), mac[:]...)
 	payload = binary.BigEndian.AppendUint16(payload, account.JoinLevel)
-	payload = append(payload, account.Permissions)
+	payload = append(payload, privileges)
 	ack := protocol.VoicePacket{Type: protocol.PacketAuthAck, SessionID: session.ID, RequestID: packet.RequestID, Sequence: pending.version, Payload: payload}
 	pending.ack = &ack
 	log.Printf("client authenticated: session_id=%d user_id=%d name=%q addr=%s request_id=%d replaced_sessions=%v", session.ID, account.ID, session.Name, addr, packet.RequestID, replaced)

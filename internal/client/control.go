@@ -71,7 +71,7 @@ func ControlLoop(
 			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck, protocol.PacketModerationAck,
 				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid, protocol.PacketMediaCredentialAck,
 				protocol.PacketAudioStateAck, protocol.PacketChatAck,
-				protocol.PacketPresenceAck, protocol.PacketAttentionAck:
+				protocol.PacketPresenceAck, protocol.PacketAttentionAck, protocol.PacketAdminAck:
 				response := ControlResponse{
 					Type:      packet.Type,
 					RequestID: packet.RequestID,

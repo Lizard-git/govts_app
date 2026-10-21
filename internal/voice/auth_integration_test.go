@@ -30,7 +30,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	}
 	defer store.Close()
 	hub := voice.NewHub()
-	version, err := appversion.Parse("0.2.9")
+	version, err := appversion.Parse("0.3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	if !errors.As(err, &legacyRejected) || !strings.Contains(legacyRejected.Reason, "upgrade") {
 		t.Fatalf("legacy client error = %v", err)
 	}
-	openClient := func(private ed25519.PrivateKey) (*udp.ClientPacketConn, uint64) {
+	openClient := func(private ed25519.PrivateKey, name string) (*udp.ClientPacketConn, uint64) {
 		t.Helper()
 		raw, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(endpoint))
 		if err != nil {
@@ -108,7 +108,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, "alice", private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.9")
+		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, name, private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.3.0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		return connection, result.SessionID
 	}
 
-	first, firstID := openClient(clientKey)
+	first, firstID := openClient(clientKey, "alice")
 	defer first.Close()
 	if session, ok := hub.Get(firstID); !ok || session.UserID != account.ID || session.JoinLevel != 25 {
 		t.Fatalf("authenticated session = %+v, found=%t", session, ok)
@@ -142,7 +142,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondID := openClient(otherKey)
+	second, secondID := openClient(otherKey, "bob")
 	defer second.Close()
 	if err := second.SendPacket(protocol.VoicePacket{Type: protocol.PacketJoinChannel, SessionID: secondID, RequestID: 101, Payload: joinPayload}); err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	if _, ok := hub.Get(secondID); ok {
 		t.Fatal("kicked session survived")
 	}
-	reconnected, reconnectedID := openClient(otherKey)
+	reconnected, reconnectedID := openClient(otherKey, "bob")
 	defer reconnected.Close()
 	dragPayload := binary.BigEndian.AppendUint64(nil, reconnectedID)
 	dragPayload = binary.BigEndian.AppendUint64(dragPayload, uint64(privateRoom.ID))
@@ -281,7 +281,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer bannedConn.Close()
-	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "alice", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.2.9")
+	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "bob", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.3.0")
 	var rejected *client.AuthenticationRejectedError
 	if !errors.As(err, &rejected) || !strings.Contains(rejected.Reason, "banned") {
 		t.Fatalf("banned reconnect error = %v", err)

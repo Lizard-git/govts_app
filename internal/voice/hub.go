@@ -720,6 +720,13 @@ func (h *Hub) SetChannelJoinLevel(channelID domain.ChannelID, level uint16) ([]u
 	}
 	channel.MinJoinLevel = level
 	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ChannelUpdated, Channel: *cloneChannel(*channel)})
+	return h.removeBelowJoinLevelLocked(channelID, level), nil
+}
+
+// removeBelowJoinLevelLocked disconnects the sessions in channelID whose
+// level no longer reaches level.
+func (h *Hub) removeBelowJoinLevelLocked(channelID domain.ChannelID, level uint16) []uint64 {
 	var removed []uint64
 	for id, session := range h.sessions {
 		if session.ChannelID != channelID || session.JoinLevel >= level {
@@ -732,7 +739,7 @@ func (h *Hub) SetChannelJoinLevel(channelID domain.ChannelID, level uint16) ([]u
 		removed = append(removed, id)
 	}
 	sort.Slice(removed, func(i, j int) bool { return removed[i] < removed[j] })
-	return removed, nil
+	return removed
 }
 
 func (h *Hub) GetChannel(id domain.ChannelID) (domain.Channel, bool) {

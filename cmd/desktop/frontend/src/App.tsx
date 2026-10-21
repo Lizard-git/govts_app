@@ -24,6 +24,7 @@ import {attentionLockSeconds, errorCode, errorText, rawError, type Messages} fro
 import {freshWakeGate, wakeClock, wakeDecision, wakeFailed, wakeRejected, wakeSent, type WakeGate} from "./features/participants/wakeLimit";
 import {LocaleSwitch, useLocale} from "./locales/Locale";
 import {InterfaceSettings} from "./features/settings/InterfaceSettings";
+import {AdminPanel} from "./features/admin/AdminPanel";
 import {StageScene} from "./features/settings/StageScene";
 
 const contentTabs = ["chat", "screens", "events"] as const;
@@ -36,7 +37,7 @@ const emptyView: ClientViewDTO = {
     chatContext: "", userId: "0", chatRevision: "0",
     connectionStatus: "disconnected",
     server: {name: ""}, revision: "0", sessionId: "0", channelId: "0", snapshotFresh: false,
-    canKick: false, canBan: false, canDrag: false,
+    canKick: false, canBan: false, canDrag: false, canAdmin: false, isOwner: false, joinLevel: 0,
     channels: [], participants: [], screenStreams: [],
     audio: {
         muted: false,
@@ -396,16 +397,20 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
         return () => window.clearTimeout(timer);
     }, [actionError, actionErrorTick, lobby]);
     const mainRef = useRef<HTMLElement>(null);
-    const settingsWasOpen = useRef(false);
+    const overlayWasOpen = useRef<Page | null>(null);
     useEffect(() => {
-        if (mainRef.current) mainRef.current.inert = page === "settings";
-        if (page === "settings") settingsWasOpen.current = true;
-        else if (settingsWasOpen.current) {
-            settingsWasOpen.current = false;
-            document.getElementById("open-settings")?.focus();
+        if (mainRef.current) mainRef.current.inert = page !== "channels";
+        if (page !== "channels") overlayWasOpen.current = page;
+        else if (overlayWasOpen.current) {
+            document.getElementById(overlayWasOpen.current === "admin" ? "open-admin" : "open-settings")?.focus();
+            overlayWasOpen.current = null;
         }
     }, [page]);
     const closeSettings = () => setPage("channels");
+    const adminAvailable = view.canAdmin && view.connectionStatus === "connected";
+    useEffect(() => {
+        if (page === "admin" && !adminAvailable) setPage("channels");
+    }, [page, adminAvailable]);
 
     return <div className="app-shell">
         <main className="main-area" ref={mainRef}>
@@ -437,6 +442,9 @@ function MainApp({appearance, setTheme, createCustomTheme, updateAppearance, ope
                           sharing={sharing} onError={setActionError} contentTab={contentTab} setContentTab={setContentTab} directChats={directChats} setDirectChats={setDirectChats} chatStore={chatStore}/>
             </>}
         </main>
+        {page === "admin" && adminAvailable && <SettingsOverlay onClose={closeSettings} label={m.admin.title} closeLabel={m.admin.close}>
+            <AdminPanel view={view}/>
+        </SettingsOverlay>}
         {page === "settings" && <SettingsOverlay onClose={closeSettings}>
             <SettingsPage view={view} invoke={invoke} appearance={appearance} setTheme={setTheme} createCustomTheme={createCustomTheme} updateAppearance={updateAppearance} openSavedTheme={openSavedTheme} saveNamedTheme={saveNamedTheme} importThemeFile={importThemeFile} deleteSavedTheme={deleteSavedTheme} exportTheme={exportTheme} updates={updates}/>
         </SettingsOverlay>}
@@ -741,8 +749,10 @@ function deviceOptions(devices: AudioDeviceDTO[], m: Messages): SelectOption[] {
     ];
 }
 
-function SettingsOverlay({onClose, children}: {onClose: () => void; children: ReactNode}) {
+function SettingsOverlay({onClose, children, label, closeLabel}: {onClose: () => void; children: ReactNode; label?: string; closeLabel?: string}) {
     const {m} = useLocale();
+    label ??= m.settings.title;
+    closeLabel ??= m.settings.close;
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -756,8 +766,8 @@ function SettingsOverlay({onClose, children}: {onClose: () => void; children: Re
     return <div className="settings-overlay" onMouseDown={(event) => {
         if (event.button === 0 && event.target === event.currentTarget) onClose();
     }}>
-        <div className="settings-window" role="dialog" aria-modal="true" aria-label={m.settings.title}>
-            <button type="button" className="settings-close" title={m.settings.close} aria-label={m.settings.close} autoFocus onClick={onClose}><Icon name="close"/></button>
+        <div className="settings-window" role="dialog" aria-modal="true" aria-label={label}>
+            <button type="button" className="settings-close" title={closeLabel} aria-label={closeLabel} autoFocus onClick={onClose}><Icon name="close"/></button>
             {children}
         </div>
     </div>;

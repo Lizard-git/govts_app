@@ -18,7 +18,19 @@ const (
 	PermissionKick uint8 = 1 << iota
 	PermissionBan
 	PermissionDrag
+	// PermissionAdmin opens the remote administration menu. It is stored in
+	// users.admin, apart from the moderation bits in users.permissions.
+	PermissionAdmin
+
+	// PrivilegeOwner is a wire-only flag: it marks the server owner in the
+	// privileges byte sent to clients and is never stored as a permission.
+	PrivilegeOwner uint8 = 1 << 4
+
+	moderationPermissions = PermissionKick | PermissionBan | PermissionDrag
 )
+
+// ConsoleActor names the local server console in the audit log.
+const ConsoleActor = "local-console"
 
 type Account struct {
 	ID          int64
@@ -28,6 +40,21 @@ type Account struct {
 	Permissions uint8
 	Banned      bool
 	Owner       bool
+	BanReason   string
+}
+
+// Privileges is the byte sent to the account's clients: permissions plus the
+// owner flag. Older clients read only the moderation bits.
+func (a Account) Privileges() uint8 {
+	if a.Owner {
+		return a.Permissions | PrivilegeOwner
+	}
+	return a.Permissions
+}
+
+// ValidPermission reports whether permission is exactly one assignable bit.
+func ValidPermission(permission uint8) bool {
+	return permission == PermissionKick || permission == PermissionBan || permission == PermissionDrag || permission == PermissionAdmin
 }
 
 type Store struct{ db *sql.DB }
@@ -75,7 +102,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 4 {
+	if version < 0 || version > 5 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -178,23 +205,40 @@ func (s *Store) initialize() error {
 			return err
 		}
 	}
+	if version < 5 {
+		for _, statement := range []string{
+			`ALTER TABLE users ADD COLUMN admin INTEGER NOT NULL DEFAULT 0 CHECK(admin IN (0,1))`,
+			`PRAGMA user_version = 5`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate admin permission: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
-func scanAccount(row *sql.Row) (Account, error) {
+const accountColumns = `id, public_key, display_name, join_level, permissions, admin, banned, owner, ban_reason`
+
+type accountScanner interface{ Scan(...any) error }
+
+func scanAccount(row accountScanner) (Account, error) {
 	var account Account
 	var key []byte
-	var level, permissions, banned, owner int
-	err := row.Scan(&account.ID, &key, &account.DisplayName, &level, &permissions, &banned, &owner)
+	var level, permissions, admin, banned, owner int
+	err := row.Scan(&account.ID, &key, &account.DisplayName, &level, &permissions, &admin, &banned, &owner, &account.BanReason)
 	if err != nil {
 		return Account{}, err
 	}
-	if len(key) != 32 || level < 0 || level > 65535 || permissions < 0 || permissions > 7 {
+	if len(key) != 32 || level < 0 || level > 65535 || permissions < 0 || permissions > int(moderationPermissions) {
 		return Account{}, errors.New("invalid account in database")
 	}
 	copy(account.PublicKey[:], key)
 	account.JoinLevel = uint16(level)
 	account.Permissions = uint8(permissions)
+	if admin != 0 {
+		account.Permissions |= PermissionAdmin
+	}
 	account.Banned = banned != 0
 	account.Owner = owner != 0
 	return account, nil
@@ -214,7 +258,7 @@ func (s *Store) FindOrCreateAccount(ctx context.Context, key [32]byte, name stri
 	if err != nil {
 		return Account{}, err
 	}
-	return scanAccount(s.db.QueryRowContext(ctx, `SELECT id, public_key, display_name, join_level, permissions, banned, owner FROM users WHERE public_key=?`, key[:]))
+	return scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM users WHERE public_key=?`, key[:]))
 }
 
 // AccountExists reports whether an account is registered for key.
@@ -228,37 +272,45 @@ func (s *Store) AccountExists(ctx context.Context, key [32]byte) (bool, error) {
 }
 
 func (s *Store) Account(ctx context.Context, id int64) (Account, error) {
-	return scanAccount(s.db.QueryRowContext(ctx, `SELECT id, public_key, display_name, join_level, permissions, banned, owner FROM users WHERE id=?`, id))
+	return scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM users WHERE id=?`, id))
 }
 
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, public_key, display_name, join_level, permissions, banned, owner FROM users ORDER BY id`)
+	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users ORDER BY id`)
+}
+
+// AccountsPage returns up to limit accounts with id greater than afterID, in
+// id order.
+func (s *Store) AccountsPage(ctx context.Context, afterID int64, limit int) ([]Account, error) {
+	if afterID < 0 || limit <= 0 {
+		return nil, errors.New("invalid account page")
+	}
+	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users WHERE id>? ORDER BY id LIMIT ?`, afterID, limit)
+}
+
+func (s *Store) queryAccounts(ctx context.Context, query string, args ...any) ([]Account, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var accounts []Account
 	for rows.Next() {
-		var account Account
-		var key []byte
-		var level, permissions, banned, owner int
-		if err := rows.Scan(&account.ID, &key, &account.DisplayName, &level, &permissions, &banned, &owner); err != nil {
+		account, err := scanAccount(rows)
+		if err != nil {
 			return nil, err
 		}
-		if len(key) != 32 || level < 0 || level > 65535 || permissions < 0 || permissions > 7 {
-			return nil, errors.New("invalid account in database")
-		}
-		copy(account.PublicKey[:], key)
-		account.JoinLevel = uint16(level)
-		account.Permissions = uint8(permissions)
-		account.Banned = banned != 0
-		account.Owner = owner != 0
 		accounts = append(accounts, account)
 	}
 	return accounts, rows.Err()
 }
 
 func (s *Store) SetJoinLevel(ctx context.Context, id int64, level uint16) error {
+	return s.SetJoinLevelBy(ctx, ConsoleActor, id, level)
+}
+
+// SetJoinLevelBy sets the account join level and records actor in the audit log.
+func (s *Store) SetJoinLevelBy(ctx context.Context, actor string, id int64, level uint16) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -271,14 +323,20 @@ func (s *Store) SetJoinLevel(ctx context.Context, id int64, level uint16) error 
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return fmt.Errorf("account %d not found", id)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), "local-console", "set-join-level", id, fmt.Sprint(level)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "set-join-level", id, fmt.Sprint(level)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) SetPermission(ctx context.Context, id int64, permission uint8, allowed bool) (Account, error) {
-	if permission != PermissionKick && permission != PermissionBan && permission != PermissionDrag {
+	return s.SetPermissionBy(ctx, ConsoleActor, id, permission, allowed)
+}
+
+// SetPermissionBy grants or revokes one permission bit and records actor in
+// the audit log.
+func (s *Store) SetPermissionBy(ctx context.Context, actor string, id int64, permission uint8, allowed bool) (Account, error) {
+	if !ValidPermission(permission) {
 		return Account{}, errors.New("invalid server permission")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -286,18 +344,23 @@ func (s *Store) SetPermission(ctx context.Context, id int64, permission uint8, a
 		return Account{}, err
 	}
 	defer tx.Rollback()
-	var updated uint8
-	if allowed {
-		updated = permission
+	var result sql.Result
+	if permission == PermissionAdmin {
+		result, err = tx.ExecContext(ctx, `UPDATE users SET admin=? WHERE id=?`, allowed, id)
+	} else {
+		var updated uint8
+		if allowed {
+			updated = permission
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE users SET permissions=(permissions & ?) | ? WHERE id=?`, int(^permission&moderationPermissions), updated, id)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET permissions=(permissions & ?) | ? WHERE id=?`, int(^permission)&7, updated, id)
 	if err != nil {
 		return Account{}, err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return Account{}, fmt.Errorf("account %d not found", id)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), "local-console", "set-permission", id, fmt.Sprintf("%d=%t", permission, allowed)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "set-permission", id, fmt.Sprintf("%d=%t", permission, allowed)); err != nil {
 		return Account{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -351,6 +414,42 @@ func (s *Store) SetOwner(ctx context.Context, id int64) error {
 func (s *Store) LogAction(ctx context.Context, actor string, action string, targetID int64, detail string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, action, targetID, detail)
 	return err
+}
+
+type AuditEntry struct {
+	ID           int64
+	HappenedAt   time.Time
+	Actor        string
+	Action       string
+	TargetUserID int64
+	Detail       string
+}
+
+// AuditPage returns up to limit audit entries older than beforeID, newest
+// first; beforeID 0 starts from the newest entry.
+func (s *Store) AuditPage(ctx context.Context, beforeID int64, limit int) ([]AuditEntry, error) {
+	if beforeID < 0 || limit <= 0 {
+		return nil, errors.New("invalid audit page")
+	}
+	if beforeID == 0 {
+		beforeID = int64(^uint64(0) >> 1)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,happened_at,actor,action,COALESCE(target_user_id,0),detail FROM audit WHERE id<? ORDER BY id DESC LIMIT ?`, beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []AuditEntry
+	for rows.Next() {
+		var entry AuditEntry
+		var happened string
+		if err := rows.Scan(&entry.ID, &happened, &entry.Actor, &entry.Action, &entry.TargetUserID, &entry.Detail); err != nil {
+			return nil, err
+		}
+		entry.HappenedAt, _ = time.Parse(time.RFC3339Nano, happened)
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
 }
 
 type ServerState struct {
@@ -423,6 +522,12 @@ func (s *Store) SaveInitialServer(ctx context.Context, state ServerState) error 
 }
 
 func (s *Store) SetChannelJoinLevel(ctx context.Context, channelID domain.ChannelID, level uint16) error {
+	return s.SetChannelJoinLevelBy(ctx, ConsoleActor, channelID, level)
+}
+
+// SetChannelJoinLevelBy sets the channel threshold and records actor in the
+// audit log.
+func (s *Store) SetChannelJoinLevelBy(ctx context.Context, actor string, channelID domain.ChannelID, level uint16) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -442,8 +547,60 @@ func (s *Store) SetChannelJoinLevel(ctx context.Context, channelID domain.Channe
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return fmt.Errorf("channel %d not found", channelID)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), "local-console", "set-channel-join-level", fmt.Sprintf("%d=%d", channelID, level)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "set-channel-join-level", fmt.Sprintf("%d=%d", channelID, level)); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// InsertChannelBy stores a channel created at runtime and records actor in
+// the audit log.
+func (s *Store) InsertChannelBy(ctx context.Context, actor string, c domain.Channel) error {
+	if c.ID == 0 {
+		return errors.New("channel ID is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id,parent_id,name,topic,description,position,max_users,min_join_level,channel_type,audio_codec,audio_sample_rate,audio_channels,audio_frame_duration_ms,audio_bitrate,audio_application) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, c.ParentID, c.Name, c.Topic, c.Description, c.Position, c.MaxUsers, c.MinJoinLevel, c.Type, c.Audio.Codec, c.Audio.SampleRate, c.Audio.Channels, c.Audio.FrameDurationMS, c.Audio.Bitrate, c.Audio.Application); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "create-channel", channelAuditDetail(c)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateChannelBy replaces the settings and place of a channel and records
+// actor in the audit log. The default channel stays unrestricted.
+func (s *Store) UpdateChannelBy(ctx context.Context, actor string, c domain.Channel) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var defaultID domain.ChannelID
+	if err := tx.QueryRowContext(ctx, `SELECT default_channel_id FROM server_settings WHERE id=1`).Scan(&defaultID); err != nil {
+		return err
+	}
+	if c.ID == defaultID && (c.MinJoinLevel != 0 || c.MaxUsers != 0) {
+		return errors.New("default channel must remain unrestricted")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE channels SET parent_id=?,name=?,topic=?,description=?,position=?,max_users=?,min_join_level=?,channel_type=?,audio_codec=?,audio_sample_rate=?,audio_channels=?,audio_frame_duration_ms=?,audio_bitrate=?,audio_application=? WHERE id=?`, c.ParentID, c.Name, c.Topic, c.Description, c.Position, c.MaxUsers, c.MinJoinLevel, c.Type, c.Audio.Codec, c.Audio.SampleRate, c.Audio.Channels, c.Audio.FrameDurationMS, c.Audio.Bitrate, c.Audio.Application, c.ID)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("channel %d not found", c.ID)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "update-channel", channelAuditDetail(c)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func channelAuditDetail(c domain.Channel) string {
+	return fmt.Sprintf("id=%d parent=%d pos=%d name=%q max=%d level=%d bitrate=%d", c.ID, c.ParentID, c.Position, c.Name, c.MaxUsers, c.MinJoinLevel, c.Audio.Bitrate)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -297,4 +298,19 @@ func validateServerSnapshot(s domain.ServerSnapshot) error {
 }
 func validSnapshotText(v string, max int, required bool) bool {
 	return utf8.ValidString(v) && len(v) <= max && (!required || v != "") && (!required || strings.TrimSpace(v) == v)
+}
+
+// sortSnapshotChannels restores the canonical order validateServerSnapshot
+// expects: parent, then position, then ID.
+func sortSnapshotChannels(channels []domain.Channel) {
+	sort.Slice(channels, func(i, j int) bool {
+		a, b := channels[i], channels[j]
+		if a.ParentID != b.ParentID {
+			return a.ParentID < b.ParentID
+		}
+		if a.Position != b.Position {
+			return a.Position < b.Position
+		}
+		return a.ID < b.ID
+	})
 }

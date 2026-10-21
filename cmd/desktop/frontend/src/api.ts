@@ -21,6 +21,18 @@ export type {
 
 import type {AudioMeterDTO, ConnectRequest, ChatRequestDTO} from "../bindings/uniclog.io/sonoryx/internal/ui/wails";
 
+export type AdminPermission = "kick" | "ban" | "drag" | "admin";
+export type AdminAccount = {id: string; name: string; fingerprint: string; joinLevel: number; kick: boolean; ban: boolean; drag: boolean;
+    admin: boolean; owner: boolean; banned: boolean; online: boolean; banReason: string};
+export type AdminAccountsPage = {accounts: AdminAccount[] | null; next: string};
+export type AdminAuditEntry = {id: string; happenedAtMs: number; actor: string; action: string; targetUserId: string; detail: string};
+export type AdminAuditPage = {entries: AdminAuditEntry[] | null; next: string};
+export type AdminChannelInput = {parentId: string; name: string; topic: string; description: string; position: number; maxUsers: number;
+    minJoinLevel: number; bitrate: number; application: "voip" | "audio"};
+
+const adminCall = <T>(method: string, ...args: unknown[]): Promise<T> =>
+    Call.ByName(`uniclog.io/sonoryx/internal/ui/wails.Service.${method}`, ...args) as Promise<T>;
+
 let diagnosticsInFlight = 0;
 export type RecentServer = {address: string; alias?: string; favorite: boolean; lastVisited: number; current: boolean;
     onlineCount: number | null; status: "unknown" | "available" | "unavailable"; updatedAt: number; lastAttemptAt: number};
@@ -52,6 +64,14 @@ export const desktopAPI = {
     kick: (sessionID: string) => Service.Kick(sessionID),
     ban: (sessionID: string) => Service.Ban(sessionID),
     drag: (sessionID: string, channelID: string) => Service.Drag(sessionID, channelID),
+    adminAccounts: (cursor: string) => adminCall<AdminAccountsPage>("AdminAccounts", cursor),
+    adminSetPermission: (accountID: string, permission: AdminPermission, enabled: boolean) => adminCall<AdminAccount>("AdminSetPermission", accountID, permission, enabled),
+    adminSetJoinLevel: (accountID: string, level: number) => adminCall<AdminAccount>("AdminSetJoinLevel", accountID, level),
+    adminSetBan: (accountID: string, banned: boolean, reason: string) => adminCall<AdminAccount>("AdminSetBan", accountID, banned, reason),
+    adminSetChannelJoinLevel: (channelID: string, level: number) => adminCall<void>("AdminSetChannelJoinLevel", channelID, level),
+    adminAudit: (cursor: string) => adminCall<AdminAuditPage>("AdminAudit", cursor),
+    adminCreateChannel: (input: AdminChannelInput) => adminCall<string>("AdminCreateChannel", input),
+    adminUpdateChannel: (channelID: string, input: AdminChannelInput) => adminCall<void>("AdminUpdateChannel", channelID, input),
     setMuted: (value: boolean) => Service.SetMuted(value),
     setAway: (away: boolean) => Service.SetAway(away),
     wake: (sessionID: string) => Service.Wake(sessionID),
