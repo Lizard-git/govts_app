@@ -565,8 +565,9 @@ func (a *App) CueLead(kind voiceclient.NotificationSoundKind) time.Duration {
 	if volume <= 0 {
 		return 0
 	}
-	// The playback buffer is 100 ms. Wait it out so deafen does not wipe the cue.
-	return voiceclient.NotificationCueDuration(pack, kind) + 120*time.Millisecond
+	// The playback buffer is 100 ms. Wait it out so deafen does not wipe the
+	// cue, and the wake pre-roll the mixer may put in front of it.
+	return voiceclient.CueWakePreroll + voiceclient.NotificationCueDuration(pack, kind) + 120*time.Millisecond
 }
 
 // MessageReceived plays the incoming message cue. New messages are detected

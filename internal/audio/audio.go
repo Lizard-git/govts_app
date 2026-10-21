@@ -29,6 +29,8 @@ type PCMFrame struct {
 	ControlEpoch  uint64
 	Samples       []int16
 	Duration      time.Duration
+	// Cue marks the first frame of an app sound cue for diagnostics; 0 otherwise.
+	Cue uint8
 }
 
 // MediaPCMFrame is decoded PCM that still belongs to a remote audio stream.
@@ -38,6 +40,13 @@ type MediaPCMFrame struct {
 	Sequence      uint32
 	Samples       []int16
 	Duration      time.Duration
+	Cue           uint8
+}
+
+// PlaybackStats reports how much audio waits for the output device and how
+// long ago the device last pulled data, so a cue handoff can be logged.
+type PlaybackStats interface {
+	PlaybackStats() (buffered time.Duration, sinceCallback time.Duration)
 }
 
 type Encoder interface {

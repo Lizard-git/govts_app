@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +45,10 @@ func main() {
 	}
 	defer stopLogging()
 	log.Printf("client starting: version=%s", applicationVersion())
+	if slices.Contains(os.Args[1:], audio.SoundLogFlag) {
+		audio.SetSoundLog(true)
+		log.Printf("sound cue trace enabled: flag=%s", audio.SoundLogFlag)
+	}
 	if err := clientsettings.MigrateLegacyProfile(configDir); err != nil {
 		log.Printf("migrate legacy profile: %v", err)
 	}

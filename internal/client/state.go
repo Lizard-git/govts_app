@@ -277,7 +277,7 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 		}
 	}
 	if hasBaseline && s.snapshotFresh {
-		s.queueChannelChangeLocked(previousChannel, s.channelID)
+		s.queueChannelChangeLocked(previousChannel, s.channelID, "snapshot")
 		s.queueParticipantDiffLocked(previous.Participants)
 		s.queueScreenDiffLocked(previous.ScreenStreams)
 	}

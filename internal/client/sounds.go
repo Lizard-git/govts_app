@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -142,6 +143,41 @@ func (p soundPack) notes(kind NotificationSoundKind) []cueNote {
 	}
 }
 
+func (kind NotificationSoundKind) String() string {
+	switch kind {
+	case NotificationJoined:
+		return "joined"
+	case NotificationLeft:
+		return "left"
+	case NotificationChannelChanged:
+		return "channel"
+	case NotificationMessageSent:
+		return "message_sent"
+	case NotificationMessageReceived:
+		return "message_received"
+	case NotificationScreenStarted:
+		return "screen_start"
+	case NotificationScreenStopped:
+		return "screen_stop"
+	case NotificationWake:
+		return "wake"
+	case NotificationAway:
+		return "away"
+	case NotificationReturned:
+		return "returned"
+	case NotificationMicMuted:
+		return "mic_off"
+	case NotificationMicUnmuted:
+		return "mic_on"
+	case NotificationSpeakerMuted:
+		return "speaker_off"
+	case NotificationSpeakerUnmuted:
+		return "speaker_on"
+	default:
+		return fmt.Sprintf("unknown(%d)", uint8(kind))
+	}
+}
+
 func CueID(kind NotificationSoundKind) (string, bool) {
 	switch kind {
 	case NotificationMicMuted:
@@ -267,6 +303,9 @@ func notificationFrames(sound NotificationSound) []audio.MediaPCMFrame {
 		chunk := make([]int16, frameSamples)
 		copy(chunk, samples[start:min(start+frameSamples, len(samples))])
 		frames = append(frames, audio.MediaPCMFrame{PlaybackEpoch: sound.PlaybackEpoch, SenderID: 0, Samples: chunk, Duration: 20 * time.Millisecond})
+	}
+	if len(frames) > 0 {
+		frames[0].Cue = uint8(sound.Kind)
 	}
 	return frames
 }

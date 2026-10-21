@@ -21,17 +21,29 @@ func (b *playbackBuffer) read(dst []byte) {
 	b.data = b.data[n:]
 }
 
-func (b *playbackBuffer) push(data []byte) {
+// push reports how many queued or new bytes it discarded to stay in limit.
+func (b *playbackBuffer) push(data []byte) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(data) >= b.limit {
+		dropped := len(b.data) + len(data) - b.limit
 		b.data = append(b.data[:0], data[len(data)-b.limit:]...)
-		return
+		return dropped
 	}
-	if excess := len(b.data) + len(data) - b.limit; excess > 0 {
+	excess := len(b.data) + len(data) - b.limit
+	if excess > 0 {
 		b.data = b.data[excess:]
+	} else {
+		excess = 0
 	}
 	b.data = append(b.data, data...)
+	return excess
+}
+
+func (b *playbackBuffer) len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.data)
 }
 
 func (b *playbackBuffer) clear() {
