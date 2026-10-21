@@ -31,6 +31,7 @@ type ConsoleInfo struct {
 type Console struct {
 	hub              *voice.Hub
 	store            *persist.Store
+	admin            *voice.Administration
 	notifyPrivileges func(int64, uint16, uint8)
 	policyGate       *sync.Mutex
 	input            io.Reader
@@ -41,6 +42,9 @@ type Console struct {
 
 func (console *Console) SetPrivilegeNotifier(notify func(int64, uint16, uint8)) {
 	console.notifyPrivileges = notify
+	if console.admin != nil {
+		console.admin.SetPrivilegeNotifier(notify)
+	}
 }
 
 // SetPolicyGate serializes console mutations with incoming UDP commands.
@@ -60,8 +64,9 @@ func NewConsole(
 		info:   info,
 		now:    time.Now,
 	}
-	if len(stores) > 0 {
+	if len(stores) > 0 && stores[0] != nil {
 		console.store = stores[0]
+		console.admin = voice.NewAdministration(console.store, hub)
 	}
 	return console
 }
@@ -179,6 +184,8 @@ func (console *Console) Execute(line string) (executeErr error) {
 		return console.writeAccounts()
 	case "account":
 		return console.executeAccount(argument)
+	case "audit":
+		return console.writeAudit(argument)
 	default:
 		_, err := fmt.Fprintf(console.output, "error: unknown command %q; use help\n", command)
 		return err
@@ -200,10 +207,11 @@ func (console *Console) writeHelp() error {
 		"  accounts              list registered accounts\n"+
 			"  account <id>          show one account\n"+
 			"  account set-join-level <id> <level>\n"+
-			"  account set-permission <id> <kick|ban|drag> <on|off>\n"+
+			"  account set-permission <id> <kick|ban|drag|admin> <on|off>\n"+
 			"  account set-owner <id>\n"+
 			"  account <ban|unban> <id>\n"+
-			"  channel set-min-join-level <id> <level>\n")
+			"  channel set-min-join-level <id> <level>\n"+
+			"  audit [before-id]      show recent audit log entries\n")
 	return err
 }
 

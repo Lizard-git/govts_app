@@ -208,8 +208,8 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		ConfigSource:  configSource,
 	}, store)
 	console.SetPolicyGate(policyGate)
-	console.SetPrivilegeNotifier(func(userID int64, level uint16, permissions uint8) {
-		payload := []byte{byte(level >> 8), byte(level), permissions}
+	notifyPrivileges := func(userID int64, level uint16, privileges uint8) {
+		payload := []byte{byte(level >> 8), byte(level), privileges}
 		for _, session := range hub.Inspect().Sessions {
 			if session.UserID == userID {
 				if err := voice.SendToSession(conn, session, protocol.VoicePacket{Type: protocol.PacketAccountPrivileges, SessionID: session.ID, Payload: payload}); err != nil {
@@ -217,7 +217,11 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 				}
 			}
 		}
-	})
+	}
+	console.SetPrivilegeNotifier(notifyPrivileges)
+	administration := voice.NewAdministration(store, hub)
+	administration.SetPrivilegeNotifier(notifyPrivileges)
+	authenticator.SetAdministration(administration)
 	log.Println("local server console ready; type help")
 	go func() {
 		if err := console.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

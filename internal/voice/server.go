@@ -113,6 +113,8 @@ func ServeUDP(
 			handleErr = authenticator.Handle(conn, hub, cache, packet, addr)
 		case protocol.PacketKick, protocol.PacketBan, protocol.PacketDrag:
 			handleErr = authenticator.HandleModeration(conn, hub, cache, packet, addr)
+		case protocol.PacketAdminRequest:
+			handleErr = authenticator.HandleAdmin(conn, hub, cache, packet, addr)
 		default:
 			handleErr = HandlePacket(conn, hub, cache, packet, addr)
 		}
