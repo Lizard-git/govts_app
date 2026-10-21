@@ -250,3 +250,71 @@ func TestChannelUpdatedEventRoundTrip(t *testing.T) {
 		t.Fatal("trailing channel event data accepted")
 	}
 }
+
+func TestDeleteRequestsRoundTripAndValidation(t *testing.T) {
+	for _, operation := range []AdminOperation{AdminDeleteChannel, AdminDeleteAccount} {
+		request := AdminRequest{Operation: operation, TargetID: 7}
+		encoded, err := EncodeAdminRequest(request)
+		if err != nil {
+			t.Fatalf("EncodeAdminRequest(%d) error = %v", operation, err)
+		}
+		if decoded, err := DecodeAdminRequest(encoded); err != nil || decoded != request {
+			t.Fatalf("round trip = %+v, %v; want %+v", decoded, err, request)
+		}
+		for name, bad := range map[string]AdminRequest{
+			"without target": {Operation: operation},
+			"with cursor":    {Operation: operation, TargetID: 7, Cursor: 1},
+			"with level":     {Operation: operation, TargetID: 7, Level: 1},
+			"with enabled":   {Operation: operation, TargetID: 7, Enabled: true},
+			"with reason":    {Operation: operation, TargetID: 7, Reason: "x"},
+			"with channel":   {Operation: operation, TargetID: 7, Channel: AdminChannel{Name: "x"}},
+		} {
+			if _, err := EncodeAdminRequest(bad); err == nil {
+				t.Errorf("operation %d %s: accepted %+v", operation, name, bad)
+			}
+		}
+		response := AdminResponse{Operation: operation, Next: 7}
+		payload, err := EncodeAdminResponse(response)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decoded, err := DecodeAdminResponse(payload); err != nil || decoded.Operation != operation || decoded.Next != 7 {
+			t.Fatalf("response round trip = %+v, %v", decoded, err)
+		}
+	}
+	if _, err := EncodeAdminRequest(AdminRequest{Operation: AdminDeleteAccount + 1, TargetID: 1}); err == nil {
+		t.Fatal("unknown operation accepted")
+	}
+	if _, err := EncodeAdminResponse(AdminResponse{Operation: AdminDeleteAccount + 1}); err == nil {
+		t.Fatal("unknown response operation accepted")
+	}
+}
+
+func TestChannelDeletedEventRoundTrip(t *testing.T) {
+	event := domain.StateEvent{Kind: domain.ChannelDeleted, Revision: 9, ChannelID: 5}
+	encoded, err := EncodeStateEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) != 18 {
+		t.Fatalf("encoded size = %d", len(encoded))
+	}
+	if decoded, err := DecodeStateEvent(encoded); err != nil || decoded != event {
+		t.Fatalf("round trip = %+v, %v", decoded, err)
+	}
+	for name, bad := range map[string]domain.StateEvent{
+		"zero channel ID":   {Kind: domain.ChannelDeleted, Revision: 1},
+		"with session":      {Kind: domain.ChannelDeleted, Revision: 1, ChannelID: 5, SessionID: 1},
+		"with channel body": {Kind: domain.ChannelDeleted, Revision: 1, ChannelID: 5, Channel: domain.Channel{ID: 5, Name: "x"}},
+	} {
+		if _, err := EncodeStateEvent(bad); err == nil {
+			t.Errorf("%s: EncodeStateEvent accepted %+v", name, bad)
+		}
+	}
+	if _, err := DecodeStateEvent(append(encoded, 0)); err == nil {
+		t.Fatal("trailing channel deleted data accepted")
+	}
+	if _, err := DecodeStateEvent(encoded[:len(encoded)-1]); err == nil {
+		t.Fatal("truncated channel deleted event accepted")
+	}
+}

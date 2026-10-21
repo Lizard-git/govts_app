@@ -69,6 +69,12 @@ func TestAdminServiceRejectsInvalidInputBeforeSending(t *testing.T) {
 	if _, err := service.AdminAudit("abc"); err == nil {
 		t.Error("malformed audit cursor accepted")
 	}
+	if err := service.AdminDeleteChannel("0"); err == nil {
+		t.Error("zero channel deletion accepted")
+	}
+	if err := service.AdminDeleteAccount("x"); err == nil {
+		t.Error("malformed account deletion accepted")
+	}
 }
 
 func TestAdminChannelRequestConversion(t *testing.T) {

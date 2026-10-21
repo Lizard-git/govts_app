@@ -253,12 +253,67 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 		t.Fatalf("hub channel = %+v, %t", stored, ok)
 	}
 
+	// Deleting a channel moves its members to the default channel first.
+	stateEvent := func(match func(domain.StateEvent) bool) domain.StateEvent {
+		t.Helper()
+		packet := user.receive(func(packet protocol.VoicePacket) bool {
+			if packet.Type != protocol.PacketStateEvent {
+				return false
+			}
+			event, err := protocol.DecodeStateEvent(packet.Payload)
+			return err == nil && match(event)
+		})
+		event, _ := protocol.DecodeStateEvent(packet.Payload)
+		return event
+	}
+	if err := hub.JoinChannel(user.id, domain.ChannelID(created.Next)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted := owner.ack(protocol.AdminRequest{Operation: protocol.AdminDeleteChannel, TargetID: created.Next}); deleted.Next != created.Next {
+		t.Fatalf("delete channel response = %+v", deleted)
+	}
+	moved := stateEvent(func(event domain.StateEvent) bool {
+		return event.Kind == domain.ParticipantMoved && event.SessionID == user.id && event.ChannelID == voice.DefaultChannelID
+	})
+	removed := stateEvent(func(event domain.StateEvent) bool { return event.Kind == domain.ChannelDeleted })
+	if removed.ChannelID != domain.ChannelID(created.Next) || removed.Revision != moved.Revision+1 {
+		t.Fatalf("deleted event = %+v after move %+v", removed, moved)
+	}
+	if session, ok := hub.Get(user.id); !ok || session.ChannelID != voice.DefaultChannelID {
+		t.Fatalf("member after delete = %+v, %t", session, ok)
+	}
+	if refused := owner.request(protocol.AdminRequest{Operation: protocol.AdminDeleteChannel, TargetID: uint64(voice.DefaultChannelID)}); refused.Type != protocol.PacketError {
+		t.Fatalf("default channel delete = type %d %q", refused.Type, refused.Payload)
+	}
+
 	banned := owner.ack(protocol.AdminRequest{Operation: protocol.AdminSetBan, TargetID: uint64(userAccount.ID), Enabled: true, Reason: "test"})
 	if len(banned.Accounts) != 1 || banned.Accounts[0].Flags&protocol.AdminAccountBanned == 0 || banned.Accounts[0].BanReason != "test" {
 		t.Fatalf("ban response = %+v", banned)
 	}
 	if _, ok := hub.Get(user.id); ok {
 		t.Fatal("banned session survived")
+	}
+
+	// A deleted account is disconnected; its key registers a new account.
+	guestKey, guestAccount := account("guest")
+	guest := connect("guest", guestKey)
+	if deleted := owner.ack(protocol.AdminRequest{Operation: protocol.AdminDeleteAccount, TargetID: uint64(guestAccount.ID)}); deleted.Next != uint64(guestAccount.ID) || len(deleted.Accounts) != 0 {
+		t.Fatalf("delete account response = %+v", deleted)
+	}
+	if _, ok := hub.Get(guest.id); ok {
+		t.Fatal("deleted account's session survived")
+	}
+	returned := connect("guest", guestKey)
+	if session, ok := hub.Get(returned.id); !ok || session.UserID == guestAccount.ID || session.Permissions != 0 {
+		t.Fatalf("returning session = %+v, %t", session, ok)
+	}
+	for _, listed := range owner.ack(protocol.AdminRequest{Operation: protocol.AdminAccounts}).Accounts {
+		if listed.ID == uint64(guestAccount.ID) {
+			t.Fatalf("deleted account listed: %+v", listed)
+		}
+	}
+	if refused := owner.request(protocol.AdminRequest{Operation: protocol.AdminDeleteAccount, TargetID: uint64(userAccount.ID)}); refused.Type != protocol.PacketError {
+		t.Fatalf("banned account delete = type %d %q", refused.Type, refused.Payload)
 	}
 
 	// The per-session budget counts new requests only.

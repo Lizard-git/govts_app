@@ -34,6 +34,46 @@ func TestChannelUpdatedInsertsReplacesAndKeepsCanonicalOrder(t *testing.T) {
 	}
 }
 
+func TestChannelDeletedRemovesEmptiedChannel(t *testing.T) {
+	s := liveTestState()
+	gen := s.Generation()
+	// The server moves members out before the deletion.
+	if !s.ApplyEvent(gen, domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 11, SessionID: 2, ChannelID: 2}) {
+		t.Fatal("move not applied")
+	}
+	if !s.ApplyEvent(gen, domain.StateEvent{Kind: domain.ParticipantMoved, Revision: 12, SessionID: 2, ChannelID: 1}) {
+		t.Fatal("move back not applied")
+	}
+	if !s.ApplyEvent(gen, domain.StateEvent{Kind: domain.ChannelDeleted, Revision: 13, ChannelID: 2}) {
+		t.Fatal("channel deletion not applied")
+	}
+	snapshot := s.Snapshot()
+	if len(snapshot.Channels) != 1 || snapshot.Channels[0].ID != 1 || snapshot.Revision != 13 {
+		t.Fatalf("snapshot after deletion = %+v", snapshot)
+	}
+	if !s.SnapshotFresh() {
+		t.Fatal("deletion requested a resync")
+	}
+}
+
+func TestChannelDeletedResyncsOnUnknownOrOccupiedChannel(t *testing.T) {
+	s := liveTestState()
+	if s.ApplyEvent(s.Generation(), domain.StateEvent{Kind: domain.ChannelDeleted, Revision: 11, ChannelID: 9}) {
+		t.Fatal("unknown channel deletion applied")
+	}
+	if s.SnapshotFresh() {
+		t.Fatal("unknown channel deletion did not request a resync")
+	}
+
+	s = liveTestState()
+	if s.ApplyEvent(s.Generation(), domain.StateEvent{Kind: domain.ChannelDeleted, Revision: 11, ChannelID: 1}) {
+		t.Fatal("deletion of an occupied channel applied")
+	}
+	if s.SnapshotFresh() || len(s.Snapshot().Channels) != 2 {
+		t.Fatal("occupied channel deletion changed state or skipped the resync")
+	}
+}
+
 func TestChannelUpdatedRejectsCyclesWithResync(t *testing.T) {
 	s := liveTestState()
 	gen := s.Generation()

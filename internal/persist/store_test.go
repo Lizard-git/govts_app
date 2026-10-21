@@ -113,6 +113,7 @@ func TestVersionTwoMigrationSelectsUnrestrictedDefault(t *testing.T) {
 		`DROP TABLE chat_messages`,
 		`DROP TABLE chat_dialogs`,
 		`ALTER TABLE users DROP COLUMN admin`,
+		`ALTER TABLE users DROP COLUMN deleted`,
 		`PRAGMA user_version=2`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -162,6 +163,7 @@ func TestVersionTwoMigrationPreservesRestrictedChannels(t *testing.T) {
 		`DROP TABLE chat_messages`,
 		`DROP TABLE chat_dialogs`,
 		`ALTER TABLE users DROP COLUMN admin`,
+		`ALTER TABLE users DROP COLUMN deleted`,
 		`PRAGMA user_version=2`,
 	} {
 		if _, err := db.Exec(statement); err != nil {

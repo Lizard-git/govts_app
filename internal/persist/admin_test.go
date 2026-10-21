@@ -39,7 +39,7 @@ func TestVersionFourMigrationAddsAdminWithoutChangingPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range []string{`ALTER TABLE users DROP COLUMN admin`, `PRAGMA user_version=4`} {
+	for _, statement := range []string{`ALTER TABLE users DROP COLUMN admin`, `ALTER TABLE users DROP COLUMN deleted`, `PRAGMA user_version=4`} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestVersionFourMigrationAddsAdminWithoutChangingPermissions(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 5 {
+	if err := store.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	migrated, err := store.Account(ctx, account.ID)
