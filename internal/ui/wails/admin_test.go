@@ -70,3 +70,42 @@ func TestAdminServiceRejectsInvalidInputBeforeSending(t *testing.T) {
 		t.Error("malformed audit cursor accepted")
 	}
 }
+
+func TestAdminChannelRequestConversion(t *testing.T) {
+	channel, err := adminChannelRequest(AdminChannelDTO{ParentID: "4", Name: "  room ", Topic: "t", Position: 2, MaxUsers: 9, MinJoinLevel: 3, Bitrate: 64_000, Application: "audio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := protocol.AdminChannel{ParentID: 4, Name: "room", Topic: "t", Position: 2, MaxUsers: 9, MinJoinLevel: 3, Bitrate: 64_000, Application: uint8(domain.OpusApplicationAudio)}
+	if channel != want {
+		t.Fatalf("channel = %+v, want %+v", channel, want)
+	}
+	if root, err := adminChannelRequest(AdminChannelDTO{Name: "top", Application: "voip"}); err != nil || root.ParentID != 0 || root.Application != uint8(domain.OpusApplicationVoIP) {
+		t.Fatalf("root channel = %+v, %v", root, err)
+	}
+	for name, input := range map[string]AdminChannelDTO{
+		"blank name":       {Name: "  ", Application: "voip"},
+		"long name":        {Name: strings.Repeat("n", 65), Application: "voip"},
+		"long description": {Name: "x", Description: strings.Repeat("d", 513), Application: "voip"},
+		"unknown mode":     {Name: "x", Application: "music"},
+		"malformed parent": {Name: "x", ParentID: "-1", Application: "voip"},
+	} {
+		if _, err := adminChannelRequest(input); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	service := &Service{}
+	if err := service.AdminUpdateChannel("0", AdminChannelDTO{Name: "x", Application: "voip"}); err == nil {
+		t.Error("zero channel ID accepted")
+	}
+}
+
+func TestServerDTOCarriesDefaultChannel(t *testing.T) {
+	dto := viewDTO(voiceclient.ClientViewState{ServerInfo: domain.ServerInfo{Name: "s", DefaultChannelID: 7}}, "")
+	if dto.Server.DefaultChannelID != "7" {
+		t.Fatalf("server DTO = %+v", dto.Server)
+	}
+	if empty := viewDTO(voiceclient.ClientViewState{}, ""); empty.Server.DefaultChannelID != "" {
+		t.Fatalf("empty server DTO = %+v", empty.Server)
+	}
+}

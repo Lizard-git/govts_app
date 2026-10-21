@@ -136,8 +136,13 @@ snapshot, события, media credentials, модерацию и чат. По�
   биты байта привилегий (`PrivilegeAdmin`, `PrivilegeOwner`).
 - `internal/client/admin.go`, `internal/clientapp/app.go` (`Administer`) и
   `internal/ui/wails/service_admin.go` связывают защищённый UDP с Wails DTO.
+- `internal/voice/channel_admin.go` — создание, правка и перемещение каналов в
+  `Hub` (`PrepareChannel`/`AddChannel`, `CheckChannelUpdate`/`UpdateChannel`)
+  с событием `ChannelUpdated`; `persist.InsertChannelBy`/`UpdateChannelBy`
+  сохраняют их с аудитом. Клиент применяет событие в `internal/client/live.go`.
 - `cmd/desktop/frontend/src/features/admin/AdminPanel.tsx` — окно
-  «Администрирование» (аккаунты, пороги каналов, журнал); кнопка видна при
+  «Администрирование» (аккаунты, дерево каналов с созданием, настройками и
+  перемещением, журнал); правила и порядок дерева — в `adminRules.ts`; кнопка видна при
   `canAdmin` в `ClientViewDTO`.
 
 ## Демонстрация экрана

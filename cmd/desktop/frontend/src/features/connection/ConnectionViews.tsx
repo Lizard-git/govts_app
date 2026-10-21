@@ -121,7 +121,7 @@ export function StatusBar({view, onPageChange, sharing, screenMedia, updateActio
         <div className="app-brand"><span className="brand-mark"><Icon name="server"/></span><strong title={view.server.name}>{view.server.name || m.connection.server}</strong>{view.server.version && <span className="server-version" aria-label={m.connection.serverVersion(view.server.version)}>{view.server.version}</span>}{updateAction}</div>
         <div className={`sync-pill ${view.snapshotFresh ? "synced" : ""}`} aria-hidden={view.snapshotFresh}>{m.connection.syncing}</div>
         <ConnectionStatsPopup sessionId={view.sessionId} status={view.connectionStatus} channelId={view.channelId} sharing={sharing} screenMedia={screenMedia}/>
-        {view.canAdmin && <button id="open-admin" className="status-pill settings-pill" type="button" onClick={() => onPageChange("admin")}>
+        {view.canAdmin && <button id="open-admin" className="status-pill settings-pill admin-pill" type="button" onClick={() => onPageChange("admin")}>
             <Icon name="shield"/><span>{m.admin.open}</span>
         </button>}
         <button id="open-settings" className="status-pill settings-pill" type="button" onClick={() => onPageChange("settings")}>

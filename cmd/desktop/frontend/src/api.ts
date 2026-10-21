@@ -27,6 +27,8 @@ export type AdminAccount = {id: string; name: string; fingerprint: string; joinL
 export type AdminAccountsPage = {accounts: AdminAccount[] | null; next: string};
 export type AdminAuditEntry = {id: string; happenedAtMs: number; actor: string; action: string; targetUserId: string; detail: string};
 export type AdminAuditPage = {entries: AdminAuditEntry[] | null; next: string};
+export type AdminChannelInput = {parentId: string; name: string; topic: string; description: string; position: number; maxUsers: number;
+    minJoinLevel: number; bitrate: number; application: "voip" | "audio"};
 
 const adminCall = <T>(method: string, ...args: unknown[]): Promise<T> =>
     Call.ByName(`uniclog.io/sonoryx/internal/ui/wails.Service.${method}`, ...args) as Promise<T>;
@@ -68,6 +70,8 @@ export const desktopAPI = {
     adminSetBan: (accountID: string, banned: boolean, reason: string) => adminCall<AdminAccount>("AdminSetBan", accountID, banned, reason),
     adminSetChannelJoinLevel: (channelID: string, level: number) => adminCall<void>("AdminSetChannelJoinLevel", channelID, level),
     adminAudit: (cursor: string) => adminCall<AdminAuditPage>("AdminAudit", cursor),
+    adminCreateChannel: (input: AdminChannelInput) => adminCall<string>("AdminCreateChannel", input),
+    adminUpdateChannel: (channelID: string, input: AdminChannelInput) => adminCall<void>("AdminUpdateChannel", channelID, input),
     setMuted: (value: boolean) => Service.SetMuted(value),
     setAway: (away: boolean) => Service.SetAway(away),
     wake: (sessionID: string) => Service.Wake(sessionID),

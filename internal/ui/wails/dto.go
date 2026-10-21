@@ -14,6 +14,8 @@ import (
 type ServerDTO struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
+	// DefaultChannelID is the channel new sessions join; it stays unrestricted.
+	DefaultChannelID string `json:"defaultChannelId,omitempty"`
 }
 
 type AudioProfileDTO struct {
@@ -199,7 +201,7 @@ func viewDTO(view voiceclient.ClientViewState, lastError string) ClientViewDTO {
 		ChatRevision:     formatUint64(view.ChatRevision),
 		ConnectionStatus: connectionStatus(view.ConnectionStatus),
 		LastError:        lastError,
-		Server:           ServerDTO{Name: view.ServerInfo.Name, Version: view.ServerInfo.Version},
+		Server:           ServerDTO{Name: view.ServerInfo.Name, Version: view.ServerInfo.Version, DefaultChannelID: defaultChannelID(view.ServerInfo.DefaultChannelID)},
 		Revision:         formatUint64(uint64(view.Revision)),
 		SessionID:        formatUint64(view.SessionID),
 		ChannelID:        formatUint64(uint64(view.ChannelID)),
@@ -305,4 +307,11 @@ func parseUint64(value, field string, allowZero bool) (uint64, error) {
 		return 0, &validationError{Field: field, Message: "некорректное значение"}
 	}
 	return parsed, nil
+}
+
+func defaultChannelID(id domain.ChannelID) string {
+	if id == 0 {
+		return ""
+	}
+	return formatUint64(uint64(id))
 }

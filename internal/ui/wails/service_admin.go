@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 
+	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
 )
 
@@ -172,4 +174,69 @@ func (s *Service) AdminAudit(cursor string) (AdminAuditPageDTO, error) {
 		page.Next = formatUint64(response.Next)
 	}
 	return page, nil
+}
+
+// AdminChannelDTO holds the editable settings of a channel. Application is
+// "voip" or "audio"; Bitrate is in bit/s.
+type AdminChannelDTO struct {
+	ParentID     string `json:"parentId"`
+	Name         string `json:"name"`
+	Topic        string `json:"topic"`
+	Description  string `json:"description"`
+	Position     uint32 `json:"position"`
+	MaxUsers     uint32 `json:"maxUsers"`
+	MinJoinLevel uint16 `json:"minJoinLevel"`
+	Bitrate      uint32 `json:"bitrate"`
+	Application  string `json:"application"`
+}
+
+func adminChannelRequest(input AdminChannelDTO) (protocol.AdminChannel, error) {
+	parent, err := parseUint64(input.ParentID, "parentId", true)
+	if err != nil {
+		return protocol.AdminChannel{}, err
+	}
+	channel := protocol.AdminChannel{
+		ParentID: parent, Position: input.Position, MaxUsers: input.MaxUsers, MinJoinLevel: input.MinJoinLevel,
+		Bitrate: input.Bitrate, Name: strings.TrimSpace(input.Name), Topic: input.Topic, Description: input.Description,
+	}
+	switch input.Application {
+	case "voip":
+		channel.Application = uint8(domain.OpusApplicationVoIP)
+	case "audio":
+		channel.Application = uint8(domain.OpusApplicationAudio)
+	default:
+		return protocol.AdminChannel{}, errors.New("неизвестный режим Opus")
+	}
+	if channel.Name == "" || len(channel.Name) > domain.MaxChannelNameBytes || len(channel.Topic) > domain.MaxChannelTopicBytes || len(channel.Description) > domain.MaxChannelDescriptionBytes {
+		return protocol.AdminChannel{}, errors.New("некорректное название, тема или описание канала")
+	}
+	return channel, nil
+}
+
+// AdminCreateChannel creates a channel and returns its ID.
+func (s *Service) AdminCreateChannel(input AdminChannelDTO) (string, error) {
+	channel, err := adminChannelRequest(input)
+	if err != nil {
+		return "", err
+	}
+	response, err := s.administer(protocol.AdminRequest{Operation: protocol.AdminCreateChannel, Channel: channel})
+	if err != nil {
+		return "", err
+	}
+	return formatUint64(response.Next), nil
+}
+
+// AdminUpdateChannel replaces the settings of a channel, including its parent
+// and position.
+func (s *Service) AdminUpdateChannel(channelID string, input AdminChannelDTO) error {
+	id, err := parseUint64(channelID, "channelId", false)
+	if err != nil {
+		return err
+	}
+	channel, err := adminChannelRequest(input)
+	if err != nil {
+		return err
+	}
+	_, err = s.administer(protocol.AdminRequest{Operation: protocol.AdminUpdateChannel, TargetID: id, Channel: channel})
+	return err
 }
