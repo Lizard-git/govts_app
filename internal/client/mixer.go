@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
@@ -135,11 +136,14 @@ func MixLoop(
 	enqueue := func(sound NotificationSound) {
 		frames := notificationFrames(sound)
 		if len(frames) == 0 || len(frames) > maxEffectFrames {
+			log.Printf("sound cue dropped: kind=%s reason=length frames=%d", sound.Kind, len(frames))
 			return
 		}
 		if len(effects)+len(frames) > maxEffectFrames {
+			log.Printf("sound cue mixer overflow: kind=%s discarded_frames=%d", sound.Kind, len(effects))
 			effects = effects[:0]
 		}
+		log.Printf("sound cue mixing: kind=%s frames=%d waiting_frames=%d", sound.Kind, len(frames), len(effects))
 		effects = append(effects, frames...)
 	}
 	drainNotifications := func() {

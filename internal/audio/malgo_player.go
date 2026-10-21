@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/gen2brain/malgo"
 )
@@ -17,7 +19,15 @@ type MalgoPlayer struct {
 	mu       sync.Mutex
 	closed   bool
 	deafened bool
+
+	bytesPerMS      int
+	overflowBytes   int
+	overflowLogged  time.Time
+	overflowStarted time.Time
 }
+
+// playbackOverflowLogInterval keeps a steady clock drift to one line per window.
+const playbackOverflowLogInterval = 10 * time.Second
 
 func NewMalgoPlayer(config CodecConfig, deviceID string) (*MalgoPlayer, error) {
 	buffer := &playbackBuffer{limit: config.SamplesPerFrame * config.Channels * 2 * 5}
@@ -28,7 +38,7 @@ func NewMalgoPlayer(config CodecConfig, deviceID string) (*MalgoPlayer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MalgoPlayer{context: context, device: device, buffer: buffer}, nil
+	return &MalgoPlayer{context: context, device: device, buffer: buffer, bytesPerMS: config.SampleRate * config.Channels * 2 / 1000}, nil
 }
 
 func (p *MalgoPlayer) Write(samples []int16) error {
@@ -38,9 +48,31 @@ func (p *MalgoPlayer) Write(samples []int16) error {
 		return io.ErrClosedPipe
 	}
 	if !p.deafened {
-		p.buffer.push(int16ToBytes(samples))
+		if dropped := p.buffer.push(int16ToBytes(samples)); dropped > 0 {
+			p.recordOverflow(dropped)
+		}
 	}
 	return nil
+}
+
+// recordOverflow logs audio the device did not take in time. Voice and app
+// sounds are cut here when the output consumes slower than the 20 ms mixer.
+func (p *MalgoPlayer) recordOverflow(dropped int) {
+	now := time.Now()
+	if p.overflowBytes == 0 {
+		p.overflowStarted = now
+	}
+	p.overflowBytes += dropped
+	if now.Sub(p.overflowLogged) < playbackOverflowLogInterval {
+		return
+	}
+	droppedMS := 0
+	if p.bytesPerMS > 0 {
+		droppedMS = p.overflowBytes / p.bytesPerMS
+	}
+	log.Printf("playback buffer overflow: dropped_ms=%d window=%s", droppedMS, now.Sub(p.overflowStarted).Round(time.Millisecond))
+	p.overflowBytes = 0
+	p.overflowLogged = now
 }
 
 func (p *MalgoPlayer) SetDeafened(value bool) error {
