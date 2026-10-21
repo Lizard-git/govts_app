@@ -40,6 +40,12 @@ func (b *playbackBuffer) push(data []byte) int {
 	return excess
 }
 
+func (b *playbackBuffer) len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.data)
+}
+
 func (b *playbackBuffer) clear() {
 	b.mu.Lock()
 	b.data = nil

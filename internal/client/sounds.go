@@ -304,5 +304,8 @@ func notificationFrames(sound NotificationSound) []audio.MediaPCMFrame {
 		copy(chunk, samples[start:min(start+frameSamples, len(samples))])
 		frames = append(frames, audio.MediaPCMFrame{PlaybackEpoch: sound.PlaybackEpoch, SenderID: 0, Samples: chunk, Duration: 20 * time.Millisecond})
 	}
+	if len(frames) > 0 {
+		frames[0].Cue = uint8(sound.Kind)
+	}
 	return frames
 }

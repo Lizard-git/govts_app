@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 )
 
 type captureDevice interface {
@@ -184,6 +185,15 @@ func (p *SwitchablePlayer) Write(samples []int16) error {
 		return nil
 	}
 	return p.player.Write(samples)
+}
+
+func (p *SwitchablePlayer) PlaybackStats() (time.Duration, time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.player == nil {
+		return 0, -1
+	}
+	return p.player.PlaybackStats()
 }
 
 func (p *SwitchablePlayer) SetDeafened(value bool) error {

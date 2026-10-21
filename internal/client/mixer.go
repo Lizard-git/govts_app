@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"log"
+	"math"
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
@@ -13,6 +14,46 @@ const maxMixerFramesPerSender = 5
 
 // maxEffectFrames is 1.8 s, enough for the longest wake cue.
 const maxEffectFrames = 90
+
+// Some sound cards and their effect processing mute an output that carried
+// only digital silence and swallow the first part of a short cue that ends
+// it. After cueWakeIdle of silence a cue starts with CueWakePreroll of a
+// cueWakeHz tone at cueWakeAmplitude (about -54 dBFS): below hearing at that
+// frequency on headphones, yet enough signal to wake the output.
+const (
+	cueWakeIdle      = 400 * time.Millisecond
+	CueWakePreroll   = 360 * time.Millisecond
+	cueWakeHz        = 40
+	cueWakeAmplitude = 64
+)
+
+// cueWakeFrames is the pre-roll before a cue that ends a silent output. It
+// fades in and out so the tone itself does not click.
+func cueWakeFrames(epoch uint64) []audio.MediaPCMFrame {
+	const (
+		sampleRate   = 48000
+		frameSamples = sampleRate * 20 / 1000
+	)
+	total := int(CueWakePreroll / (20 * time.Millisecond))
+	count := total * frameSamples
+	fade := sampleRate * 20 / 1000
+	frames := make([]audio.MediaPCMFrame, 0, total)
+	for f := 0; f < total; f++ {
+		samples := make([]int16, frameSamples)
+		for i := range samples {
+			s := f*frameSamples + i
+			gain := 1.0
+			if s < fade {
+				gain = float64(s) / float64(fade)
+			} else if count-s < fade {
+				gain = float64(count-s) / float64(fade)
+			}
+			samples[i] = int16(cueWakeAmplitude * gain * math.Sin(2*math.Pi*cueWakeHz*float64(s)/sampleRate))
+		}
+		frames = append(frames, audio.MediaPCMFrame{PlaybackEpoch: epoch, Samples: samples, Duration: 20 * time.Millisecond})
+	}
+	return frames
+}
 
 type pcmMixer struct {
 	bySender      map[uint64][]audio.MediaPCMFrame
@@ -69,9 +110,16 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	}
 	sampleCount := 0
 	duration := time.Duration(0)
+	var cue uint8
 	for _, frame := range frames {
 		if frame.PlaybackEpoch != epoch {
+			if frame.Cue != 0 {
+				log.Printf("sound cue dropped: kind=%s reason=stale_epoch epoch=%d current=%d", NotificationSoundKind(frame.Cue), frame.PlaybackEpoch, epoch)
+			}
 			continue
+		}
+		if frame.Cue != 0 {
+			cue = frame.Cue
 		}
 		if len(frame.Samples) > sampleCount {
 			sampleCount = len(frame.Samples)
@@ -95,7 +143,7 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	for i, sum := range sums {
 		samples[i] = clampInt16(sum)
 	}
-	return audio.PCMFrame{Samples: samples, Duration: duration, PlaybackEpoch: epoch}
+	return audio.PCMFrame{Samples: samples, Duration: duration, PlaybackEpoch: epoch, Cue: cue}
 }
 
 func clampInt16(value int64) int16 {
@@ -133,11 +181,19 @@ func MixLoop(
 	if len(notifications) > 0 {
 		notificationCh = notifications[0]
 	}
+	// lastAudible is when the mixer last sent a non-silent frame.
+	var lastAudible time.Time
 	enqueue := func(sound NotificationSound) {
 		frames := notificationFrames(sound)
 		if len(frames) == 0 || len(frames) > maxEffectFrames {
 			log.Printf("sound cue dropped: kind=%s reason=length frames=%d", sound.Kind, len(frames))
 			return
+		}
+		if idle := time.Since(lastAudible); len(effects) == 0 && idle >= cueWakeIdle {
+			if wake := cueWakeFrames(sound.PlaybackEpoch); len(wake)+len(frames) <= maxEffectFrames {
+				log.Printf("sound cue wake preroll: kind=%s idle_ms=%d preroll_ms=%d", sound.Kind, idle.Milliseconds(), CueWakePreroll.Milliseconds())
+				frames = append(wake, frames...)
+			}
 		}
 		if len(effects)+len(frames) > maxEffectFrames {
 			log.Printf("sound cue mixer overflow: kind=%s discarded_frames=%d", sound.Kind, len(effects))
@@ -167,6 +223,9 @@ func MixLoop(
 		frame, ok := mixer.Mix()
 		if !ok {
 			return nil
+		}
+		if activePCM(frame.Samples) {
+			lastAudible = time.Now()
 		}
 		return sendMixedFrame(ctx, mixedCh, frame)
 	}

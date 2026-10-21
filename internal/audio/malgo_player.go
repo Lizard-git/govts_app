@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -24,6 +25,9 @@ type MalgoPlayer struct {
 	overflowBytes   int
 	overflowLogged  time.Time
 	overflowStarted time.Time
+
+	// lastCallback is the UnixNano of the device's last data pull.
+	lastCallback *atomic.Int64
 }
 
 // playbackOverflowLogInterval keeps a steady clock drift to one line per window.
@@ -31,14 +35,28 @@ const playbackOverflowLogInterval = 10 * time.Second
 
 func NewMalgoPlayer(config CodecConfig, deviceID string) (*MalgoPlayer, error) {
 	buffer := &playbackBuffer{limit: config.SamplesPerFrame * config.Channels * 2 * 5}
+	lastCallback := &atomic.Int64{}
 	callbacks := malgo.DeviceCallbacks{Data: func(output, _ []byte, _ uint32) {
 		buffer.read(output)
+		lastCallback.Store(time.Now().UnixNano())
 	}}
 	context, device, err := openMalgoStream(malgo.Playback, config, deviceID, callbacks)
 	if err != nil {
 		return nil, err
 	}
-	return &MalgoPlayer{context: context, device: device, buffer: buffer, bytesPerMS: config.SampleRate * config.Channels * 2 / 1000}, nil
+	return &MalgoPlayer{context: context, device: device, buffer: buffer, bytesPerMS: config.SampleRate * config.Channels * 2 / 1000, lastCallback: lastCallback}, nil
+}
+
+func (p *MalgoPlayer) PlaybackStats() (time.Duration, time.Duration) {
+	var buffered time.Duration
+	if p.bytesPerMS > 0 {
+		buffered = time.Duration(p.buffer.len()/p.bytesPerMS) * time.Millisecond
+	}
+	sinceCallback := time.Duration(-1)
+	if last := p.lastCallback.Load(); last != 0 {
+		sinceCallback = time.Since(time.Unix(0, last))
+	}
+	return buffered, sinceCallback
 }
 
 func (p *MalgoPlayer) Write(samples []int16) error {
