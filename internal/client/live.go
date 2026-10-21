@@ -134,9 +134,81 @@ func screenChannel(snapshot domain.ServerSnapshot, sessionID uint64, fallback do
 	return fallback
 }
 
+// queueChannelChangeLocked plays the move cue for a local channel change.
+// The join ACK, the move event and a resync snapshot can each report the
+// move first; the later ones see the channel already set and stay silent.
+func (s *State) queueChannelChangeLocked(from, to domain.ChannelID) {
+	if from != 0 && to != 0 && from != to {
+		s.queueNotificationSoundLocked(NotificationChannelChanged)
+	}
+}
+
+func participantChannel(participants []domain.Participant, sessionID uint64) domain.ChannelID {
+	for _, p := range participants {
+		if p.SessionID == sessionID {
+			return p.ChannelID
+		}
+	}
+	return 0
+}
+
+// queueParticipantDiffLocked plays join, leave and presence cues for events a
+// resync skipped. It compares the local channel's members with the previous
+// snapshot and plays each kind at most once. A local move has its own cue,
+// so the members of the new channel are not announced.
+func (s *State) queueParticipantDiffLocked(previous []domain.Participant) {
+	local := participantChannel(s.snapshot.Participants, s.sessionID)
+	if local == 0 || local != participantChannel(previous, s.sessionID) {
+		return
+	}
+	before := make(map[uint64]domain.Participant, len(previous))
+	for _, p := range previous {
+		before[p.SessionID] = p
+	}
+	var joined, left, away, returned bool
+	for _, p := range s.snapshot.Participants {
+		if p.SessionID == s.sessionID {
+			continue
+		}
+		old, seen := before[p.SessionID]
+		delete(before, p.SessionID)
+		wasHere := seen && old.ChannelID == local
+		isHere := p.ChannelID == local
+		switch {
+		case isHere && !wasHere:
+			joined = true
+		case wasHere && !isHere:
+			left = true
+		case isHere && old.Away != p.Away:
+			if p.Away {
+				away = true
+			} else {
+				returned = true
+			}
+		}
+	}
+	for _, old := range before {
+		if old.SessionID != s.sessionID && old.ChannelID == local {
+			left = true
+		}
+	}
+	if joined {
+		s.queueNotificationSoundLocked(NotificationJoined)
+	}
+	if left {
+		s.queueNotificationSoundLocked(NotificationLeft)
+	}
+	if away {
+		s.queueNotificationSoundLocked(NotificationAway)
+	}
+	if returned {
+		s.queueNotificationSoundLocked(NotificationReturned)
+	}
+}
+
 // queueScreenDiffLocked plays start/stop cues for streams that appeared or
-// disappeared since the previous fresh snapshot. A lost state event is
-// recovered here; an unchanged resync stays silent.
+// disappeared since the previous snapshot of this session. A lost state event
+// is recovered here; an unchanged resync stays silent.
 func (s *State) queueScreenDiffLocked(previous []domain.ScreenStream) {
 	if s.channelID == 0 {
 		return
@@ -178,6 +250,7 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 		if s.channelID != channel {
 			s.measurements.resetIncoming()
 		}
+		s.queueChannelChangeLocked(s.channelID, channel)
 		s.channelID = channel
 		if revision > s.observedRevision {
 			s.observedRevision = revision
@@ -189,6 +262,7 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 	if s.channelID != channel {
 		s.measurements.resetIncoming()
 	}
+	s.queueChannelChangeLocked(s.channelID, channel)
 	s.channelID = channel
 	if revision > s.observedRevision {
 		s.observedRevision = revision
@@ -366,7 +440,8 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		p := &next.Participants[index]
 		line = fmt.Sprintf("→ %s moved %s → %s", terminalText(p.DisplayName), channelName(p.ChannelID), channelName(e.ChannelID))
 		if e.SessionID == s.sessionID {
-			if oldChannel != 0 && e.ChannelID != 0 && oldChannel != e.ChannelID {
+			// The join ACK may have applied this move and played its cue already.
+			if localChannel != 0 && e.ChannelID != 0 && localChannel != e.ChannelID {
 				notification = NotificationChannelChanged
 			}
 		} else if oldChannel != localChannel && e.ChannelID == localChannel {

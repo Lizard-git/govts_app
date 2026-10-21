@@ -260,11 +260,12 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 		s.requestResyncLocked()
 		return true
 	}
-	previousFresh := s.snapshotFresh && s.syncedGeneration == generation
-	var previousStreams []domain.ScreenStream
-	if previousFresh {
-		previousStreams = append([]domain.ScreenStream(nil), s.snapshot.ScreenStreams...)
-	}
+	// A resync after an event gap starts from a stale snapshot. It is still
+	// the baseline for the cues of the events the gap skipped. Snapshots are
+	// replaced, never mutated, so the old one stays intact.
+	hasBaseline := s.syncedGeneration == generation
+	previous := s.snapshot
+	previousChannel := s.channelID
 	s.resetIncomingForSnapshotLocked(snapshot)
 	s.snapshot = snapshot.Clone()
 	s.syncedGeneration = generation
@@ -275,8 +276,10 @@ func (s *State) ReplaceSnapshotForGeneration(generation uint64, snapshot domain.
 			s.channelID = p.ChannelID
 		}
 	}
-	if previousFresh && s.snapshotFresh {
-		s.queueScreenDiffLocked(previousStreams)
+	if hasBaseline && s.snapshotFresh {
+		s.queueChannelChangeLocked(previousChannel, s.channelID)
+		s.queueParticipantDiffLocked(previous.Participants)
+		s.queueScreenDiffLocked(previous.ScreenStreams)
 	}
 	if !s.snapshotFresh {
 		s.requestResyncLocked()
