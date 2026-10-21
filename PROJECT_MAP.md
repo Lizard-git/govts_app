@@ -126,7 +126,10 @@ snapshot, события, media credentials, модерацию и чат. По�
 
 - `internal/persist/store.go` хранит биты kick/ban/drag в `users.permissions`
   и право admin в `users.admin` (миграция схемы до версии 5); `AccountsPage`
-  и `AuditPage` читают аккаунты и журнал страницами.
+  и `AuditPage` читают аккаунты и журнал страницами. `DeleteAccountBy`
+  (схема 6, `users.deleted`) оставляет скрытую запись для сообщений в каналах,
+  заменяет ключ случайным, сбрасывает права и удаляет личную переписку; старый
+  ключ при следующем входе регистрирует новый аккаунт.
 - `internal/voice/admin.go` — `Administration`: общие проверки иерархии,
   запись в SQLite с аудитом, применение к `Hub` и уведомление клиентов о
   правах. Его используют и локальная консоль (`internal/server/console_accounts.go`,
@@ -136,13 +139,14 @@ snapshot, события, media credentials, модерацию и чат. По�
   биты байта привилегий (`PrivilegeAdmin`, `PrivilegeOwner`).
 - `internal/client/admin.go`, `internal/clientapp/app.go` (`Administer`) и
   `internal/ui/wails/service_admin.go` связывают защищённый UDP с Wails DTO.
-- `internal/voice/channel_admin.go` — создание, правка и перемещение каналов в
-  `Hub` (`PrepareChannel`/`AddChannel`, `CheckChannelUpdate`/`UpdateChannel`)
-  с событием `ChannelUpdated`; `persist.InsertChannelBy`/`UpdateChannelBy`
-  сохраняют их с аудитом. Клиент применяет событие в `internal/client/live.go`.
+- `internal/voice/channel_admin.go` — создание, правка, перемещение и удаление
+  каналов в `Hub` (`PrepareChannel`/`AddChannel`, `CheckChannelUpdate`/`UpdateChannel`,
+  `CheckChannelDelete`/`DeleteChannel`) с событиями `ChannelUpdated` и
+  `ChannelDeleted`; `persist.InsertChannelBy`/`UpdateChannelBy`/`DeleteChannelBy`
+  сохраняют их с аудитом. Клиент применяет события в `internal/client/live.go`.
 - `cmd/desktop/frontend/src/features/admin/AdminPanel.tsx` — окно
-  «Администрирование» (аккаунты, дерево каналов с созданием, настройками и
-  перемещением, журнал); правила и порядок дерева — в `adminRules.ts`; кнопка видна при
+  «Администрирование» (аккаунты, дерево каналов с созданием, настройками,
+  перемещением и удалением, журнал); правила и порядок дерева — в `adminRules.ts`; кнопка видна при
   `canAdmin` в `ClientViewDTO`.
 
 ## Демонстрация экрана

@@ -93,7 +93,7 @@ func (s *Store) SaveChat(ctx context.Context, user int64, name string, target do
 		if target.ID == user {
 			return m, domain.ChatRejection("нельзя отправить сообщение самому себе")
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT banned FROM users WHERE id=?`, target.ID).Scan(&banned); err != nil || banned {
+		if err := tx.QueryRowContext(ctx, `SELECT banned OR deleted FROM users WHERE id=?`, target.ID).Scan(&banned); err != nil || banned {
 			return m, domain.ErrChatRecipientUnavailable
 		}
 		recipient = target.ID

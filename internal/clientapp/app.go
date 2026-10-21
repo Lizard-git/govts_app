@@ -211,6 +211,9 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 
 	backoff := newReconnectBackoff()
 	everConnected := false
+	// The channel the client was in when the last session ended; a reconnect
+	// tries to return there instead of the default channel.
+	var previousChannel domain.ChannelID
 	attempt := 0
 	for {
 		if ctx.Err() != nil {
@@ -276,7 +279,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		a.mu.Unlock()
 		devices := a.AudioDeviceSelection()
 		sessionStarted := time.Now()
-		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, eventWriter{log: a.events}, a.logger, !everConnected, func() {
+		sessionErr := runSession(ctx, conn, a.state, devices, a.audioDeviceChanges, name, eventWriter{log: a.events}, a.logger, !everConnected, previousChannel, func() {
 			backoff.Reset()
 			if everConnected {
 				a.events.append("connection", "Соединение восстановлено", uint64(a.state.SnapshotView().Revision))
@@ -295,6 +298,9 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		chat.requests.Wait()
 		if ctx.Err() != nil {
 			return nil
+		}
+		if channelID := a.state.ChannelID(); channelID != 0 {
+			previousChannel = channelID
 		}
 		a.state.InvalidateSession(voiceclient.ConnectionReconnecting)
 		if err := conn.ClearSession(sessionID); err != nil {

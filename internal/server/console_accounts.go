@@ -104,6 +104,19 @@ func (console *Console) executeAccount(argument string) error {
 		_, err = fmt.Fprintf(console.output, "account %d banned=%t\n", id, fields[0] == "ban")
 		return err
 	}
+	if len(fields) == 2 && fields[0] == "delete" {
+		id, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || id <= 0 {
+			return console.writeUsage("account delete <user-id>")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := console.admin.DeleteAccount(ctx, voice.ConsoleAdmin, id); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(console.output, "account %d deleted\n", id)
+		return err
+	}
 	if len(fields) == 3 && fields[0] == "set-join-level" {
 		id, err := strconv.ParseInt(fields[1], 10, 64)
 		if err != nil || id <= 0 {
@@ -164,6 +177,27 @@ func (console *Console) setChannelJoinLevel(argument string) error {
 		return err
 	}
 	_, err = fmt.Fprintf(console.output, "channel %d min_join_level=%d\n", id, level)
+	return err
+}
+
+func (console *Console) deleteChannel(argument string) error {
+	if console.store == nil {
+		return console.writeStoreUnavailable()
+	}
+	if console.policyGate != nil {
+		console.policyGate.Lock()
+		defer console.policyGate.Unlock()
+	}
+	id, err := strconv.ParseUint(strings.TrimSpace(argument), 10, 64)
+	if err != nil || id == 0 {
+		return console.writeUsage("channel delete <channel-id>")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := console.admin.DeleteChannel(ctx, voice.ConsoleAdmin, domain.ChannelID(id)); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(console.output, "channel %d deleted\n", id)
 	return err
 }
 

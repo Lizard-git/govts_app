@@ -20,12 +20,15 @@ const (
 	// ChannelUpdated carries the whole channel after it was created, edited
 	// or moved; clients insert or replace it by ID.
 	ChannelUpdated
+	// ChannelDeleted removes channel ChannelID. Its members were moved to the
+	// default channel by the ParticipantMoved events before it.
+	ChannelDeleted
 )
 
 // Participant is populated only for Joined. SessionID/ChannelID are used for
 // Left/Moved. Muted and Deafened are used only for ParticipantAudio.
 // Away is used only for ParticipantPresence. Channel is used only for
-// ChannelUpdated.
+// ChannelUpdated; ChannelDeleted carries only ChannelID.
 type StateEvent struct {
 	Kind         StateEventKind
 	Revision     StateRevision
@@ -83,6 +86,10 @@ func (e StateEvent) Validate() error {
 		c := e.Channel
 		if e.Participant != (Participant{}) || e.SessionID != 0 || e.ChannelID != 0 || e.ScreenStream != (ScreenStream{}) || c.ID == 0 || c.ParentID == c.ID {
 			return errors.New("invalid channel event")
+		}
+	case ChannelDeleted:
+		if e.Participant != (Participant{}) || e.SessionID != 0 || e.ChannelID == 0 || e.ScreenStream != (ScreenStream{}) {
+			return errors.New("invalid channel deleted event")
 		}
 	default:
 		return errors.New("unknown event kind")

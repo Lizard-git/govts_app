@@ -166,6 +166,9 @@ func (console *Console) Execute(line string) (executeErr error) {
 		if strings.HasPrefix(argument, "set-min-join-level ") {
 			return console.setChannelJoinLevel(strings.TrimPrefix(argument, "set-min-join-level "))
 		}
+		if strings.HasPrefix(argument, "delete ") {
+			return console.deleteChannel(strings.TrimPrefix(argument, "delete "))
+		}
 		return console.writeChannel(snapshot, argument, now)
 	case "users":
 		if argument != "" {
@@ -210,7 +213,9 @@ func (console *Console) writeHelp() error {
 			"  account set-permission <id> <kick|ban|drag|admin> <on|off>\n"+
 			"  account set-owner <id>\n"+
 			"  account <ban|unban> <id>\n"+
+			"  account delete <id>   forget an account; its key registers anew\n"+
 			"  channel set-min-join-level <id> <level>\n"+
+			"  channel delete <id>   delete a channel; members move to the default\n"+
 			"  audit [before-id]      show recent audit log entries\n")
 	return err
 }

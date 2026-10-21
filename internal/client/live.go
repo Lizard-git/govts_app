@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"time"
 
@@ -563,6 +564,16 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		}
 		sortSnapshotChannels(next.Channels)
 		line = fmt.Sprintf("# channel %s updated", terminalText(e.Channel.Name))
+	case domain.ChannelDeleted:
+		// Members were moved out by earlier events; a channel still in use
+		// fails validation below and triggers a resync.
+		index := slices.IndexFunc(next.Channels, func(c domain.Channel) bool { return c.ID == e.ChannelID })
+		if index < 0 {
+			s.requestResyncLocked()
+			return false
+		}
+		line = fmt.Sprintf("# channel %s deleted", terminalText(next.Channels[index].Name))
+		next.Channels = slices.Delete(next.Channels, index, index+1)
 	}
 	next.Revision = e.Revision
 	if err := validateServerSnapshot(next); err != nil {

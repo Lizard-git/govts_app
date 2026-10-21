@@ -2,6 +2,7 @@ package voice
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"uniclog.io/sonoryx/internal/domain"
@@ -151,6 +152,59 @@ func (h *Hub) UpdateChannel(channel domain.Channel) ([]uint64, error) {
 		return h.removeBelowJoinLevelLocked(next.ID, next.MinJoinLevel), nil
 	}
 	return nil, nil
+}
+
+// CheckChannelDelete returns the channel id if DeleteChannel may remove it:
+// it exists, is not the default channel and has no subchannels.
+func (h *Hub) CheckChannelDelete(id domain.ChannelID) (domain.Channel, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.checkChannelDeleteLocked(id)
+}
+
+func (h *Hub) checkChannelDeleteLocked(id domain.ChannelID) (domain.Channel, error) {
+	channel := h.channels[id]
+	if id == 0 || channel == nil {
+		return domain.Channel{}, fmt.Errorf("%w: %d", ErrChannelNotFound, id)
+	}
+	if id == h.serverInfo.DefaultChannelID {
+		return domain.Channel{}, fmt.Errorf("%w: the default channel cannot be deleted", ErrInvalidChannel)
+	}
+	for _, child := range h.channels {
+		if child.ParentID == id {
+			return domain.Channel{}, fmt.Errorf("%w: channel has subchannels", ErrInvalidChannel)
+		}
+	}
+	return *cloneChannel(*channel), nil
+}
+
+// DeleteChannel moves the members of a channel to the default channel,
+// stopping their screen shares, then removes the channel and announces it.
+// It returns the moved session IDs.
+func (h *Hub) DeleteChannel(id domain.ChannelID) ([]uint64, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, err := h.checkChannelDeleteLocked(id); err != nil {
+		return nil, err
+	}
+	target := h.serverInfo.DefaultChannelID
+	var moved []uint64
+	for sessionID, session := range h.sessions {
+		if session.ChannelID == id {
+			moved = append(moved, sessionID)
+		}
+	}
+	sort.Slice(moved, func(i, j int) bool { return moved[i] < moved[j] })
+	for _, sessionID := range moved {
+		h.stopScreenShareByOwnerLocked(sessionID)
+		h.sessions[sessionID].ChannelID = target
+		h.revision++
+		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantMoved, SessionID: sessionID, ChannelID: target})
+	}
+	delete(h.channels, id)
+	h.revision++
+	h.emitLocked(domain.StateEvent{Kind: domain.ChannelDeleted, ChannelID: id})
+	return moved, nil
 }
 
 // channelDepthLocked counts id and its ancestors; the root (0) has depth 0.

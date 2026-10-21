@@ -2,6 +2,7 @@ package persist
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -102,7 +103,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 5 {
+	if version < 0 || version > 6 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -215,6 +216,16 @@ func (s *Store) initialize() error {
 			}
 		}
 	}
+	if version < 6 {
+		for _, statement := range []string{
+			`ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1))`,
+			`PRAGMA user_version = 6`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate account deletion: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -272,11 +283,11 @@ func (s *Store) AccountExists(ctx context.Context, key [32]byte) (bool, error) {
 }
 
 func (s *Store) Account(ctx context.Context, id int64) (Account, error) {
-	return scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM users WHERE id=?`, id))
+	return scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM users WHERE id=? AND deleted=0`, id))
 }
 
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
-	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users ORDER BY id`)
+	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users WHERE deleted=0 ORDER BY id`)
 }
 
 // AccountsPage returns up to limit accounts with id greater than afterID, in
@@ -285,7 +296,7 @@ func (s *Store) AccountsPage(ctx context.Context, afterID int64, limit int) ([]A
 	if afterID < 0 || limit <= 0 {
 		return nil, errors.New("invalid account page")
 	}
-	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users WHERE id>? ORDER BY id LIMIT ?`, afterID, limit)
+	return s.queryAccounts(ctx, `SELECT `+accountColumns+` FROM users WHERE id>? AND deleted=0 ORDER BY id LIMIT ?`, afterID, limit)
 }
 
 func (s *Store) queryAccounts(ctx context.Context, query string, args ...any) ([]Account, error) {
@@ -316,7 +327,7 @@ func (s *Store) SetJoinLevelBy(ctx context.Context, actor string, id int64, leve
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE users SET join_level=? WHERE id=?`, level, id)
+	result, err := tx.ExecContext(ctx, `UPDATE users SET join_level=? WHERE id=? AND deleted=0`, level, id)
 	if err != nil {
 		return err
 	}
@@ -346,13 +357,13 @@ func (s *Store) SetPermissionBy(ctx context.Context, actor string, id int64, per
 	defer tx.Rollback()
 	var result sql.Result
 	if permission == PermissionAdmin {
-		result, err = tx.ExecContext(ctx, `UPDATE users SET admin=? WHERE id=?`, allowed, id)
+		result, err = tx.ExecContext(ctx, `UPDATE users SET admin=? WHERE id=? AND deleted=0`, allowed, id)
 	} else {
 		var updated uint8
 		if allowed {
 			updated = permission
 		}
-		result, err = tx.ExecContext(ctx, `UPDATE users SET permissions=(permissions & ?) | ? WHERE id=?`, int(^permission&moderationPermissions), updated, id)
+		result, err = tx.ExecContext(ctx, `UPDATE users SET permissions=(permissions & ?) | ? WHERE id=? AND deleted=0`, int(^permission&moderationPermissions), updated, id)
 	}
 	if err != nil {
 		return Account{}, err
@@ -379,7 +390,7 @@ func (s *Store) SetBan(ctx context.Context, actor string, id int64, banned bool,
 	if banned {
 		at = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET banned=?,ban_reason=?,banned_at=? WHERE id=? AND owner=0`, banned, reason, at, id)
+	result, err := tx.ExecContext(ctx, `UPDATE users SET banned=?,ban_reason=?,banned_at=? WHERE id=? AND owner=0 AND deleted=0`, banned, reason, at, id)
 	if err != nil {
 		return err
 	}
@@ -392,13 +403,59 @@ func (s *Store) SetBan(ctx context.Context, actor string, id int64, banned bool,
 	return tx.Commit()
 }
 
+// DeleteAccountBy forgets an account and records actor in the audit log. The
+// row stays as a hidden record so channel messages keep their sender; its key
+// is replaced with random bytes and its rights are cleared, so the old key
+// registers a new account on its next connection. Direct messages, dialogs
+// and read markers of the account are removed. The owner and banned accounts
+// cannot be deleted: deletion would lift the ban.
+func (s *Store) DeleteAccountBy(ctx context.Context, actor string, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var name string
+	var owner, banned bool
+	if err := tx.QueryRowContext(ctx, `SELECT display_name,owner,banned FROM users WHERE id=? AND deleted=0`, id).Scan(&name, &owner, &banned); errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("account %d not found", id)
+	} else if err != nil {
+		return err
+	}
+	if owner {
+		return errors.New("the owner account cannot be deleted")
+	}
+	if banned {
+		return errors.New("a banned account cannot be deleted; unban it first")
+	}
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return err
+	}
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE users SET public_key=?,join_level=0,permissions=0,admin=0,deleted=1 WHERE id=?`, []any{key[:], id}},
+		{`DELETE FROM chat_messages WHERE recipient_id=? OR (sender_id=? AND recipient_id IS NOT NULL)`, []any{id, id}},
+		{`DELETE FROM chat_dialogs WHERE user_low=? OR user_high=?`, []any{id, id}},
+		{`DELETE FROM chat_reads WHERE user_id=? OR (kind=2 AND target_id=?)`, []any{id, id}},
+		{`INSERT INTO audit(happened_at,actor,action,target_user_id,detail) VALUES(?,?,?,?,?)`, []any{time.Now().UTC().Format(time.RFC3339Nano), actor, "delete-account", id, name}},
+	} {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetOwner(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE users SET owner=1 WHERE id=? AND banned=0`, id)
+	result, err := tx.ExecContext(ctx, `UPDATE users SET owner=1 WHERE id=? AND banned=0 AND deleted=0`, id)
 	if err != nil {
 		return err
 	}
@@ -596,6 +653,50 @@ func (s *Store) UpdateChannelBy(ctx context.Context, actor string, c domain.Chan
 		return fmt.Errorf("channel %d not found", c.ID)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "update-channel", channelAuditDetail(c)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteChannelBy removes a channel without subchannels together with its
+// chat history and read markers, and records actor in the audit log. The
+// default channel cannot be removed.
+func (s *Store) DeleteChannelBy(ctx context.Context, actor string, id domain.ChannelID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var defaultID domain.ChannelID
+	if err := tx.QueryRowContext(ctx, `SELECT default_channel_id FROM server_settings WHERE id=1`).Scan(&defaultID); err != nil {
+		return err
+	}
+	if id == defaultID {
+		return errors.New("default channel cannot be deleted")
+	}
+	var name string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM channels WHERE id=?`, id).Scan(&name); errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("channel %d not found", id)
+	} else if err != nil {
+		return err
+	}
+	var children int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM channels WHERE parent_id=?`, id).Scan(&children); err != nil {
+		return err
+	}
+	if children != 0 {
+		return errors.New("channel has subchannels")
+	}
+	for _, q := range []string{
+		`DELETE FROM chat_reads WHERE kind=1 AND target_id=?`,
+		`DELETE FROM chat_messages WHERE channel_id=?`,
+		`DELETE FROM channels WHERE id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "delete-channel", fmt.Sprintf("id=%d name=%q", id, name)); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -487,6 +487,13 @@ export const en = {
         applicationAudio: "Music (Audio)",
         applicationAudioHint: "More faithful for music, uses more bandwidth",
         channelLimitsHint: "Name up to 64 bytes, topic up to 128, description up to 512. Bitrate 6–510 kbit/s. Users below a new threshold are disconnected from the channel.",
+        deleteAccount: "Delete account",
+        deleteAccountHint: "The account is forgotten: its rights and level are reset and its direct messages are deleted; channel messages stay. Connecting again with the same key creates a new account.",
+        deleteAccountBanned: "A banned account cannot be deleted, because deleting it would lift the ban. Unban it first.",
+        deleteAccountConfirm: (name: string) => `Delete account “${name}”? Its sessions will be disconnected.`,
+        deleteChannel: "Delete channel",
+        deleteChannelHasChildren: "Delete or move its subchannels first.",
+        deleteChannelConfirm: (name: string, members: number) => `Delete channel “${name}”? ${members > 0 ? `Its members (${members}) will be moved to the default channel. ` : ""}The channel chat history will be deleted.`,
         cancel: "Cancel",
     },
     errors: {
