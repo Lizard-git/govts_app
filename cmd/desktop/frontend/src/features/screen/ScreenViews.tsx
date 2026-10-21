@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, useSyncExternalStore} from "react";
+import {useEffect, useRef, useState, useSyncExternalStore, type SyntheticEvent} from "react";
 import {Window as WailsWindow} from "@wailsio/runtime";
 import type {ClientViewDTO, ParticipantDTO, ScreenStreamDTO} from "../../api";
 import {desktopAPI} from "../../api";
@@ -112,6 +112,10 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
         await controller.current?.unsubscribe();
         await WailsWindow.Close();
     };
+    const showResolution = (event: SyntheticEvent<HTMLVideoElement>) => {
+        const video = event.currentTarget;
+        setResolution(`${video.videoWidth}×${video.videoHeight}`);
+    };
     const toggleFullscreen = async () => {
         await WailsWindow.ToggleFullscreen();
         setFullscreen(await WailsWindow.IsFullscreen());
@@ -130,10 +134,8 @@ export function ScreenViewerWindow({streamID, ownerName}: {streamID: string; own
             <button onClick={() => void close()}>{m.screen.close}</button>
         </header>
         {error && <div className="screen-viewer-error" role="alert">{errorText(error, m)}</div>}
-        <video ref={videoRef} autoPlay muted playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            setResolution(`${video.videoWidth}×${video.videoHeight}`);
-        }}/>
+        {/* The first frames are often smaller while the sender ramps up; resize tracks later changes. */}
+        <video ref={videoRef} autoPlay muted playsInline onDoubleClick={() => void toggleFullscreen()} onLoadedMetadata={showResolution} onResize={showResolution}/>
         <audio ref={audioRef} autoPlay/>
     </main>;
 }
