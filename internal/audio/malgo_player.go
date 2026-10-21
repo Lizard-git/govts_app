@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,7 +65,7 @@ func (p *MalgoPlayer) Write(samples []int16) error {
 		return io.ErrClosedPipe
 	}
 	if !p.deafened {
-		if dropped := p.buffer.push(int16ToBytes(samples)); dropped > 0 {
+		if dropped := p.buffer.push(int16ToBytes(samples)); dropped > 0 && SoundLogEnabled() {
 			p.recordOverflow(dropped)
 		}
 	}
@@ -88,7 +87,7 @@ func (p *MalgoPlayer) recordOverflow(dropped int) {
 	if p.bytesPerMS > 0 {
 		droppedMS = p.overflowBytes / p.bytesPerMS
 	}
-	log.Printf("playback buffer overflow: dropped_ms=%d window=%s", droppedMS, now.Sub(p.overflowStarted).Round(time.Millisecond))
+	SoundLogf("playback buffer overflow: dropped_ms=%d window=%s", droppedMS, now.Sub(p.overflowStarted).Round(time.Millisecond))
 	p.overflowBytes = 0
 	p.overflowLogged = now
 }

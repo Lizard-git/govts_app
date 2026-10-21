@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"log"
 
 	"uniclog.io/sonoryx/internal/audio"
 )
@@ -35,7 +34,7 @@ func PlaybackLoop(
 			if err != nil {
 				return err
 			}
-			if frame.Cue != 0 {
+			if frame.Cue != 0 && audio.SoundLogEnabled() {
 				logCueHandoff(player, NotificationSoundKind(frame.Cue), written)
 			}
 		}
@@ -47,14 +46,14 @@ func PlaybackLoop(
 // not heard was lost by the output driver or device.
 func logCueHandoff(player audio.Player, kind NotificationSoundKind, written bool) {
 	if !written {
-		log.Printf("sound cue dropped: kind=%s reason=deafened_or_playback_epoch", kind)
+		audio.SoundLogf("sound cue dropped: kind=%s reason=deafened_or_playback_epoch", kind)
 		return
 	}
 	stats, ok := player.(audio.PlaybackStats)
 	if !ok {
-		log.Printf("sound cue to device: kind=%s", kind)
+		audio.SoundLogf("sound cue to device: kind=%s", kind)
 		return
 	}
 	buffered, sinceCallback := stats.PlaybackStats()
-	log.Printf("sound cue to device: kind=%s buffered_ms=%d last_callback_ms=%d", kind, buffered.Milliseconds(), sinceCallback.Milliseconds())
+	audio.SoundLogf("sound cue to device: kind=%s buffered_ms=%d last_callback_ms=%d", kind, buffered.Milliseconds(), sinceCallback.Milliseconds())
 }

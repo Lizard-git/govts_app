@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"sort"
 	"time"
 
+	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/domain"
 )
 
@@ -93,12 +93,12 @@ func (s *State) queueNotificationSoundLocked(sound NotificationSoundKind) {
 // told apart from a skipped, dropped or never-triggered one in client.log.
 func (s *State) enqueueCueLocked(sound NotificationSoundKind, preview bool) {
 	if !preview && !s.Audio.CueEnabled(sound) {
-		log.Printf("sound cue skipped: kind=%s reason=disabled", sound)
+		audio.SoundLogf("sound cue skipped: kind=%s reason=disabled", sound)
 		return
 	}
 	deafened, epoch := s.Audio.PlaybackSnapshot()
 	if deafened {
-		log.Printf("sound cue skipped: kind=%s reason=deafened", sound)
+		audio.SoundLogf("sound cue skipped: kind=%s reason=deafened", sound)
 		return
 	}
 	pack, volume := s.Audio.SoundSnapshot()
@@ -108,33 +108,33 @@ func (s *State) enqueueCueLocked(sound NotificationSoundKind, preview bool) {
 		volume = minWakeVolume
 	}
 	if volume <= 0 {
-		log.Printf("sound cue skipped: kind=%s reason=volume", sound)
+		audio.SoundLogf("sound cue skipped: kind=%s reason=volume", sound)
 		return
 	}
 	notice := NotificationSound{Kind: sound, PlaybackEpoch: epoch, Pack: pack, Volume: volume}
 	select {
 	case s.notificationSounds <- notice:
-		log.Printf("sound cue queued: kind=%s epoch=%d", sound, epoch)
+		audio.SoundLogf("sound cue queued: kind=%s epoch=%d", sound, epoch)
 		return
 	default:
 	}
 	// The mixer is behind. Drop the oldest cue so the action just taken is the one that plays.
 	select {
 	case old := <-s.notificationSounds:
-		log.Printf("sound cue dropped: kind=%s reason=queue_full", old.Kind)
+		audio.SoundLogf("sound cue dropped: kind=%s reason=queue_full", old.Kind)
 	default:
 	}
 	select {
 	case s.notificationSounds <- notice:
-		log.Printf("sound cue queued: kind=%s epoch=%d", sound, epoch)
+		audio.SoundLogf("sound cue queued: kind=%s epoch=%d", sound, epoch)
 	default:
-		log.Printf("sound cue dropped: kind=%s reason=queue_full", sound)
+		audio.SoundLogf("sound cue dropped: kind=%s reason=queue_full", sound)
 	}
 }
 
 // queueRecoveredCueLocked plays a cue whose state event a resync skipped.
 func (s *State) queueRecoveredCueLocked(sound NotificationSoundKind) {
-	log.Printf("sound cue recovered from snapshot: kind=%s", sound)
+	audio.SoundLogf("sound cue recovered from snapshot: kind=%s", sound)
 	s.queueNotificationSoundLocked(sound)
 }
 
@@ -155,7 +155,7 @@ func screenChannel(snapshot domain.ServerSnapshot, sessionID uint64, fallback do
 // move first; the later ones see the channel already set and stay silent.
 func (s *State) queueChannelChangeLocked(from, to domain.ChannelID, via string) {
 	if from != 0 && to != 0 && from != to {
-		log.Printf("local channel changed: from=%d to=%d via=%s", from, to, via)
+		audio.SoundLogf("local channel changed: from=%d to=%d via=%s", from, to, via)
 		s.queueNotificationSoundLocked(NotificationChannelChanged)
 	}
 }
@@ -279,7 +279,7 @@ func (s *State) ConfirmChannel(generation uint64, channel domain.ChannelID, revi
 	if s.channelID != channel {
 		s.measurements.resetIncoming()
 	}
-	log.Printf("join ack revision gap: revision=%d snapshot_revision=%d snapshot_fresh=%t", revision, s.snapshot.Revision, s.snapshotFresh)
+	audio.SoundLogf("join ack revision gap: revision=%d snapshot_revision=%d snapshot_fresh=%t", revision, s.snapshot.Revision, s.snapshotFresh)
 	s.queueChannelChangeLocked(s.channelID, channel, "ack")
 	s.channelID = channel
 	if revision > s.observedRevision {
@@ -396,7 +396,7 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		return false
 	}
 	if !s.snapshotFresh || s.syncedGeneration != generation || e.Revision != s.snapshot.Revision+1 {
-		log.Printf("state event deferred to resync: kind=%d revision=%d snapshot_revision=%d snapshot_fresh=%t", e.Kind, e.Revision, s.snapshot.Revision, s.snapshotFresh)
+		audio.SoundLogf("state event deferred to resync: kind=%d revision=%d snapshot_revision=%d snapshot_fresh=%t", e.Kind, e.Revision, s.snapshot.Revision, s.snapshotFresh)
 		s.requestResyncLocked()
 		return false
 	}
@@ -461,7 +461,7 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 		if e.SessionID == s.sessionID {
 			// The join ACK may have applied this move and played its cue already.
 			if localChannel != 0 && e.ChannelID != 0 && localChannel != e.ChannelID {
-				log.Printf("local channel changed: from=%d to=%d via=event", localChannel, e.ChannelID)
+				audio.SoundLogf("local channel changed: from=%d to=%d via=event", localChannel, e.ChannelID)
 				notification = NotificationChannelChanged
 			}
 		} else if oldChannel != localChannel && e.ChannelID == localChannel {

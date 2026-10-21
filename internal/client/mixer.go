@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"log"
 	"math"
 	"time"
 
@@ -114,7 +113,7 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	for _, frame := range frames {
 		if frame.PlaybackEpoch != epoch {
 			if frame.Cue != 0 {
-				log.Printf("sound cue dropped: kind=%s reason=stale_epoch epoch=%d current=%d", NotificationSoundKind(frame.Cue), frame.PlaybackEpoch, epoch)
+				audio.SoundLogf("sound cue dropped: kind=%s reason=stale_epoch epoch=%d current=%d", NotificationSoundKind(frame.Cue), frame.PlaybackEpoch, epoch)
 			}
 			continue
 		}
@@ -186,20 +185,20 @@ func MixLoop(
 	enqueue := func(sound NotificationSound) {
 		frames := notificationFrames(sound)
 		if len(frames) == 0 || len(frames) > maxEffectFrames {
-			log.Printf("sound cue dropped: kind=%s reason=length frames=%d", sound.Kind, len(frames))
+			audio.SoundLogf("sound cue dropped: kind=%s reason=length frames=%d", sound.Kind, len(frames))
 			return
 		}
 		if idle := time.Since(lastAudible); len(effects) == 0 && idle >= cueWakeIdle {
 			if wake := cueWakeFrames(sound.PlaybackEpoch); len(wake)+len(frames) <= maxEffectFrames {
-				log.Printf("sound cue wake preroll: kind=%s idle_ms=%d preroll_ms=%d", sound.Kind, idle.Milliseconds(), CueWakePreroll.Milliseconds())
+				audio.SoundLogf("sound cue wake preroll: kind=%s idle_ms=%d preroll_ms=%d", sound.Kind, idle.Milliseconds(), CueWakePreroll.Milliseconds())
 				frames = append(wake, frames...)
 			}
 		}
 		if len(effects)+len(frames) > maxEffectFrames {
-			log.Printf("sound cue mixer overflow: kind=%s discarded_frames=%d", sound.Kind, len(effects))
+			audio.SoundLogf("sound cue mixer overflow: kind=%s discarded_frames=%d", sound.Kind, len(effects))
 			effects = effects[:0]
 		}
-		log.Printf("sound cue mixing: kind=%s frames=%d waiting_frames=%d", sound.Kind, len(frames), len(effects))
+		audio.SoundLogf("sound cue mixing: kind=%s frames=%d waiting_frames=%d", sound.Kind, len(frames), len(effects))
 		effects = append(effects, frames...)
 	}
 	drainNotifications := func() {
