@@ -68,7 +68,7 @@ beforeEach(() => {
     track.applyConstraints.mockResolvedValue(undefined);
     track.getSettings.mockReturnValue({width: 1920, height: 1080, frameRate: 15});
     getDisplayMedia.mockResolvedValue(capture);
-    vi.stubGlobal("window", {setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout});
+    vi.stubGlobal("window", {setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval});
     vi.stubGlobal("navigator", {mediaDevices: {getDisplayMedia}});
     vi.stubGlobal("RTCPeerConnection", FakePC);
     const getCapabilities = () => ({codecs: [{mimeType: "video/VP8", clockRate: 90000}, {mimeType: "video/VP9", clockRate: 90000, sdpFmtpLine: "profile-id=0"}]});
@@ -152,11 +152,14 @@ describe("screen publisher lifecycle", () => {
     it("cancels the disconnect timer even if browser close emits no event", async () => {
         const controller = new ScreenMediaController();
         await controller.publish(vi.fn());
+        const publishingTimers = vi.getTimerCount(); // includes the stats diagnostics interval
         pcs[0].connectionState = "disconnected";
         pcs[0].dispatchEvent(new Event("connectionstatechange"));
-        expect(vi.getTimerCount()).toBe(1);
+        expect(vi.getTimerCount()).toBe(publishingTimers + 1);
         closeEmitsEvent = false;
         await controller.stopPublishing();
+        expect(vi.getTimerCount()).toBe(publishingTimers); // the disconnect timer is gone at once
+        await vi.advanceTimersByTimeAsync(10_000); // the idle stats interval stops on its next tick
         expect(vi.getTimerCount()).toBe(0);
     });
 });
