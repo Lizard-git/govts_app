@@ -209,6 +209,52 @@ func (a *Administration) SetChannelJoinLevel(ctx context.Context, actor AdminAct
 	return removed, nil
 }
 
+// CreateChannel stores and announces a new channel. A non-owner administrator
+// cannot lock it above their own level.
+func (a *Administration) CreateChannel(ctx context.Context, actor AdminActor, channel domain.Channel) (domain.Channel, error) {
+	if !actor.allowed() || (!actor.privileged() && channel.MinJoinLevel > actor.JoinLevel) {
+		return domain.Channel{}, ErrPermissionDenied
+	}
+	prepared, err := a.hub.PrepareChannel(channel)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if err := a.store.InsertChannelBy(ctx, actor.auditName(), prepared); err != nil {
+		return domain.Channel{}, err
+	}
+	if err := a.hub.AddChannel(prepared); err != nil {
+		return domain.Channel{}, fmt.Errorf("saved channel but could not add it: %w", err)
+	}
+	return prepared, nil
+}
+
+// UpdateChannel replaces the settings of a channel, including its parent and
+// position. A non-owner administrator can change only channels at or below
+// their level and cannot lock one above it.
+func (a *Administration) UpdateChannel(ctx context.Context, actor AdminActor, channel domain.Channel) (domain.Channel, []uint64, error) {
+	if !actor.allowed() {
+		return domain.Channel{}, nil, ErrPermissionDenied
+	}
+	current, next, err := a.hub.CheckChannelUpdate(channel)
+	if err != nil {
+		return domain.Channel{}, nil, err
+	}
+	if !actor.privileged() && (current.MinJoinLevel > actor.JoinLevel || next.MinJoinLevel > actor.JoinLevel) {
+		return domain.Channel{}, nil, ErrPermissionDenied
+	}
+	if next == current {
+		return next, nil, nil
+	}
+	if err := a.store.UpdateChannelBy(ctx, actor.auditName(), next); err != nil {
+		return domain.Channel{}, nil, err
+	}
+	removed, err := a.hub.UpdateChannel(next)
+	if err != nil {
+		return domain.Channel{}, nil, fmt.Errorf("saved channel but could not apply it: %w", err)
+	}
+	return next, removed, nil
+}
+
 func (a *Administration) notifyAccount(account persist.Account) {
 	if a.notify != nil {
 		a.notify(account.ID, account.JoinLevel, account.Privileges())

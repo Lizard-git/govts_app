@@ -545,6 +545,24 @@ func (s *State) ApplyEvent(generation uint64, e domain.StateEvent) bool {
 			}
 		}
 		p.Away = e.Away
+	case domain.ChannelUpdated:
+		replaced := false
+		for i := range next.Channels {
+			if next.Channels[i].ID == e.Channel.ID {
+				next.Channels[i] = e.Channel
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			if len(next.Channels) >= MaxSnapshotChannels {
+				s.requestResyncLocked()
+				return false
+			}
+			next.Channels = append(next.Channels, e.Channel)
+		}
+		sortSnapshotChannels(next.Channels)
+		line = fmt.Sprintf("# channel %s updated", terminalText(e.Channel.Name))
 	}
 	next.Revision = e.Revision
 	if err := validateServerSnapshot(next); err != nil {

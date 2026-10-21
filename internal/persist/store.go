@@ -552,3 +552,55 @@ func (s *Store) SetChannelJoinLevelBy(ctx context.Context, actor string, channel
 	}
 	return tx.Commit()
 }
+
+// InsertChannelBy stores a channel created at runtime and records actor in
+// the audit log.
+func (s *Store) InsertChannelBy(ctx context.Context, actor string, c domain.Channel) error {
+	if c.ID == 0 {
+		return errors.New("channel ID is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id,parent_id,name,topic,description,position,max_users,min_join_level,channel_type,audio_codec,audio_sample_rate,audio_channels,audio_frame_duration_ms,audio_bitrate,audio_application) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, c.ParentID, c.Name, c.Topic, c.Description, c.Position, c.MaxUsers, c.MinJoinLevel, c.Type, c.Audio.Codec, c.Audio.SampleRate, c.Audio.Channels, c.Audio.FrameDurationMS, c.Audio.Bitrate, c.Audio.Application); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "create-channel", channelAuditDetail(c)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateChannelBy replaces the settings and place of a channel and records
+// actor in the audit log. The default channel stays unrestricted.
+func (s *Store) UpdateChannelBy(ctx context.Context, actor string, c domain.Channel) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var defaultID domain.ChannelID
+	if err := tx.QueryRowContext(ctx, `SELECT default_channel_id FROM server_settings WHERE id=1`).Scan(&defaultID); err != nil {
+		return err
+	}
+	if c.ID == defaultID && (c.MinJoinLevel != 0 || c.MaxUsers != 0) {
+		return errors.New("default channel must remain unrestricted")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE channels SET parent_id=?,name=?,topic=?,description=?,position=?,max_users=?,min_join_level=?,channel_type=?,audio_codec=?,audio_sample_rate=?,audio_channels=?,audio_frame_duration_ms=?,audio_bitrate=?,audio_application=? WHERE id=?`, c.ParentID, c.Name, c.Topic, c.Description, c.Position, c.MaxUsers, c.MinJoinLevel, c.Type, c.Audio.Codec, c.Audio.SampleRate, c.Audio.Channels, c.Audio.FrameDurationMS, c.Audio.Bitrate, c.Audio.Application, c.ID)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("channel %d not found", c.ID)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "update-channel", channelAuditDetail(c)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func channelAuditDetail(c domain.Channel) string {
+	return fmt.Sprintf("id=%d parent=%d pos=%d name=%q max=%d level=%d bitrate=%d", c.ID, c.ParentID, c.Position, c.Name, c.MaxUsers, c.MinJoinLevel, c.Audio.Bitrate)
+}

@@ -33,6 +33,9 @@ func EncodeStateEvent(e domain.StateEvent) ([]byte, error) {
 	case domain.ParticipantPresence:
 		b = binary.BigEndian.AppendUint64(b, e.SessionID)
 		b = append(b, EncodePresence(e.Away)...)
+	case domain.ChannelUpdated:
+		// Clients that predate this kind fail to decode it and resync.
+		return appendChannel(b, e.Channel)
 	}
 	return b, nil
 }
@@ -98,6 +101,12 @@ func DecodeStateEvent(b []byte) (domain.StateEvent, error) {
 			return e, err
 		}
 		b = nil
+	case domain.ChannelUpdated:
+		var err error
+		e.Channel, b, err = takeChannel(b)
+		if err != nil {
+			return e, err
+		}
 	default:
 		return e, errors.New("unknown event kind")
 	}

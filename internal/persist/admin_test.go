@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"uniclog.io/sonoryx/internal/domain"
 )
 
 func testAccount(t *testing.T, store *Store, seed byte, name string) Account {
@@ -170,5 +173,46 @@ func TestBanReasonIsReadBack(t *testing.T) {
 	banned, err := store.Account(ctx, account.ID)
 	if err != nil || !banned.Banned || banned.BanReason != "flood" {
 		t.Fatalf("banned account = %+v, %v", banned, err)
+	}
+}
+
+func TestInsertAndUpdateChannelBy(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	audio := domain.DefaultAudioProfile()
+	if err := store.SaveInitialServer(ctx, ServerState{Name: "server", DefaultChannelID: 1, Channels: []domain.Channel{
+		{ID: 1, Name: "default", Type: domain.ChannelTypePermanent, Audio: audio},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	room := domain.Channel{ID: 2, ParentID: 1, Name: "room", Topic: "t", Position: 3, MaxUsers: 4, MinJoinLevel: 5, Type: domain.ChannelTypePermanent, Audio: audio}
+	if err := store.InsertChannelBy(ctx, "7", room); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertChannelBy(ctx, "7", room); err == nil {
+		t.Fatal("duplicate channel ID inserted")
+	}
+	room.ParentID, room.Name, room.Audio.Bitrate = 0, "moved", 96_000
+	if err := store.UpdateChannelBy(ctx, "8", room); err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := store.LoadServer(ctx)
+	if err != nil || len(state.Channels) != 2 || state.Channels[1] != room {
+		t.Fatalf("loaded channels = %+v, %v", state.Channels, err)
+	}
+	if err := store.UpdateChannelBy(ctx, "8", domain.Channel{ID: 1, Name: "default", MaxUsers: 2, Type: domain.ChannelTypePermanent, Audio: audio}); err == nil {
+		t.Fatal("restricted default channel stored")
+	}
+	if err := store.UpdateChannelBy(ctx, "8", domain.Channel{ID: 99, Name: "x", Type: domain.ChannelTypePermanent, Audio: audio}); err == nil {
+		t.Fatal("missing channel updated")
+	}
+	entries, err := store.AuditPage(ctx, 0, 2)
+	if err != nil || len(entries) != 2 || entries[0].Action != "update-channel" || entries[0].Actor != "8" || entries[1].Action != "create-channel" ||
+		!strings.Contains(entries[0].Detail, `name="moved"`) {
+		t.Fatalf("audit = %+v, %v", entries, err)
 	}
 }

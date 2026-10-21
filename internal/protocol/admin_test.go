@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"uniclog.io/sonoryx/internal/domain"
 )
 
 func TestAdminRequestRoundTrip(t *testing.T) {
@@ -172,5 +174,79 @@ func TestTruncateUTF8KeepsWholeRunes(t *testing.T) {
 	got := TruncateUTF8("ааааа", 5) // two-byte runes
 	if got != "аа" || !utf8.ValidString(got) {
 		t.Fatalf("TruncateUTF8 cyrillic = %q", got)
+	}
+}
+
+func TestAdminChannelRequestRoundTripAndValidation(t *testing.T) {
+	channel := AdminChannel{ParentID: 2, Position: 7, MaxUsers: 10, MinJoinLevel: 25, Bitrate: 64_000, Application: 2, Name: "Музыка", Topic: "тема", Description: strings.Repeat("d", 512)}
+	for _, request := range []AdminRequest{
+		{Operation: AdminCreateChannel, Channel: channel},
+		{Operation: AdminUpdateChannel, TargetID: 9, Channel: channel},
+		{Operation: AdminUpdateChannel, TargetID: 9, Channel: AdminChannel{Name: "root"}},
+	} {
+		encoded, err := EncodeAdminRequest(request)
+		if err != nil {
+			t.Fatalf("EncodeAdminRequest(%d) error = %v", request.Operation, err)
+		}
+		if len(encoded) > MaxPayloadSize {
+			t.Fatalf("encoded size = %d", len(encoded))
+		}
+		decoded, err := DecodeAdminRequest(encoded)
+		if err != nil || decoded != request {
+			t.Fatalf("round trip = %+v, %v; want %+v", decoded, err, request)
+		}
+		if _, err := DecodeAdminRequest(encoded[:len(encoded)-1]); err == nil {
+			t.Fatalf("truncated channel request %d accepted", request.Operation)
+		}
+	}
+	for name, request := range map[string]AdminRequest{
+		"create with target":       {Operation: AdminCreateChannel, TargetID: 3, Channel: channel},
+		"update without target":    {Operation: AdminUpdateChannel, Channel: channel},
+		"empty name":               {Operation: AdminCreateChannel, Channel: AdminChannel{}},
+		"parent is itself":         {Operation: AdminUpdateChannel, TargetID: 2, Channel: channel},
+		"create with level field":  {Operation: AdminCreateChannel, Level: 1, Channel: channel},
+		"channel on other request": {Operation: AdminAccounts, Channel: channel},
+		"name too long":            {Operation: AdminCreateChannel, Channel: AdminChannel{Name: strings.Repeat("n", 65)}},
+	} {
+		if _, err := EncodeAdminRequest(request); err == nil {
+			t.Errorf("%s: EncodeAdminRequest accepted %+v", name, request)
+		}
+	}
+	// A channel operation must carry its channel body.
+	header, err := EncodeAdminRequest(AdminRequest{Operation: AdminAccounts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	header[1] = byte(AdminCreateChannel)
+	if _, err := DecodeAdminRequest(header); err == nil {
+		t.Fatal("channel request without a body accepted")
+	}
+}
+
+func TestChannelUpdatedEventRoundTrip(t *testing.T) {
+	event := domain.StateEvent{Kind: domain.ChannelUpdated, Revision: 42, Channel: domain.Channel{
+		ID: 5, ParentID: 1, Name: "room", Topic: "topic", Description: "about", Position: 3, MaxUsers: 8, MinJoinLevel: 2,
+		Type: domain.ChannelTypePermanent, Audio: domain.DefaultAudioProfile(),
+	}}
+	encoded, err := EncodeStateEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeStateEvent(encoded)
+	if err != nil || decoded != event {
+		t.Fatalf("round trip = %+v, %v", decoded, err)
+	}
+	for name, bad := range map[string]domain.StateEvent{
+		"zero channel ID":        {Kind: domain.ChannelUpdated, Revision: 1, Channel: domain.Channel{Name: "x", Type: domain.ChannelTypePermanent, Audio: domain.DefaultAudioProfile()}},
+		"own parent":             {Kind: domain.ChannelUpdated, Revision: 1, Channel: domain.Channel{ID: 3, ParentID: 3, Name: "x", Type: domain.ChannelTypePermanent, Audio: domain.DefaultAudioProfile()}},
+		"session on channel":     {Kind: domain.ChannelUpdated, Revision: 1, SessionID: 1, Channel: event.Channel},
+		"channel on other event": {Kind: domain.ParticipantLeft, Revision: 1, SessionID: 1, Channel: event.Channel},
+	} {
+		if _, err := EncodeStateEvent(bad); err == nil {
+			t.Errorf("%s: EncodeStateEvent accepted %+v", name, bad)
+		}
+	}
+	if _, err := DecodeStateEvent(append(encoded, 0)); err == nil {
+		t.Fatal("trailing channel event data accepted")
 	}
 }

@@ -17,11 +17,15 @@ const (
 	ScreenStreamStopped
 	ParticipantAudio
 	ParticipantPresence
+	// ChannelUpdated carries the whole channel after it was created, edited
+	// or moved; clients insert or replace it by ID.
+	ChannelUpdated
 )
 
 // Participant is populated only for Joined. SessionID/ChannelID are used for
 // Left/Moved. Muted and Deafened are used only for ParticipantAudio.
-// Away is used only for ParticipantPresence.
+// Away is used only for ParticipantPresence. Channel is used only for
+// ChannelUpdated.
 type StateEvent struct {
 	Kind         StateEventKind
 	Revision     StateRevision
@@ -32,11 +36,15 @@ type StateEvent struct {
 	Muted        bool
 	Deafened     bool
 	Away         bool
+	Channel      Channel
 }
 
 func (e StateEvent) Validate() error {
 	if e.Revision == 0 {
 		return errors.New("zero event revision")
+	}
+	if e.Kind != ChannelUpdated && e.Channel != (Channel{}) {
+		return errors.New("channel on non-channel event")
 	}
 	if e.Kind != ParticipantAudio && (e.Muted || e.Deafened) {
 		return errors.New("audio flags on non-audio event")
@@ -70,6 +78,11 @@ func (e StateEvent) Validate() error {
 	case ParticipantPresence:
 		if e.Participant != (Participant{}) || e.SessionID == 0 || e.ChannelID != 0 || e.ScreenStream != (ScreenStream{}) {
 			return errors.New("invalid presence event")
+		}
+	case ChannelUpdated:
+		c := e.Channel
+		if e.Participant != (Participant{}) || e.SessionID != 0 || e.ChannelID != 0 || e.ScreenStream != (ScreenStream{}) || c.ID == 0 || c.ParentID == c.ID {
+			return errors.New("invalid channel event")
 		}
 	default:
 		return errors.New("unknown event kind")

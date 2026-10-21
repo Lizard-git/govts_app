@@ -13,6 +13,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/client"
+	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/persist"
 	"uniclog.io/sonoryx/internal/protocol"
 	"uniclog.io/sonoryx/internal/transport/udp"
@@ -83,6 +84,9 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub.SetServerVersion(version)
+	if err := store.SaveInitialServer(context.Background(), persist.ServerState{Name: "server", DefaultChannelID: voice.DefaultChannelID, Channels: hub.ListChannels()}); err != nil {
+		t.Fatal(err)
+	}
 	_, serverKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +117,7 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = voice.ServeUDP(ctx, server, hub, voice.NewRequestCache(), authenticator) }()
+	go func() { _ = voice.DispatchEvents(ctx, hub, server) }()
 
 	endpoint := server.LocalAddr().(*net.UDPAddr).AddrPort()
 	connect := func(name string, private ed25519.PrivateKey) *adminClient {
@@ -216,6 +221,36 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 		if packet := owner.receive(func(packet protocol.VoicePacket) bool { return packet.RequestID == 77 }); packet.Type != protocol.PacketAdminAck {
 			t.Fatalf("cached response = type %d %q", packet.Type, packet.Payload)
 		}
+	}
+
+	// Channel changes reach other clients as ChannelUpdated events.
+	channelEvent := func(id uint64) domain.Channel {
+		t.Helper()
+		packet := user.receive(func(packet protocol.VoicePacket) bool {
+			if packet.Type != protocol.PacketStateEvent {
+				return false
+			}
+			event, err := protocol.DecodeStateEvent(packet.Payload)
+			return err == nil && event.Kind == domain.ChannelUpdated && uint64(event.Channel.ID) == id
+		})
+		event, _ := protocol.DecodeStateEvent(packet.Payload)
+		return event.Channel
+	}
+	room := protocol.AdminChannel{Name: "room", Topic: "talk", MaxUsers: 5, Bitrate: 48_000, Application: uint8(domain.OpusApplicationAudio)}
+	created := owner.ack(protocol.AdminRequest{Operation: protocol.AdminCreateChannel, Channel: room})
+	if created.Next == 0 {
+		t.Fatalf("create channel response = %+v", created)
+	}
+	if got := channelEvent(created.Next); got.Name != "room" || got.MaxUsers != 5 || got.Audio.Bitrate != 48_000 || got.Audio.Application != domain.OpusApplicationAudio {
+		t.Fatalf("created channel event = %+v", got)
+	}
+	room.Name, room.ParentID, room.Position = "moved room", uint64(voice.DefaultChannelID), 3
+	owner.ack(protocol.AdminRequest{Operation: protocol.AdminUpdateChannel, TargetID: created.Next, Channel: room})
+	if got := channelEvent(created.Next); got.Name != "moved room" || got.ParentID != voice.DefaultChannelID || got.Position != 3 {
+		t.Fatalf("updated channel event = %+v", got)
+	}
+	if stored, ok := hub.GetChannel(domain.ChannelID(created.Next)); !ok || stored.Name != "moved room" {
+		t.Fatalf("hub channel = %+v, %t", stored, ok)
 	}
 
 	banned := owner.ack(protocol.AdminRequest{Operation: protocol.AdminSetBan, TargetID: uint64(userAccount.ID), Enabled: true, Reason: "test"})

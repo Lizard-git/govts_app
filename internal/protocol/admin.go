@@ -39,11 +39,16 @@ const (
 	AdminSetBan
 	AdminSetChannelJoinLevel
 	AdminAudit
+	// AdminCreateChannel and AdminUpdateChannel carry Channel after the
+	// common header; servers before 0.3.7 reject them as unknown.
+	AdminCreateChannel
+	AdminUpdateChannel
 )
 
 // AdminRequest is one PacketAdminRequest. Cursor pages AdminAccounts (after
 // this account ID) and AdminAudit (before this entry ID, 0 = newest). TargetID
-// is an account ID, or a channel ID for AdminSetChannelJoinLevel.
+// is an account ID, or a channel ID for AdminSetChannelJoinLevel and
+// AdminUpdateChannel.
 type AdminRequest struct {
 	Operation  AdminOperation
 	Cursor     uint64
@@ -52,6 +57,68 @@ type AdminRequest struct {
 	Enabled    bool
 	Level      uint16
 	Reason     string
+	Channel    AdminChannel
+}
+
+// AdminChannel holds the editable settings of a channel. The sample rate,
+// channel count, frame duration and codec are fixed by the client pipeline.
+type AdminChannel struct {
+	ParentID     uint64
+	Position     uint32
+	MaxUsers     uint32
+	MinJoinLevel uint16
+	Bitrate      uint32
+	Application  uint8
+	Name         string
+	Topic        string
+	Description  string
+}
+
+func (r AdminRequest) channelOperation() bool {
+	return r.Operation == AdminCreateChannel || r.Operation == AdminUpdateChannel
+}
+
+func appendAdminChannel(b []byte, c AdminChannel) ([]byte, error) {
+	b = binary.BigEndian.AppendUint64(b, c.ParentID)
+	b = binary.BigEndian.AppendUint32(b, c.Position)
+	b = binary.BigEndian.AppendUint32(b, c.MaxUsers)
+	b = binary.BigEndian.AppendUint16(b, c.MinJoinLevel)
+	b = binary.BigEndian.AppendUint32(b, c.Bitrate)
+	b = append(b, c.Application)
+	var err error
+	for _, v := range []struct {
+		s string
+		m int
+	}{{c.Name, domain.MaxChannelNameBytes}, {c.Topic, domain.MaxChannelTopicBytes}, {c.Description, domain.MaxChannelDescriptionBytes}} {
+		if b, err = appendString(b, v.s, v.m); err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
+}
+
+func takeAdminChannel(b []byte) (AdminChannel, []byte, error) {
+	var c AdminChannel
+	if len(b) < 23 {
+		return c, nil, errors.New("truncated admin channel")
+	}
+	c.ParentID = binary.BigEndian.Uint64(b[:8])
+	c.Position = binary.BigEndian.Uint32(b[8:12])
+	c.MaxUsers = binary.BigEndian.Uint32(b[12:16])
+	c.MinJoinLevel = binary.BigEndian.Uint16(b[16:18])
+	c.Bitrate = binary.BigEndian.Uint32(b[18:22])
+	c.Application = b[22]
+	var err error
+	if c.Name, b, err = takeString(b[23:], domain.MaxChannelNameBytes); err != nil {
+		return c, nil, err
+	}
+	if c.Topic, b, err = takeString(b, domain.MaxChannelTopicBytes); err != nil {
+		return c, nil, err
+	}
+	if c.Description, b, err = takeString(b, domain.MaxChannelDescriptionBytes); err != nil {
+		return c, nil, err
+	}
+	return c, b, nil
 }
 
 const adminRequestHeaderSize = 22
@@ -67,7 +134,11 @@ func EncodeAdminRequest(r AdminRequest) ([]byte, error) {
 	b = binary.BigEndian.AppendUint64(b, r.Cursor)
 	b = binary.BigEndian.AppendUint64(b, r.TargetID)
 	b = binary.BigEndian.AppendUint16(b, r.Level)
-	return appendString(b, r.Reason, MaxAdminReasonBytes)
+	b, err := appendString(b, r.Reason, MaxAdminReasonBytes)
+	if err != nil || !r.channelOperation() {
+		return b, err
+	}
+	return appendAdminChannel(b, r.Channel)
 }
 
 func DecodeAdminRequest(b []byte) (AdminRequest, error) {
@@ -81,14 +152,22 @@ func DecodeAdminRequest(b []byte) (AdminRequest, error) {
 	r.Level = binary.BigEndian.Uint16(b[20:22])
 	var err error
 	r.Reason, b, err = takeString(b[adminRequestHeaderSize:], MaxAdminReasonBytes)
-	if err != nil || len(b) != 0 {
+	if err != nil {
 		return r, errors.New("invalid admin request reason")
+	}
+	if r.channelOperation() {
+		if r.Channel, b, err = takeAdminChannel(b); err != nil {
+			return r, errors.New("invalid admin request channel")
+		}
+	}
+	if len(b) != 0 {
+		return r, errors.New("trailing admin request data")
 	}
 	return r, r.Validate()
 }
 
 func (r AdminRequest) Validate() error {
-	if r.Operation < AdminAccounts || r.Operation > AdminAudit {
+	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel {
 		return errors.New("invalid admin operation")
 	}
 	target, permission, enabled, level, reason := r.TargetID != 0, r.Permission != 0, r.Enabled, r.Level != 0, r.Reason != ""
@@ -102,6 +181,14 @@ func (r AdminRequest) Validate() error {
 		ok = target && r.Cursor == 0 && !permission && !enabled && !reason
 	case AdminSetBan:
 		ok = target && r.Cursor == 0 && !permission && !level && (enabled || !reason)
+	case AdminCreateChannel, AdminUpdateChannel:
+		c := r.Channel
+		ok = target == (r.Operation == AdminUpdateChannel) && r.Cursor == 0 && !permission && !enabled && !level && !reason &&
+			c.Name != "" && c.ParentID <= 1<<63-1 && (c.ParentID == 0 || c.ParentID != r.TargetID) &&
+			utf8.ValidString(c.Name) && utf8.ValidString(c.Topic) && utf8.ValidString(c.Description)
+	}
+	if !r.channelOperation() && r.Channel != (AdminChannel{}) {
+		ok = false
 	}
 	if !ok || r.Cursor > 1<<63-1 || r.TargetID > 1<<63-1 || !utf8.ValidString(r.Reason) {
 		return errors.New("invalid admin request fields")
@@ -136,7 +223,8 @@ type AdminAuditEntry struct {
 }
 
 // AdminResponse is the payload of PacketAdminAck. Next is the cursor of the
-// following page, 0 when the list is complete.
+// following page, 0 when the list is complete; for AdminCreateChannel and
+// AdminUpdateChannel it is the ID of the channel.
 type AdminResponse struct {
 	Operation AdminOperation
 	Next      uint64
@@ -160,7 +248,7 @@ func AdminAuditEntrySize(e AdminAuditEntry) int {
 const AdminResponseBudget = MaxPayloadSize - adminResponseHeaderSize
 
 func EncodeAdminResponse(r AdminResponse) ([]byte, error) {
-	if r.Operation < AdminAccounts || r.Operation > AdminAudit || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
 		return nil, errors.New("invalid admin response")
 	}
 	b := []byte{AdminSchemaVersion, byte(r.Operation), byte(len(r.Accounts)), byte(len(r.Audit))}
@@ -212,7 +300,7 @@ func DecodeAdminResponse(b []byte) (AdminResponse, error) {
 	r.Operation = AdminOperation(b[1])
 	accounts, entries := int(b[2]), int(b[3])
 	r.Next = binary.BigEndian.Uint64(b[4:12])
-	if r.Operation < AdminAccounts || r.Operation > AdminAudit || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminUpdateChannel || r.Next > 1<<63-1 {
 		return r, errors.New("invalid admin response")
 	}
 	b = b[adminResponseHeaderSize:]

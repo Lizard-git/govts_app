@@ -144,6 +144,14 @@ func (a *Authenticator) executeAdmin(ctx context.Context, hub *Hub, actor AdminA
 	case protocol.AdminSetChannelJoinLevel:
 		change.Removed, err = a.admin.SetChannelJoinLevel(ctx, actor, domain.ChannelID(request.TargetID), request.Level)
 		return response, change.Removed, err
+	case protocol.AdminCreateChannel:
+		created, err := a.admin.CreateChannel(ctx, actor, adminChannelDomain(0, request.Channel))
+		response.Next = uint64(created.ID)
+		return response, nil, err
+	case protocol.AdminUpdateChannel:
+		updated, removed, err := a.admin.UpdateChannel(ctx, actor, adminChannelDomain(domain.ChannelID(request.TargetID), request.Channel))
+		response.Next = uint64(updated.ID)
+		return response, removed, err
 	default:
 		return response, nil, errAdminUnavailable
 	}
@@ -153,4 +161,24 @@ func (a *Authenticator) executeAdmin(ctx context.Context, hub *Hub, actor AdminA
 	online := hub.onlineUsers()
 	response.Accounts = []protocol.AdminAccount{adminAccountWire(change.Account, online[change.Account.ID])}
 	return response, change.Removed, nil
+}
+
+// adminChannelDomain builds a permanent channel with the fixed PCM format of
+// the client pipeline from the editable settings of a request.
+func adminChannelDomain(id domain.ChannelID, c protocol.AdminChannel) domain.Channel {
+	audio := domain.DefaultAudioProfile()
+	audio.Bitrate = c.Bitrate
+	audio.Application = domain.OpusApplication(c.Application)
+	return domain.Channel{
+		ID:           id,
+		ParentID:     domain.ChannelID(c.ParentID),
+		Name:         c.Name,
+		Topic:        c.Topic,
+		Description:  c.Description,
+		Position:     c.Position,
+		MaxUsers:     c.MaxUsers,
+		MinJoinLevel: c.MinJoinLevel,
+		Type:         domain.ChannelTypePermanent,
+		Audio:        audio,
+	}
 }
