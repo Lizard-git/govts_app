@@ -13,6 +13,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 	"github.com/wailsapp/wails/v3/pkg/updater"
 	"uniclog.io/sonoryx/internal/audio"
 	voiceclient "uniclog.io/sonoryx/internal/client"
@@ -61,6 +62,7 @@ func main() {
 	}
 	var mainWindow *application.WebviewWindow
 	var quitting atomic.Bool
+	notifier := notifications.New()
 	app := application.New(application.Options{
 		Name:        "Sonoryx",
 		Description: "Голосовой клиент Sonoryx",
@@ -76,6 +78,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(service),
 			application.NewService(updates),
+			application.NewService(notifier),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -98,9 +101,11 @@ func main() {
 	bridgeCtx, cancelBridge := context.WithCancel(context.Background())
 	stopBridge := wailsui.StartEventBridge(bridgeCtx, app, client)
 	stopServerStatus := wailsui.ConfigureServerStatuses(app, service)
+	wailsui.StartHotkeys(service)
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
+			wailsui.StopHotkeys(service)
 			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
@@ -138,6 +143,18 @@ func main() {
 		app.Quit()
 	})
 	installTray(app, mainWindow, client, service, &quitting)
+	window := mainWindow
+	wailsui.ConfigureHotkeyNotifications(service,
+		func() bool { return !window.IsVisible() || window.IsMinimised() },
+		func(title, body string) error {
+			return notifier.SendNotification(notifications.NotificationOptions{
+				ID:    fmt.Sprintf("hotkey-%d", time.Now().UnixNano()),
+				Title: title,
+				Body:  body,
+				// The hotkey already plays its own cue.
+				Sound: &notifications.NotificationSound{Silent: true},
+			})
+		})
 
 	if err := app.Run(); err != nil {
 		shutdown()

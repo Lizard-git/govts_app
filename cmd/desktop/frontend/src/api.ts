@@ -45,7 +45,15 @@ export function logDiagnostic(operation: string, message: unknown): void {
         .finally(() => { diagnosticsInFlight--; });
 }
 
+export type HotkeyAction = "mute" | "deafen" | "away";
+// The shortcut is Ctrl+Alt+key; key is an upper-case Latin letter or digit.
+export type Hotkey = {action: HotkeyAction; key: string; status: "active" | "busy" | "failed"};
+
 export const desktopAPI = {
+    hotkeys: (): Promise<Hotkey[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.Hotkeys"),
+    setHotkey: (action: HotkeyAction, key: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkey", action, key),
+    hotkeyNotifications: (): Promise<boolean> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.HotkeyNotifications"),
+    setHotkeyNotifications: (value: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeyNotifications", value),
     recentServers: (): Promise<RecentServer[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.RecentServers"),
     refreshServerStatuses: (): Promise<void> => Service.RefreshServerStatuses(),
     onServerStatusChanged: (listener: () => void) => Events.On("server-status-changed", listener),
