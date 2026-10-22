@@ -1,12 +1,13 @@
 package wailsui
 
 import (
+	"context"
 	"errors"
 	"log"
 	"strings"
+	"time"
 	"unicode/utf8"
 
-	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientsettings"
 	"uniclog.io/sonoryx/internal/hotkeys"
 )
@@ -15,26 +16,45 @@ import (
 var (
 	errHotkeyActionUnknown = errors.New("hotkey-action-unknown")
 	errHotkeyKeyInvalid    = errors.New("hotkey-key-invalid")
-	errHotkeyKeyTaken      = errors.New("hotkey-key-taken")
 )
 
-// HotkeyDTO is one Ctrl+Alt shortcut. Status is "active", "busy" when another
-// program owns the shortcut, or "failed" when it could not be registered.
+// HotkeyDTO is one Ctrl+Alt shortcut. Status is "off" while hotkeys are
+// disabled, "active" while the shortcut is armed, or "failed".
 type HotkeyDTO struct {
 	Action string `json:"action"`
 	Key    string `json:"key"`
 	Status string `json:"status"`
 }
 
-// StartHotkeys registers the saved shortcuts. They work while the window is
-// hidden, so the desktop shell calls this once at startup, after settings load.
+// StartHotkeys arms the saved shortcuts when they are enabled. The listener
+// is not created while they are off, so nothing is captured.
 func StartHotkeys(s *Service) {
+	s.settingsMu.RLock()
+	enabled := s.hotkeysEnabled
+	s.settingsMu.RUnlock()
+	s.hotkeyMu.Lock()
+	if s.hotkeys != nil {
+		s.hotkeyMu.Unlock()
+		s.applyHotkeys()
+		return
+	}
+	if !enabled {
+		s.hotkeyMu.Unlock()
+		return
+	}
+	s.hotkeyMu.Unlock()
 	manager, err := hotkeys.Start(s.runHotkey)
 	if err != nil {
 		log.Printf("start hotkeys failed: error=%v", err)
 		return
 	}
 	s.hotkeyMu.Lock()
+	if s.hotkeys != nil {
+		s.hotkeyMu.Unlock()
+		manager.Close()
+		s.applyHotkeys()
+		return
+	}
 	s.hotkeys = manager
 	s.hotkeyMu.Unlock()
 	s.applyHotkeys()
@@ -50,9 +70,24 @@ func StopHotkeys(s *Service) {
 	}
 }
 
+func (s *Service) HotkeysEnabled() bool {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.hotkeysEnabled
+}
+
+func (s *Service) SetHotkeysEnabled(value bool) error {
+	s.settingsMu.Lock()
+	s.hotkeysEnabled = value
+	s.settingsMu.Unlock()
+	StartHotkeys(s)
+	return s.saveSettings()
+}
+
 func (s *Service) Hotkeys() []HotkeyDTO {
 	s.settingsMu.RLock()
 	keys := cloneStringMap(s.hotkeyKeys)
+	enabled := s.hotkeysEnabled
 	s.settingsMu.RUnlock()
 	s.hotkeyMu.Lock()
 	failed := s.hotkeyErrors
@@ -60,9 +95,9 @@ func (s *Service) Hotkeys() []HotkeyDTO {
 	result := make([]HotkeyDTO, 0, len(clientsettings.HotkeyActions))
 	for _, action := range clientsettings.HotkeyActions {
 		status := "active"
-		if err := failed[action]; errors.Is(err, hotkeys.ErrBusy) {
-			status = "busy"
-		} else if err != nil {
+		if !enabled {
+			status = "off"
+		} else if failed[action] != nil {
 			status = "failed"
 		}
 		result = append(result, HotkeyDTO{Action: action, Key: keys[action], Status: status})
@@ -70,8 +105,9 @@ func (s *Service) Hotkeys() []HotkeyDTO {
 	return result
 }
 
-// SetHotkey changes the key pressed with Ctrl+Alt for one action. A shortcut
-// another program owns is still saved; Hotkeys reports it as busy.
+// SetHotkey changes the key pressed with Ctrl+Alt for one action. A key that
+// belongs to another action swaps with it, so the two can exchange places
+// without a spare key in between.
 func (s *Service) SetHotkey(action, key string) error {
 	if !clientsettings.KnownHotkeyAction(action) {
 		return errHotkeyActionUnknown
@@ -81,10 +117,11 @@ func (s *Service) SetHotkey(action, key string) error {
 		return errHotkeyKeyInvalid
 	}
 	s.settingsMu.Lock()
+	current := s.hotkeyKeys[action]
 	for other, otherKey := range s.hotkeyKeys {
 		if other != action && otherKey == normalized {
-			s.settingsMu.Unlock()
-			return errHotkeyKeyTaken
+			s.hotkeyKeys[other] = current
+			break
 		}
 	}
 	s.hotkeyKeys[action] = normalized
@@ -95,58 +132,59 @@ func (s *Service) SetHotkey(action, key string) error {
 
 func (s *Service) applyHotkeys() {
 	s.settingsMu.RLock()
-	bindings := make([]hotkeys.Binding, 0, len(clientsettings.HotkeyActions))
-	for _, action := range clientsettings.HotkeyActions {
-		bindings = append(bindings, hotkeys.Binding{Action: action, Key: s.hotkeyKeys[action]})
+	enabled := s.hotkeysEnabled
+	var bindings []hotkeys.Binding
+	if enabled {
+		bindings = make([]hotkeys.Binding, 0, len(clientsettings.HotkeyActions))
+		for _, action := range clientsettings.HotkeyActions {
+			bindings = append(bindings, hotkeys.Binding{Action: action, Key: s.hotkeyKeys[action]})
+		}
 	}
 	s.settingsMu.RUnlock()
 	s.hotkeyMu.Lock()
-	defer s.hotkeyMu.Unlock()
-	if s.hotkeys == nil {
+	manager := s.hotkeys
+	s.hotkeyMu.Unlock()
+	if manager == nil {
 		return
 	}
-	s.hotkeyErrors = s.hotkeys.Apply(bindings)
-	for action, err := range s.hotkeyErrors {
-		log.Printf("register hotkey failed: action=%s error=%v", action, err)
+	failed := manager.Apply(bindings)
+	s.hotkeyMu.Lock()
+	s.hotkeyErrors = failed
+	s.hotkeyMu.Unlock()
+	for action, err := range failed {
+		log.Printf("arm hotkey failed: action=%s error=%v", action, err)
 	}
 }
 
-// runHotkey does what the matching button in the window does, cue included.
+// runHotkey does what the matching button does, cue included. The new state
+// is read under the button's lock, not from a snapshot taken beforehand.
 func (s *Service) runHotkey(action string) {
-	view := s.client.Snapshot()
 	switch action {
 	case clientsettings.HotkeyMute:
-		if !view.CaptureAvailable {
-			return
-		}
-		s.SetMuted(!view.Muted)
-		if muted, _ := s.client.AudioSwitches(); muted != view.Muted {
+		changed, muted := s.toggleMuted()
+		if changed {
 			s.notifyHotkey(action, cueFor(muted, clientsettings.CueMicOff, clientsettings.CueMicOn))
 		}
 	case clientsettings.HotkeyDeafen:
-		if err := s.SetDeafened(!view.Deafened); err != nil {
+		changed, deafened, err := s.toggleDeafened()
+		if err != nil {
 			log.Printf("hotkey deafen failed: error=%v", err)
 			return
 		}
-		if _, deafened := s.client.AudioSwitches(); deafened != view.Deafened {
+		if changed {
 			s.notifyHotkey(action, cueFor(deafened, clientsettings.CueSpeakerOff, clientsettings.CueSpeakerOn))
 		}
 	case clientsettings.HotkeyAway:
-		if view.ConnectionStatus != voiceclient.ConnectionConnected || view.ChannelID == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		changed, away, err := s.client.ToggleAway(ctx)
+		if err != nil {
+			log.Printf("hotkey away failed: error=%v", err)
 			return
 		}
-		away := false
-		for _, participant := range view.Participants {
-			if participant.SessionID == view.SessionID {
-				away = participant.Away
-				break
-			}
+		if changed {
+			s.notifyHotkey(action, cueFor(away, clientsettings.CueAway, clientsettings.CueReturned))
 		}
-		if err := s.SetAway(!away); err != nil {
-			log.Printf("hotkey away failed: away=%t error=%v", !away, err)
-			return
-		}
-		s.notifyHotkey(action, cueFor(!away, clientsettings.CueAway, clientsettings.CueReturned))
 	}
 }
 
@@ -161,12 +199,14 @@ func cueFor(on bool, whenOn, whenOff string) string {
 // the main window is out of sight. Window buttons and the tray never use it.
 type hotkeyNotifier struct {
 	hidden func() bool
-	send   func(title, body string) error
+	send   func(id, title, body string) error
 }
 
 // ConfigureHotkeyNotifications connects hotkey presses to system notifications.
-// hidden reports whether the main window is minimised or in the tray.
-func ConfigureHotkeyNotifications(s *Service, hidden func() bool, send func(title, body string) error) {
+// hidden reports whether the main window is minimised or in the tray and must
+// not call into the window: shutdown runs on the main thread and waits for
+// the hotkey handler.
+func ConfigureHotkeyNotifications(s *Service, hidden func() bool, send func(id, title, body string) error) {
 	s.hotkeyMu.Lock()
 	s.hotkeyNotifier = &hotkeyNotifier{hidden: hidden, send: send}
 	s.hotkeyMu.Unlock()
@@ -186,6 +226,8 @@ func (s *Service) SetHotkeyNotifications(value bool) error {
 }
 
 // notifyHotkey reports the new state; cue names which state it is.
+// Presses that land while a toast is still being delivered collapse into one
+// toast carrying the latest state.
 func (s *Service) notifyHotkey(action, cue string) {
 	s.settingsMu.RLock()
 	enabled := s.hotkeyNotifications
@@ -202,12 +244,45 @@ func (s *Service) notifyHotkey(action, cue string) {
 	if title == "" {
 		return
 	}
-	// Delivery can fall back to PowerShell and take a while; the next press must not wait.
-	go func() {
-		if err := notifier.send(title, "Ctrl + Alt + "+key); err != nil {
-			log.Printf("hotkey notification failed: action=%s error=%v", action, err)
+	s.toastMu.Lock()
+	s.toastID = "sonoryx-hotkey-" + action
+	s.toastTitle = title
+	s.toastBody = "Ctrl + Alt + " + key
+	if s.toastSending {
+		s.toastPending = true
+		s.toastMu.Unlock()
+		return
+	}
+	s.toastSending = true
+	s.toastMu.Unlock()
+	go s.drainToasts()
+}
+
+func (s *Service) drainToasts() {
+	for {
+		s.toastMu.Lock()
+		id, title, body := s.toastID, s.toastTitle, s.toastBody
+		s.toastPending = false
+		s.toastMu.Unlock()
+		s.hotkeyMu.Lock()
+		notifier := s.hotkeyNotifier
+		s.hotkeyMu.Unlock()
+		if notifier != nil {
+			if err := notifier.send(id, title, body); err != nil {
+				log.Printf("hotkey notification failed: error=%v", err)
+			}
 		}
-	}()
+		// The Windows fallback can take a moment. Wait so a burst becomes one
+		// more toast with the final state, not one toast per press.
+		time.Sleep(500 * time.Millisecond)
+		s.toastMu.Lock()
+		if !s.toastPending {
+			s.toastSending = false
+			s.toastMu.Unlock()
+			return
+		}
+		s.toastMu.Unlock()
+	}
 }
 
 var hotkeyNoticeCues = []string{

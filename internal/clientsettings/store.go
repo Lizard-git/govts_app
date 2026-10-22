@@ -42,6 +42,9 @@ type Settings struct {
 	// HotkeyNotifications shows a system notification when a hotkey acts
 	// while the window is hidden. A missing field means on.
 	HotkeyNotifications bool `json:"hotkeyNotifications"`
+	// HotkeysEnabled arms the shortcuts. A missing field means off, so an
+	// update does not start capturing keys that the user never turned on.
+	HotkeysEnabled bool `json:"hotkeysEnabled"`
 }
 
 type RecentServer struct {

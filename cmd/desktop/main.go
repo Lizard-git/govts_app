@@ -62,7 +62,9 @@ func main() {
 	}
 	var mainWindow *application.WebviewWindow
 	var quitting atomic.Bool
-	notifier := notifications.New()
+	// A failure inside the notification service used to abort app.Run. The
+	// wrapper keeps the client up and simply sends no toasts.
+	toasts := &notificationService{inner: notifications.New()}
 	app := application.New(application.Options{
 		Name:        "Sonoryx",
 		Description: "Голосовой клиент Sonoryx",
@@ -78,7 +80,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(service),
 			application.NewService(updates),
-			application.NewService(notifier),
+			application.NewService(toasts),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -137,18 +139,22 @@ func main() {
 		if service.CloseToTray() {
 			event.Cancel()
 			mainWindow.Hide()
+			mainWindowHidden.Store(true)
 			return
 		}
 		quitting.Store(true)
 		app.Quit()
 	})
 	installTray(app, mainWindow, client, service, &quitting)
-	window := mainWindow
+	trackMainWindowVisibility(mainWindow)
 	wailsui.ConfigureHotkeyNotifications(service,
-		func() bool { return !window.IsVisible() || window.IsMinimised() },
-		func(title, body string) error {
-			return notifier.SendNotification(notifications.NotificationOptions{
-				ID:    fmt.Sprintf("hotkey-%d", time.Now().UnixNano()),
+		func() bool { return mainWindowHidden.Load() },
+		func(id, title, body string) error {
+			if !toasts.ready.Load() {
+				return nil
+			}
+			return toasts.inner.SendNotification(notifications.NotificationOptions{
+				ID:    id,
 				Title: title,
 				Body:  body,
 				// The hotkey already plays its own cue.
@@ -165,10 +171,49 @@ func main() {
 	shutdown()
 }
 
+// mainWindowHidden mirrors the main window without asking it. The hotkey
+// handler reads it while shutdown, which runs on the main thread, may be
+// waiting for that handler; a window call would wait for the main thread too.
+var mainWindowHidden atomic.Bool
+
+func trackMainWindowVisibility(window *application.WebviewWindow) {
+	hide := func(*application.WindowEvent) { mainWindowHidden.Store(true) }
+	show := func(*application.WindowEvent) { mainWindowHidden.Store(false) }
+	window.RegisterHook(events.Common.WindowHide, hide)
+	window.RegisterHook(events.Common.WindowMinimise, hide)
+	window.RegisterHook(events.Common.WindowShow, show)
+	window.RegisterHook(events.Common.WindowRestore, show)
+	window.RegisterHook(events.Common.WindowUnMinimise, show)
+}
+
 func showMainWindow(window *application.WebviewWindow) {
 	window.UnMinimise()
 	window.Show()
 	window.Focus()
+	mainWindowHidden.Store(false)
+}
+
+// notificationService starts the Windows toast service without letting a
+// registry or COM failure stop the client.
+type notificationService struct {
+	inner *notifications.NotificationService
+	ready atomic.Bool
+}
+
+func (n *notificationService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	if err := n.inner.ServiceStartup(ctx, options); err != nil {
+		log.Printf("system notifications unavailable: %v", err)
+		return nil
+	}
+	n.ready.Store(true)
+	return nil
+}
+
+func (n *notificationService) ServiceShutdown() error {
+	if !n.ready.Load() {
+		return nil
+	}
+	return n.inner.ServiceShutdown()
 }
 
 func installTray(app *application.App, window *application.WebviewWindow, client *clientapp.App, service *wailsui.Service, quitting *atomic.Bool) {

@@ -32,6 +32,7 @@ func (s *Service) enableSettings(path string) error {
 	s.recentServers = settings.RecentServers
 	s.hotkeyKeys = clientsettings.NormalizeHotkeys(settings.Hotkeys)
 	s.hotkeyNotifications = settings.HotkeyNotifications
+	s.hotkeysEnabled = settings.HotkeysEnabled
 	s.trustedMediaKeys = settings.TrustedMediaKeys
 	if s.trustedMediaKeys == nil {
 		s.trustedMediaKeys = make(map[string]string)
@@ -100,6 +101,7 @@ func (s *Service) saveSettings() (saveErr error) {
 	recentServers := append([]clientsettings.RecentServer(nil), s.recentServers...)
 	hotkeyKeys := cloneStringMap(s.hotkeyKeys)
 	hotkeyNotifications := s.hotkeyNotifications
+	hotkeysEnabled := s.hotkeysEnabled
 	s.settingsMu.RUnlock()
 	return s.settings.Save(clientsettings.Settings{
 		DisplayName:         displayName,
@@ -124,6 +126,7 @@ func (s *Service) saveSettings() (saveErr error) {
 		RecentServers:       recentServers,
 		Hotkeys:             hotkeyKeys,
 		HotkeyNotifications: hotkeyNotifications,
+		HotkeysEnabled:      hotkeysEnabled,
 	})
 }
 
