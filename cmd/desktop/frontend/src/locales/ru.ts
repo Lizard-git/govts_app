@@ -276,7 +276,6 @@ export const ru = {
         hotkeyChange: "Нажмите на клавишу справа, чтобы сменить её.",
         hotkeyPress: "Нажмите букву или цифру. Esc — отмена.",
         hotkeyEdit: (action: string) => `Сменить клавишу: ${action}`,
-        hotkeyInvalid: "Подходит только латинская буква или цифра верхнего ряда.",
         hotkeyTaken: (action: string) => `Эта клавиша уже назначена: ${action}.`,
         hotkeyBusy: "Сочетание занято другой программой. Выберите другую клавишу.",
         hotkeyFailed: "Не удалось зарегистрировать сочетание.",
@@ -514,8 +513,21 @@ export const ru = {
         deleteChannelConfirm: (name: string, members: number) => `Удалить канал «${name}»? ${members > 0 ? `Участники (${members}) будут перенесены в канал по умолчанию. ` : ""}История чата канала будет удалена.`,
         cancel: "Отмена",
     },
+    // Windows notification titles for hotkeys pressed while the window is hidden.
+    // The keys are button cue ids; the desktop shell receives this table as is.
+    hotkeyNotices: {
+        "mic-off": "Микрофон выключен",
+        "mic-on": "Микрофон включён",
+        "speaker-off": "Динамик выключен",
+        "speaker-on": "Динамик включён",
+        "away": "Вы отошли",
+        "returned": "Вы на месте",
+    },
     errors: {
         "name-required": "Введите отображаемое имя",
+        "hotkey-action-unknown": "Неизвестное действие горячей клавиши.",
+        "hotkey-key-invalid": "Подходит только латинская буква или цифра верхнего ряда.",
+        "hotkey-key-taken": "Эта клавиша уже назначена другому действию.",
         "permission denied": "Недостаточно прав для этого действия",
         "too many admin requests; retry later": "Слишком много запросов администрирования; повторите позже",
         "theme-limit": "Можно сохранить не больше 24 тем.",

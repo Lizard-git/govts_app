@@ -3,10 +3,19 @@ package wailsui
 import (
 	"errors"
 	"log"
+	"strings"
+	"unicode/utf8"
 
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientsettings"
 	"uniclog.io/sonoryx/internal/hotkeys"
+)
+
+// Error codes; the interface translates them through its errors catalog.
+var (
+	errHotkeyActionUnknown = errors.New("hotkey-action-unknown")
+	errHotkeyKeyInvalid    = errors.New("hotkey-key-invalid")
+	errHotkeyKeyTaken      = errors.New("hotkey-key-taken")
 )
 
 // HotkeyDTO is one Ctrl+Alt shortcut. Status is "active", "busy" when another
@@ -65,17 +74,17 @@ func (s *Service) Hotkeys() []HotkeyDTO {
 // another program owns is still saved; Hotkeys reports it as busy.
 func (s *Service) SetHotkey(action, key string) error {
 	if !clientsettings.KnownHotkeyAction(action) {
-		return &validationError{Field: "action", Message: "неизвестное действие"}
+		return errHotkeyActionUnknown
 	}
 	normalized, ok := clientsettings.NormalizeHotkeyKey(key)
 	if !ok {
-		return &validationError{Field: "key", Message: "нужна латинская буква или цифра"}
+		return errHotkeyKeyInvalid
 	}
 	s.settingsMu.Lock()
 	for other, otherKey := range s.hotkeyKeys {
 		if other != action && otherKey == normalized {
 			s.settingsMu.Unlock()
-			return &validationError{Field: "key", Message: "клавиша уже назначена другому действию"}
+			return errHotkeyKeyTaken
 		}
 	}
 	s.hotkeyKeys[action] = normalized
@@ -180,16 +189,19 @@ func (s *Service) SetHotkeyNotifications(value bool) error {
 func (s *Service) notifyHotkey(action, cue string) {
 	s.settingsMu.RLock()
 	enabled := s.hotkeyNotifications
-	locale := s.locale
 	key := s.hotkeyKeys[action]
 	s.settingsMu.RUnlock()
 	s.hotkeyMu.Lock()
 	notifier := s.hotkeyNotifier
+	notices := s.hotkeyNotices
 	s.hotkeyMu.Unlock()
 	if !enabled || notifier == nil || !notifier.hidden() {
 		return
 	}
-	title := hotkeyNoticeTitle(locale, cue)
+	title := notices[cue]
+	if title == "" {
+		return
+	}
 	// Delivery can fall back to PowerShell and take a while; the next press must not wait.
 	go func() {
 		if err := notifier.send(title, "Ctrl + Alt + "+key); err != nil {
@@ -198,37 +210,36 @@ func (s *Service) notifyHotkey(action, cue string) {
 	}()
 }
 
-var hotkeyNoticeTitles = map[string]map[string]string{
-	"ru": {
-		clientsettings.CueMicOff:     "Микрофон выключен",
-		clientsettings.CueMicOn:      "Микрофон включён",
-		clientsettings.CueSpeakerOff: "Динамик выключен",
-		clientsettings.CueSpeakerOn:  "Динамик включён",
-		clientsettings.CueAway:       "Вы отошли",
-		clientsettings.CueReturned:   "Вы на месте",
-	},
-	"en": {
-		clientsettings.CueMicOff:     "Microphone off",
-		clientsettings.CueMicOn:      "Microphone on",
-		clientsettings.CueSpeakerOff: "Speaker off",
-		clientsettings.CueSpeakerOn:  "Speaker on",
-		clientsettings.CueAway:       "You are away",
-		clientsettings.CueReturned:   "You are back",
-	},
-	"ky": {
-		clientsettings.CueMicOff:     "Микрофон өчүрүлдү",
-		clientsettings.CueMicOn:      "Микрофон күйгүзүлдү",
-		clientsettings.CueSpeakerOff: "Динамик өчүрүлдү",
-		clientsettings.CueSpeakerOn:  "Динамик күйгүзүлдү",
-		clientsettings.CueAway:       "Сиз кеттиңиз",
-		clientsettings.CueReturned:   "Сиз ордуңуздасыз",
-	},
+var hotkeyNoticeCues = []string{
+	clientsettings.CueMicOff,
+	clientsettings.CueMicOn,
+	clientsettings.CueSpeakerOff,
+	clientsettings.CueSpeakerOn,
+	clientsettings.CueAway,
+	clientsettings.CueReturned,
 }
 
-// hotkeyNoticeTitle falls back to Russian, the default interface language.
-func hotkeyNoticeTitle(locale, cue string) string {
-	if title, ok := hotkeyNoticeTitles[locale][cue]; ok {
-		return title
+const maxHotkeyNoticeLength = 128
+
+// SetHotkeyNotices receives notification titles, keyed by cue id, from the
+// interface's current language catalog. Go keeps no texts of its own: a
+// hidden window still gets a notification in the chosen language, and a new
+// language needs no change here.
+func (s *Service) SetHotkeyNotices(texts map[string]string) {
+	notices := make(map[string]string, len(hotkeyNoticeCues))
+	for _, cue := range hotkeyNoticeCues {
+		text := strings.TrimSpace(texts[cue])
+		if len(text) > maxHotkeyNoticeLength {
+			text = text[:maxHotkeyNoticeLength]
+			for !utf8.ValidString(text) {
+				text = text[:len(text)-1]
+			}
+		}
+		if text != "" {
+			notices[cue] = text
+		}
 	}
-	return hotkeyNoticeTitles["ru"][cue]
+	s.hotkeyMu.Lock()
+	s.hotkeyNotices = notices
+	s.hotkeyMu.Unlock()
 }

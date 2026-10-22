@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useState} from "react";
 import type {KeyboardEvent} from "react";
 import {desktopAPI, type Hotkey, type HotkeyAction} from "../../api";
-import {errorText} from "../../locales";
+import {errorCode, errorText} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 
 // event.code names the physical key, so the layout and Caps Lock do not matter.
@@ -54,7 +54,7 @@ export function HotkeySettings() {
         if (modifierCodes.test(event.code)) return;
         const key = physicalKey(event.code);
         if (!key) {
-            setMessage({action, text: m.settings.hotkeyInvalid});
+            setMessage({action, text: errorText(errorCode("hotkey-key-invalid"), m)});
             return;
         }
         const owner = hotkeys.find((hotkey) => hotkey.action !== action && hotkey.key === key);
