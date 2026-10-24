@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"maps"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -341,6 +342,21 @@ func ConfigureHotkeyNotifications(s *Service, hidden func() bool, send func(titl
 	s.hotkeyMu.Lock()
 	s.hotkeyNotifier = &hotkeyNotifier{hidden: hidden, send: send}
 	s.hotkeyMu.Unlock()
+}
+
+// SetPopupLook receives the #rrggbb card colours of the current interface
+// theme. Go only keeps them for the next popup; apppopup.ParseLook validates.
+func (s *Service) SetPopupLook(colors map[string]string) {
+	s.hotkeyMu.Lock()
+	s.popupLook = maps.Clone(colors)
+	s.hotkeyMu.Unlock()
+}
+
+// PopupLook is a copy of the last palette pushed by the interface.
+func (s *Service) PopupLook() map[string]string {
+	s.hotkeyMu.Lock()
+	defer s.hotkeyMu.Unlock()
+	return maps.Clone(s.popupLook)
 }
 
 func (s *Service) HotkeyNotifications() bool {

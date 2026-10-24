@@ -61,6 +61,7 @@ export const desktopAPI = {
     hotkeyNotifications: (): Promise<boolean> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.HotkeyNotifications"),
     setHotkeyNotifications: (value: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeyNotifications", value),
     setHotkeyNotices: (texts: Record<string, string>): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeyNotices", texts),
+    setPopupLook: (colors: Record<string, string>): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetPopupLook", colors),
     recentServers: (): Promise<RecentServer[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.RecentServers"),
     refreshServerStatuses: (): Promise<void> => Service.RefreshServerStatuses(),
     onServerStatusChanged: (listener: () => void) => Events.On("server-status-changed", listener),

@@ -61,7 +61,7 @@ type Service struct {
 	hotkeyErrors      map[string]error
 	// Hotkey preferences and capture state are guarded by settingsMu.
 	hotkeysStopped bool
-	// hotkeyNotifier and hotkeyNotices are guarded by hotkeyMu.
+	// hotkeyNotifier, hotkeyNotices and popupLook are guarded by hotkeyMu.
 	hotkeyNotifications   bool
 	hotkeysEnabled        bool
 	hotkeyCapture         uint32
@@ -71,6 +71,7 @@ type Service struct {
 	hotkeyWindowInactive  bool
 	hotkeyNotifier        *hotkeyNotifier
 	hotkeyNotices         map[string]string
+	popupLook             map[string]string
 }
 
 func NewService(client *clientapp.App) *Service {

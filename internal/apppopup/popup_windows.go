@@ -3,7 +3,11 @@
 package apppopup
 
 import (
+	"bytes"
 	"errors"
+	"image"
+	"image/draw"
+	"image/png"
 	"log"
 	"runtime"
 	"sync"
@@ -19,6 +23,8 @@ const (
 	wmPopupUpdate   = w32.WM_APP + 1
 	popupTimerID    = 1
 	defaultLifetime = 2800 * time.Millisecond
+	// BLENDFUNCTION{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA} passed by value.
+	blendSourceAlpha = 0x01ff0000
 )
 
 var (
@@ -27,10 +33,7 @@ var (
 	popupWindows   sync.Map // HWND -> *window; no Go pointers in Win32 userdata.
 	popupClassOnce sync.Once
 	popupClassErr  error
-	popupGDI       = windows.NewLazySystemDLL("gdi32.dll")
-	popupUser32    = windows.NewLazySystemDLL("user32.dll")
-	createRoundRgn = popupGDI.NewProc("CreateRoundRectRgn")
-	setWindowRgn   = popupUser32.NewProc("SetWindowRgn")
+	alphaBlend     = windows.NewLazySystemDLL("msimg32.dll").NewProc("AlphaBlend")
 )
 
 type popupText struct{ title, body string }
@@ -41,6 +44,7 @@ type window struct {
 	closed  bool
 	pending bool
 	latest  popupText
+	look    Look
 	hwnd    w32.HWND
 	done    chan struct{}
 
@@ -48,10 +52,13 @@ type window struct {
 	current  popupText
 	dpi      int
 	deadline time.Time
+	source   *image.RGBA // decoded application mark, premultiplied
+	icon     w32.HBITMAP // source scaled to iconSize
+	iconSize int
 }
 
-func newBackend() (backend, error) {
-	p := &window{done: make(chan struct{}), dpi: 96}
+func newBackend(icon []byte) (backend, error) {
+	p := &window{done: make(chan struct{}), dpi: 96, look: ParseLook(nil), source: decodeIcon(icon)}
 	ready := make(chan error, 1)
 	go p.run(ready)
 	if err := <-ready; err != nil {
@@ -83,7 +90,7 @@ func (p *window) run(ready chan<- error) {
 	p.hwnd = w32.CreateWindowEx(
 		w32.WS_EX_NOACTIVATE|w32.WS_EX_TOOLWINDOW|w32.WS_EX_TOPMOST,
 		popupClassName, windows.StringToUTF16Ptr("Sonoryx"), w32.WS_POPUP,
-		0, 0, 360, 128, 0, 0, instance, nil,
+		0, 0, 320, 80, 0, 0, instance, nil,
 	)
 	if p.hwnd == 0 {
 		ready <- errors.New("create app popup window failed")
@@ -92,6 +99,7 @@ func (p *window) run(ready chan<- error) {
 	popupWindows.Store(p.hwnd, p)
 	defer popupWindows.Delete(p.hwnd)
 	defer w32.DestroyWindow(p.hwnd)
+	defer p.releaseIcon()
 	ready <- nil
 	var msg w32.MSG
 	for {
@@ -127,6 +135,12 @@ func (p *window) show(title, body string) error {
 		p.pending = true
 	}
 	return nil
+}
+
+func (p *window) setLook(look Look) {
+	p.mu.Lock()
+	p.look = look
+	p.mu.Unlock()
 }
 
 func (p *window) close() {
@@ -197,19 +211,13 @@ func (p *window) display() {
 	if p.dpi == 0 {
 		p.dpi = 96
 	}
-	width := min(p.px(360), int(info.RcWork.Right-info.RcWork.Left))
-	height := min(p.px(128), int(info.RcWork.Bottom-info.RcWork.Top))
+	width := min(p.px(320), int(info.RcWork.Right-info.RcWork.Left))
+	height := min(p.px(80), int(info.RcWork.Bottom-info.RcWork.Top))
 	margin := p.px(20)
 	x := max(int(info.RcWork.Left), int(info.RcWork.Right)-width-margin)
 	y := max(int(info.RcWork.Top), int(info.RcWork.Bottom)-height-margin)
 	w32.SetWindowPos(p.hwnd, w32.HWND_TOPMOST, x, y, width, height, w32.SWP_NOACTIVATE)
-	rgn, _, _ := createRoundRgn.Call(0, 0, uintptr(width+1), uintptr(height+1), uintptr(p.px(18)), uintptr(p.px(18)))
-	if rgn != 0 {
-		// On success the window owns the region; on failure we still own it.
-		if result, _, _ := setWindowRgn.Call(uintptr(p.hwnd), rgn, 1); result == 0 {
-			w32.DeleteObject(w32.HGDIOBJ(rgn))
-		}
-	}
+	p.prepareIcon(p.px(48))
 	p.deadline = time.Now().Add(defaultLifetime)
 	if w32.SetTimer(p.hwnd, popupTimerID, uint32(defaultLifetime/time.Millisecond), 0) == 0 {
 		// Never leave an undismissed popup if the timer could not be created.
@@ -234,26 +242,36 @@ func (p *window) paint() {
 	if dc == 0 {
 		return
 	}
+	p.mu.Lock()
+	look := p.look
+	p.mu.Unlock()
 	rect := w32.GetClientRect(p.hwnd)
-	border := w32.CreateSolidBrush(w32.COLORREF(w32.RGB(59, 75, 102)))
-	background := w32.CreateSolidBrush(w32.COLORREF(w32.RGB(28, 37, 57)))
-	accent := w32.CreateSolidBrush(w32.COLORREF(w32.RGB(126, 199, 186)))
+	border := w32.CreateSolidBrush(colorRef(look.Line))
+	background := w32.CreateSolidBrush(colorRef(look.Card))
 	defer w32.DeleteObject(w32.HGDIOBJ(border))
 	defer w32.DeleteObject(w32.HGDIOBJ(background))
-	defer w32.DeleteObject(w32.HGDIOBJ(accent))
 	w32.FillRect(dc, rect, border)
 	inner := w32.RECT{Left: 1, Top: 1, Right: rect.Right - 1, Bottom: rect.Bottom - 1}
 	w32.FillRect(dc, &inner, background)
-	bar := w32.RECT{Left: int32(p.px(15)), Top: int32(p.px(18)), Right: int32(p.px(18)), Bottom: rect.Bottom - int32(p.px(18))}
-	w32.FillRect(dc, &bar, accent)
 	w32.SetBkMode(dc, w32.TRANSPARENT)
-	left, right := int32(p.px(30)), rect.Right-int32(p.px(22))
-	p.drawText(dc, "SONORYX", 11, w32.FW_SEMIBOLD, w32.RGB(126, 199, 186),
-		w32.RECT{Left: left, Top: int32(p.px(15)), Right: right, Bottom: int32(p.px(31))}, w32.DT_SINGLELINE)
-	p.drawText(dc, p.current.title, 16, w32.FW_SEMIBOLD, w32.RGB(239, 244, 250),
-		w32.RECT{Left: left, Top: int32(p.px(38)), Right: right, Bottom: int32(p.px(83))}, w32.DT_WORDBREAK)
-	p.drawText(dc, p.current.body, 12, w32.FW_NORMAL, w32.RGB(166, 183, 205),
-		w32.RECT{Left: left, Top: int32(p.px(98)), Right: right, Bottom: int32(p.px(116))}, w32.DT_SINGLELINE)
+
+	pad := int32(p.px(14))
+	icon := int32(p.px(48))
+	p.drawIcon(dc, pad, (rect.Bottom-icon)/2)
+
+	// Decorative: a click anywhere on the card dismisses it.
+	closeSize, closeInset := int32(p.px(20)), int32(p.px(8))
+	closeMark := w32.RECT{
+		Left: rect.Right - closeInset - closeSize, Top: closeInset,
+		Right: rect.Right - closeInset, Bottom: closeInset + closeSize,
+	}
+	p.drawText(dc, "×", 13, w32.FW_NORMAL, look.Muted, closeMark, w32.DT_CENTER|w32.DT_VCENTER|w32.DT_SINGLELINE)
+
+	left, right := pad+icon+int32(p.px(12)), closeMark.Left-int32(p.px(8))
+	p.drawText(dc, p.current.title, 16, w32.FW_SEMIBOLD, look.Text,
+		w32.RECT{Left: left, Top: int32(p.px(16)), Right: right, Bottom: int32(p.px(40))}, w32.DT_SINGLELINE)
+	p.drawText(dc, p.current.body, 12, w32.FW_NORMAL, look.Muted,
+		w32.RECT{Left: left, Top: int32(p.px(42)), Right: right, Bottom: int32(p.px(60))}, w32.DT_SINGLELINE)
 }
 
 func (p *window) drawText(dc w32.HDC, text string, size, weight int, colour uint32, rect w32.RECT, flags uint32) {
@@ -265,10 +283,98 @@ func (p *window) drawText(dc w32.HDC, text string, size, weight int, colour uint
 		defer w32.DeleteObject(w32.HGDIOBJ(font))
 		defer w32.SelectObject(dc, previous)
 	}
-	w32.SetTextColor(dc, w32.COLORREF(colour))
+	w32.SetTextColor(dc, colorRef(colour))
 	// Text goes directly to GDI, without an HTML template or script interpreter.
 	encoded := utf16.Encode([]rune(text))
 	if len(encoded) != 0 {
 		w32.DrawText(dc, encoded, len(encoded), &rect, flags|w32.DT_NOPREFIX|w32.DT_END_ELLIPSIS)
 	}
+}
+
+// colorRef converts 0xRRGGBB to a GDI COLORREF (0x00BBGGRR).
+func colorRef(rgb uint32) w32.COLORREF {
+	return w32.COLORREF(w32.RGB(byte(rgb>>16), byte(rgb>>8), byte(rgb)))
+}
+
+// drawIcon blends the prepared icon with its alpha channel, so the transparent
+// corners of the mark show the card colour.
+func (p *window) drawIcon(dc w32.HDC, x, y int32) {
+	if p.icon == 0 {
+		return
+	}
+	mem := w32.CreateCompatibleDC(dc)
+	if mem == 0 {
+		return
+	}
+	previous := w32.SelectObject(mem, w32.HGDIOBJ(p.icon))
+	size := uintptr(p.iconSize)
+	alphaBlend.Call(uintptr(dc), uintptr(x), uintptr(y), size, size, uintptr(mem), 0, 0, size, size, blendSourceAlpha)
+	w32.SelectObject(mem, previous)
+	w32.DeleteDC(mem)
+}
+
+// prepareIcon scales the mark once per DPI instead of stretching it on every paint.
+func (p *window) prepareIcon(size int) {
+	if p.source == nil || size <= 0 || size == p.iconSize {
+		return
+	}
+	p.releaseIcon()
+	bitmap, err := w32.CreateHBITMAPFromImage(scaleIcon(p.source, size))
+	if err != nil || bitmap == 0 {
+		log.Printf("app popup icon bitmap failed")
+		return
+	}
+	p.icon, p.iconSize = bitmap, size
+}
+
+func (p *window) releaseIcon() {
+	if p.icon != 0 {
+		w32.DeleteObject(w32.HGDIOBJ(p.icon))
+		p.icon, p.iconSize = 0, 0
+	}
+}
+
+func decodeIcon(data []byte) *image.RGBA {
+	if len(data) == 0 {
+		return nil
+	}
+	decoded, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		log.Printf("app popup icon: %v", err)
+		return nil
+	}
+	bounds := decoded.Bounds()
+	rgba := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	draw.Draw(rgba, rgba.Bounds(), decoded, bounds.Min, draw.Src)
+	return rgba
+}
+
+// scaleIcon averages premultiplied source pixels into a size×size image.
+func scaleIcon(src *image.RGBA, size int) *image.RGBA {
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < size; y++ {
+		y0 := y * h / size
+		y1 := max((y+1)*h/size, y0+1)
+		for x := 0; x < size; x++ {
+			x0 := x * w / size
+			x1 := max((x+1)*w/size, x0+1)
+			var sum [4]int
+			for sy := y0; sy < y1; sy++ {
+				row := src.Pix[src.PixOffset(x0, sy):src.PixOffset(x1, sy)]
+				for i := 0; i < len(row); i += 4 {
+					sum[0] += int(row[i])
+					sum[1] += int(row[i+1])
+					sum[2] += int(row[i+2])
+					sum[3] += int(row[i+3])
+				}
+			}
+			n := (y1 - y0) * (x1 - x0)
+			o := dst.PixOffset(x, y)
+			for c := range sum {
+				dst.Pix[o+c] = uint8(sum[c] / n)
+			}
+		}
+	}
+	return dst
 }

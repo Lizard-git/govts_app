@@ -101,7 +101,7 @@ func main() {
 		if popupStopped || popup.Load() != nil {
 			return
 		}
-		window, err := apppopup.New()
+		window, err := apppopup.New(applicationIcon)
 		if err != nil {
 			log.Printf("app popup unavailable: %v", err)
 			return
@@ -174,6 +174,7 @@ func main() {
 			if window == nil {
 				return nil
 			}
+			window.SetLook(apppopup.ParseLook(service.PopupLook()))
 			return window.Show(title, body)
 		})
 

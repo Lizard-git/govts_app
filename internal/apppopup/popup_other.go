@@ -4,7 +4,8 @@ package apppopup
 
 type noopBackend struct{}
 
-func newBackend() (backend, error) { return noopBackend{}, nil }
+func newBackend(icon []byte) (backend, error) { return noopBackend{}, nil }
 
 func (noopBackend) show(title, body string) error { return nil }
+func (noopBackend) setLook(Look)                  {}
 func (noopBackend) close()                        {}
