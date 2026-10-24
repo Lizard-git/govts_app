@@ -59,17 +59,10 @@ type Service struct {
 	hotkeyErrors  map[string]error
 	// hotkeyNotifications and hotkeysEnabled are guarded by settingsMu.
 	// hotkeyNotifier and hotkeyNotices are guarded by hotkeyMu.
-	// The toast fields are guarded by toastMu.
 	hotkeyNotifications bool
 	hotkeysEnabled      bool
 	hotkeyNotifier      *hotkeyNotifier
 	hotkeyNotices       map[string]string
-	toastMu             sync.Mutex
-	toastSending        bool
-	toastPending        bool
-	toastID             string
-	toastTitle          string
-	toastBody           string
 }
 
 func NewService(client *clientapp.App) *Service {

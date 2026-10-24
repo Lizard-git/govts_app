@@ -13,8 +13,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 	"github.com/wailsapp/wails/v3/pkg/updater"
+	"uniclog.io/sonoryx/internal/apppopup"
 	"uniclog.io/sonoryx/internal/audio"
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientapp"
@@ -62,9 +62,9 @@ func main() {
 	}
 	var mainWindow *application.WebviewWindow
 	var quitting atomic.Bool
-	// A failure inside the notification service used to abort app.Run. The
-	// wrapper keeps the client up and simply sends no toasts.
-	toasts := &notificationService{inner: notifications.New()}
+	var popup atomic.Pointer[apppopup.Popup]
+	var popupLifecycle sync.Mutex
+	popupStopped := false // guarded by popupLifecycle
 	app := application.New(application.Options{
 		Name:        "Sonoryx",
 		Description: "Голосовой клиент Sonoryx",
@@ -80,7 +80,6 @@ func main() {
 		Services: []application.Service{
 			application.NewService(service),
 			application.NewService(updates),
-			application.NewService(toasts),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -95,6 +94,20 @@ func main() {
 			AdditionalBrowserArgs: []string{"--autoplay-policy=no-user-gesture-required"},
 		},
 	})
+	// Wait until Wails has configured process DPI awareness before creating HWNDs.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		popupLifecycle.Lock()
+		defer popupLifecycle.Unlock()
+		if popupStopped || popup.Load() != nil {
+			return
+		}
+		window, err := apppopup.New()
+		if err != nil {
+			log.Printf("app popup unavailable: %v", err)
+			return
+		}
+		popup.Store(window)
+	})
 	clientupdate.RecordRecoveryStartup(applicationVersion())
 	if err := clientupdate.Initialize(updates, app, applicationVersion(), rawUpdatePublicKey); err != nil {
 		log.Printf("initialize updater: %v", err)
@@ -108,6 +121,13 @@ func main() {
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			wailsui.StopHotkeys(service)
+			popupLifecycle.Lock()
+			popupStopped = true
+			popupWindow := popup.Swap(nil)
+			popupLifecycle.Unlock()
+			if popupWindow != nil {
+				popupWindow.Close()
+			}
 			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
@@ -149,17 +169,12 @@ func main() {
 	trackMainWindowVisibility(mainWindow)
 	wailsui.ConfigureHotkeyNotifications(service,
 		func() bool { return mainWindowHidden.Load() },
-		func(id, title, body string) error {
-			if !toasts.ready.Load() {
+		func(title, body string) error {
+			window := popup.Load()
+			if window == nil {
 				return nil
 			}
-			return toasts.inner.SendNotification(notifications.NotificationOptions{
-				ID:    id,
-				Title: title,
-				Body:  body,
-				// The hotkey already plays its own cue.
-				Sound: &notifications.NotificationSound{Silent: true},
-			})
+			return window.Show(title, body)
 		})
 
 	if err := app.Run(); err != nil {
@@ -191,29 +206,6 @@ func showMainWindow(window *application.WebviewWindow) {
 	window.Show()
 	window.Focus()
 	mainWindowHidden.Store(false)
-}
-
-// notificationService starts the Windows toast service without letting a
-// registry or COM failure stop the client.
-type notificationService struct {
-	inner *notifications.NotificationService
-	ready atomic.Bool
-}
-
-func (n *notificationService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	if err := n.inner.ServiceStartup(ctx, options); err != nil {
-		log.Printf("system notifications unavailable: %v", err)
-		return nil
-	}
-	n.ready.Store(true)
-	return nil
-}
-
-func (n *notificationService) ServiceShutdown() error {
-	if !n.ready.Load() {
-		return nil
-	}
-	return n.inner.ServiceShutdown()
 }
 
 func installTray(app *application.App, window *application.WebviewWindow, client *clientapp.App, service *wailsui.Service, quitting *atomic.Bool) {

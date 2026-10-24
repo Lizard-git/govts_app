@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"uniclog.io/sonoryx/internal/clientsettings"
@@ -195,18 +194,19 @@ func cueFor(on bool, whenOn, whenOff string) string {
 	return whenOff
 }
 
-// hotkeyNotifier shows a system notification for a hotkey press made while
+// hotkeyNotifier shows an application popup for a hotkey press made while
 // the main window is out of sight. Window buttons and the tray never use it.
 type hotkeyNotifier struct {
 	hidden func() bool
-	send   func(id, title, body string) error
+	send   func(title, body string) error
 }
 
-// ConfigureHotkeyNotifications connects hotkey presses to system notifications.
+// ConfigureHotkeyNotifications connects hotkey presses to application popups.
 // hidden reports whether the main window is minimised or in the tray and must
 // not call into the window: shutdown runs on the main thread and waits for
 // the hotkey handler.
-func ConfigureHotkeyNotifications(s *Service, hidden func() bool, send func(id, title, body string) error) {
+// send must enqueue the popup without waiting for a UI thread, for the same reason.
+func ConfigureHotkeyNotifications(s *Service, hidden func() bool, send func(title, body string) error) {
 	s.hotkeyMu.Lock()
 	s.hotkeyNotifier = &hotkeyNotifier{hidden: hidden, send: send}
 	s.hotkeyMu.Unlock()
@@ -226,8 +226,7 @@ func (s *Service) SetHotkeyNotifications(value bool) error {
 }
 
 // notifyHotkey reports the new state; cue names which state it is.
-// Presses that land while a toast is still being delivered collapse into one
-// toast carrying the latest state.
+// The popup owns coalescing: a new press replaces its text and restarts its timer.
 func (s *Service) notifyHotkey(action, cue string) {
 	s.settingsMu.RLock()
 	enabled := s.hotkeyNotifications
@@ -244,44 +243,8 @@ func (s *Service) notifyHotkey(action, cue string) {
 	if title == "" {
 		return
 	}
-	s.toastMu.Lock()
-	s.toastID = "sonoryx-hotkey-" + action
-	s.toastTitle = title
-	s.toastBody = "Ctrl + Alt + " + key
-	if s.toastSending {
-		s.toastPending = true
-		s.toastMu.Unlock()
-		return
-	}
-	s.toastSending = true
-	s.toastMu.Unlock()
-	go s.drainToasts()
-}
-
-func (s *Service) drainToasts() {
-	for {
-		s.toastMu.Lock()
-		id, title, body := s.toastID, s.toastTitle, s.toastBody
-		s.toastPending = false
-		s.toastMu.Unlock()
-		s.hotkeyMu.Lock()
-		notifier := s.hotkeyNotifier
-		s.hotkeyMu.Unlock()
-		if notifier != nil {
-			if err := notifier.send(id, title, body); err != nil {
-				log.Printf("hotkey notification failed: error=%v", err)
-			}
-		}
-		// The Windows fallback can take a moment. Wait so a burst becomes one
-		// more toast with the final state, not one toast per press.
-		time.Sleep(500 * time.Millisecond)
-		s.toastMu.Lock()
-		if !s.toastPending {
-			s.toastSending = false
-			s.toastMu.Unlock()
-			return
-		}
-		s.toastMu.Unlock()
+	if err := notifier.send(title, "Ctrl + Alt + "+key); err != nil {
+		log.Printf("hotkey popup failed: error=%v", err)
 	}
 }
 

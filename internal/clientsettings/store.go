@@ -39,7 +39,7 @@ type Settings struct {
 	// Hotkeys maps an action to the key pressed together with Ctrl+Alt.
 	// A missing or invalid entry falls back to the action's default key.
 	Hotkeys map[string]string `json:"hotkeys,omitempty"`
-	// HotkeyNotifications shows a system notification when a hotkey acts
+	// HotkeyNotifications shows an application popup when a hotkey acts
 	// while the window is hidden. A missing field means on.
 	HotkeyNotifications bool `json:"hotkeyNotifications"`
 	// HotkeysEnabled arms the shortcuts. A missing field means off, so an

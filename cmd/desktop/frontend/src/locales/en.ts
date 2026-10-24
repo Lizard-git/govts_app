@@ -279,8 +279,8 @@ export const en = {
         hotkeyPress: "Press a letter or a digit. Esc cancels.",
         hotkeyEdit: (action: string) => `Change key: ${action}`,
         hotkeyFailed: "The shortcut could not be registered.",
-        hotkeyNotifications: "System notifications",
-        hotkeyNotificationsHint: "Show a Windows notification when a hotkey acts while the window is minimized or in the tray. Buttons in the window and the tray never show one.",
+        hotkeyNotifications: "App notifications",
+        hotkeyNotificationsHint: "Show a silent Sonoryx popup for 2.8 seconds when a hotkey acts while the window is minimized or in the tray. It does not take focus. Buttons in the window and the tray never show one.",
         soundCues: "Button cues",
         soundCuesHint: "Each button has its own cue. A cue that is off stays silent in the window and in the tray.",
         cues: {
