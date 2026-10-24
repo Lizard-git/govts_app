@@ -1,7 +1,5 @@
-// Package hotkeys listens for system-wide Ctrl+Alt shortcuts. They fire while
-// the window is hidden in the tray. The key is a physical key, so the layout,
-// Caps Lock and Shift do not matter, and the right Alt is left alone so AltGr
-// can still type a character.
+// Package hotkeys listens for system-wide physical-key shortcuts, including
+// while the window is hidden in the tray. Right Alt is reserved for AltGr.
 package hotkeys
 
 import (
@@ -9,8 +7,7 @@ import (
 	"sync"
 )
 
-// Binding is Ctrl+Alt plus Key. Key is an upper-case Latin letter or a digit,
-// naming the physical key that carries it on a US keyboard.
+// Binding maps an action to a complete shortcut, such as Ctrl+M or F1.
 type Binding struct {
 	Action string
 	Key    string
@@ -20,6 +17,8 @@ type Binding struct {
 // A press that arrives while the handler is still running is dropped, so a
 // slow action cannot replay a burst of toggles after the keys are released.
 type Manager struct {
+	// opMu serializes backend operations. The listener never acquires it.
+	opMu    sync.Mutex
 	mu      sync.Mutex
 	closed  bool
 	busy    bool
@@ -69,18 +68,24 @@ func (m *Manager) dispatch(action string) {
 // Apply replaces every shortcut. An empty list captures nothing, so other
 // programs keep the keys. The result lists bindings that could not be armed.
 func (m *Manager) Apply(bindings []Binding) map[string]error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
 		return nil
 	}
 	return m.backend.apply(bindings)
 }
 
 func (m *Manager) Close() {
+	m.opMu.Lock()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		m.opMu.Unlock()
+		<-m.done
 		return
 	}
 	m.closed = true
@@ -89,6 +94,7 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	close(m.actions)
 	m.mu.Unlock()
+	m.opMu.Unlock()
 	<-m.done
 }
 

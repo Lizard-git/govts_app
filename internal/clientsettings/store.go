@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -36,7 +38,7 @@ type Settings struct {
 	// SoundCues lists button cues the user turned off. A missing id stays on.
 	SoundCues     map[string]bool `json:"soundCues,omitempty"`
 	RecentServers []RecentServer  `json:"recentServers,omitempty"`
-	// Hotkeys maps an action to the key pressed together with Ctrl+Alt.
+	// Hotkeys maps an action to a complete physical-key shortcut.
 	// A missing or invalid entry falls back to the action's default key.
 	Hotkeys map[string]string `json:"hotkeys,omitempty"`
 	// HotkeyNotifications shows an application popup when a hotkey acts
@@ -153,7 +155,7 @@ func SoundCueStates(cues map[string]bool) map[string]bool {
 	return out
 }
 
-// Global hotkey actions. Each one is Ctrl+Alt plus a single key.
+// Global hotkey actions.
 const (
 	HotkeyMute   = "mute"
 	HotkeyDeafen = "deafen"
@@ -164,9 +166,9 @@ const (
 var HotkeyActions = []string{HotkeyMute, HotkeyDeafen, HotkeyAway}
 
 var defaultHotkeys = map[string]string{
-	HotkeyMute:   "M",
-	HotkeyDeafen: "D",
-	HotkeyAway:   "E",
+	HotkeyMute:   "Ctrl+Alt+M",
+	HotkeyDeafen: "Ctrl+Alt+D",
+	HotkeyAway:   "Ctrl+Alt+E",
 }
 
 func KnownHotkeyAction(action string) bool {
@@ -174,20 +176,38 @@ func KnownHotkeyAction(action string) bool {
 	return ok
 }
 
-// NormalizeHotkeyKey accepts one Latin letter or digit in any case and
-// returns it upper-cased. The key is a physical key, not a typed character.
+// NormalizeHotkeyKey canonicalizes optional modifiers and a physical key.
+// Supported keys are A-Z, top-row digits and F1-F12.
 func NormalizeHotkeyKey(value string) (string, bool) {
-	if len(value) != 1 {
+	parts := strings.Split(strings.ToUpper(strings.TrimSpace(value)), "+")
+	modifiers := make(map[string]bool)
+	for _, part := range parts[:len(parts)-1] {
+		switch part {
+		case "CTRL", "ALT", "SHIFT", "WIN":
+			if modifiers[part] {
+				return "", false
+			}
+			modifiers[part] = true
+		default:
+			return "", false
+		}
+	}
+	key := parts[len(parts)-1]
+	valid := len(key) == 1 && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9'))
+	if len(key) > 1 && strings.HasPrefix(key, "F") {
+		number, err := strconv.Atoi(key[1:])
+		valid = err == nil && number >= 1 && number <= 12 && key == "F"+strconv.Itoa(number)
+	}
+	if !valid {
 		return "", false
 	}
-	c := value[0]
-	if c >= 'a' && c <= 'z' {
-		c -= 'a' - 'A'
+	result := make([]string, 0, 5)
+	for _, modifier := range []struct{ name, label string }{{"CTRL", "Ctrl"}, {"ALT", "Alt"}, {"SHIFT", "Shift"}, {"WIN", "Win"}} {
+		if modifiers[modifier.name] {
+			result = append(result, modifier.label)
+		}
 	}
-	if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
-		return string(c), true
-	}
-	return "", false
+	return strings.Join(append(result, key), "+"), true
 }
 
 // NormalizeHotkeys returns a key for every action, using the default where
@@ -240,7 +260,8 @@ func NormalizeTheme(value string) string {
 }
 
 type persistedSettings struct {
-	Version int `json:"version"`
+	Version      int `json:"version"`
+	HotkeyFormat int `json:"hotkeyFormat"`
 	Settings
 }
 
@@ -287,6 +308,13 @@ func (store *Store) Load() (Settings, error) {
 	persisted.Theme = NormalizeTheme(persisted.Theme)
 	persisted.SoundPack = NormalizeSoundPack(persisted.SoundPack)
 	persisted.SoundCues = NormalizeSoundCues(persisted.SoundCues)
+	if persisted.HotkeyFormat < 2 {
+		for action, key := range persisted.Hotkeys {
+			if len(key) == 1 {
+				persisted.Hotkeys[action] = "Ctrl+Alt+" + key
+			}
+		}
+	}
 	persisted.Hotkeys = NormalizeHotkeys(persisted.Hotkeys)
 	if persisted.SoundVolume < 0 || persisted.SoundVolume > 1 {
 		persisted.SoundVolume = DefaultSoundVolume
@@ -297,7 +325,7 @@ func (store *Store) Load() (Settings, error) {
 func (store *Store) Save(settings Settings) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	data, err := json.MarshalIndent(persistedSettings{Version: version, Settings: settings}, "", "  ")
+	data, err := json.MarshalIndent(persistedSettings{Version: version, HotkeyFormat: 2, Settings: settings}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode settings: %w", err)
 	}

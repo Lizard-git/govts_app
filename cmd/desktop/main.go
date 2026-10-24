@@ -166,7 +166,7 @@ func main() {
 		app.Quit()
 	})
 	installTray(app, mainWindow, client, service, &quitting)
-	trackMainWindowVisibility(mainWindow)
+	trackMainWindowVisibility(mainWindow, service)
 	wailsui.ConfigureHotkeyNotifications(service,
 		func() bool { return mainWindowHidden.Load() },
 		func(title, body string) error {
@@ -191,14 +191,23 @@ func main() {
 // waiting for that handler; a window call would wait for the main thread too.
 var mainWindowHidden atomic.Bool
 
-func trackMainWindowVisibility(window *application.WebviewWindow) {
-	hide := func(*application.WindowEvent) { mainWindowHidden.Store(true) }
+func trackMainWindowVisibility(window *application.WebviewWindow, service *wailsui.Service) {
+	hide := func(*application.WindowEvent) {
+		mainWindowHidden.Store(true)
+		service.SetHotkeyWindowInactive(true)
+	}
 	show := func(*application.WindowEvent) { mainWindowHidden.Store(false) }
 	window.RegisterHook(events.Common.WindowHide, hide)
 	window.RegisterHook(events.Common.WindowMinimise, hide)
 	window.RegisterHook(events.Common.WindowShow, show)
 	window.RegisterHook(events.Common.WindowRestore, show)
 	window.RegisterHook(events.Common.WindowUnMinimise, show)
+	window.RegisterHook(events.Common.WindowLostFocus, func(*application.WindowEvent) {
+		service.SetHotkeyWindowInactive(true)
+	})
+	window.RegisterHook(events.Common.WindowFocus, func(*application.WindowEvent) {
+		service.SetHotkeyWindowInactive(false)
+	})
 }
 
 func showMainWindow(window *application.WebviewWindow) {

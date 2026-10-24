@@ -52,17 +52,25 @@ type Service struct {
 	serverStatus     *serverstatus.Cache
 	statusChanged    func()
 	// audioSwitchMu orders microphone and speaker clicks with their cues.
-	audioSwitchMu sync.Mutex
-	hotkeyKeys    map[string]string
-	hotkeyMu      sync.Mutex
-	hotkeys       *hotkeys.Manager
-	hotkeyErrors  map[string]error
-	// hotkeyNotifications and hotkeysEnabled are guarded by settingsMu.
+	audioSwitchMu     sync.Mutex
+	hotkeyKeys        map[string]string
+	hotkeyMu          sync.Mutex
+	hotkeyApplyMu     sync.Mutex
+	hotkeyLifecycleMu sync.Mutex
+	hotkeys           *hotkeys.Manager
+	hotkeyErrors      map[string]error
+	// Hotkey preferences and capture state are guarded by settingsMu.
+	hotkeysStopped bool
 	// hotkeyNotifier and hotkeyNotices are guarded by hotkeyMu.
-	hotkeyNotifications bool
-	hotkeysEnabled      bool
-	hotkeyNotifier      *hotkeyNotifier
-	hotkeyNotices       map[string]string
+	hotkeyNotifications   bool
+	hotkeysEnabled        bool
+	hotkeyCapture         uint32
+	hotkeyCaptureSeq      uint32
+	hotkeyCaptureDeadline time.Time
+	hotkeyCaptureTimer    *time.Timer
+	hotkeyWindowInactive  bool
+	hotkeyNotifier        *hotkeyNotifier
+	hotkeyNotices         map[string]string
 }
 
 func NewService(client *clientapp.App) *Service {

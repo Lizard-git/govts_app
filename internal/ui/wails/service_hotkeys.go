@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"uniclog.io/sonoryx/internal/clientsettings"
@@ -13,11 +14,16 @@ import (
 
 // Error codes; the interface translates them through its errors catalog.
 var (
-	errHotkeyActionUnknown = errors.New("hotkey-action-unknown")
-	errHotkeyKeyInvalid    = errors.New("hotkey-key-invalid")
+	errHotkeyActionUnknown  = errors.New("hotkey-action-unknown")
+	errHotkeyKeyInvalid     = errors.New("hotkey-key-invalid")
+	errHotkeyCaptureExpired = errors.New("hotkey-capture-expired")
 )
 
-// HotkeyDTO is one Ctrl+Alt shortcut. Status is "off" while hotkeys are
+// Renewed by the recorder; a crashed or disconnected renderer cannot leave
+// global hotkeys suspended indefinitely.
+const hotkeyCaptureLease = 15 * time.Second
+
+// HotkeyDTO is one complete shortcut. Status is "off" while hotkeys are
 // disabled, "active" while the shortcut is armed, or "failed".
 type HotkeyDTO struct {
 	Action string `json:"action"`
@@ -28,9 +34,15 @@ type HotkeyDTO struct {
 // StartHotkeys arms the saved shortcuts when they are enabled. The listener
 // is not created while they are off, so nothing is captured.
 func StartHotkeys(s *Service) {
+	s.hotkeyLifecycleMu.Lock()
+	defer s.hotkeyLifecycleMu.Unlock()
 	s.settingsMu.RLock()
 	enabled := s.hotkeysEnabled
+	stopped := s.hotkeysStopped
 	s.settingsMu.RUnlock()
+	if stopped {
+		return
+	}
 	s.hotkeyMu.Lock()
 	if s.hotkeys != nil {
 		s.hotkeyMu.Unlock()
@@ -48,18 +60,18 @@ func StartHotkeys(s *Service) {
 		return
 	}
 	s.hotkeyMu.Lock()
-	if s.hotkeys != nil {
-		s.hotkeyMu.Unlock()
-		manager.Close()
-		s.applyHotkeys()
-		return
-	}
 	s.hotkeys = manager
 	s.hotkeyMu.Unlock()
 	s.applyHotkeys()
 }
 
 func StopHotkeys(s *Service) {
+	s.hotkeyLifecycleMu.Lock()
+	defer s.hotkeyLifecycleMu.Unlock()
+	s.settingsMu.Lock()
+	s.hotkeysStopped = true
+	s.clearHotkeyCaptureLocked()
+	s.settingsMu.Unlock()
 	s.hotkeyMu.Lock()
 	manager := s.hotkeys
 	s.hotkeys = nil
@@ -104,10 +116,22 @@ func (s *Service) Hotkeys() []HotkeyDTO {
 	return result
 }
 
-// SetHotkey changes the key pressed with Ctrl+Alt for one action. A key that
+// SetHotkey changes the complete shortcut for one action. A shortcut that
 // belongs to another action swaps with it, so the two can exchange places
 // without a spare key in between.
 func (s *Service) SetHotkey(action, key string) error {
+	return s.setHotkey(action, key, 0)
+}
+
+// SetCapturedHotkey rejects a result from a cancelled or superseded recording.
+func (s *Service) SetCapturedHotkey(capture uint32, action, key string) error {
+	if capture == 0 {
+		return errHotkeyCaptureExpired
+	}
+	return s.setHotkey(action, key, capture)
+}
+
+func (s *Service) setHotkey(action, key string, capture uint32) error {
 	if !clientsettings.KnownHotkeyAction(action) {
 		return errHotkeyActionUnknown
 	}
@@ -116,6 +140,10 @@ func (s *Service) SetHotkey(action, key string) error {
 		return errHotkeyKeyInvalid
 	}
 	s.settingsMu.Lock()
+	if capture != 0 && !s.hotkeyCaptureValidLocked(capture) {
+		s.settingsMu.Unlock()
+		return errHotkeyCaptureExpired
+	}
 	current := s.hotkeyKeys[action]
 	for other, otherKey := range s.hotkeyKeys {
 		if other != action && otherKey == normalized {
@@ -129,9 +157,112 @@ func (s *Service) SetHotkey(action, key string) error {
 	return s.saveSettings()
 }
 
-func (s *Service) applyHotkeys() {
+// BeginHotkeyCapture acknowledges suspension before the interface records keys.
+// Recording IDs keep late completions from resuming a newer recording.
+func (s *Service) BeginHotkeyCapture() (uint32, error) {
+	return s.beginHotkeyCapture(hotkeyCaptureLease)
+}
+
+func (s *Service) beginHotkeyCapture(lease time.Duration) (uint32, error) {
+	s.settingsMu.Lock()
+	if s.hotkeyWindowInactive || s.hotkeysStopped {
+		s.settingsMu.Unlock()
+		return 0, errHotkeyCaptureExpired
+	}
+	s.hotkeyCaptureSeq++
+	if s.hotkeyCaptureSeq == 0 {
+		s.hotkeyCaptureSeq++
+	}
+	capture := s.hotkeyCaptureSeq
+	s.clearHotkeyCaptureLocked()
+	s.hotkeyCapture = capture
+	s.hotkeyCaptureDeadline = time.Now().Add(lease)
+	s.hotkeyCaptureTimer = time.AfterFunc(lease, func() { s.expireHotkeyCapture(capture) })
+	s.settingsMu.Unlock()
+	s.applyHotkeys()
 	s.settingsMu.RLock()
-	enabled := s.hotkeysEnabled
+	current := s.hotkeyCaptureValidLocked(capture)
+	s.settingsMu.RUnlock()
+	if !current {
+		return 0, errHotkeyCaptureExpired
+	}
+	return capture, nil
+}
+
+func (s *Service) EndHotkeyCapture(capture uint32) {
+	s.settingsMu.Lock()
+	if capture == 0 || s.hotkeyCapture != capture {
+		s.settingsMu.Unlock()
+		return
+	}
+	s.clearHotkeyCaptureLocked()
+	s.settingsMu.Unlock()
+	s.applyHotkeys()
+}
+
+func (s *Service) RenewHotkeyCapture(capture uint32) error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if !s.hotkeyCaptureValidLocked(capture) {
+		return errHotkeyCaptureExpired
+	}
+	s.hotkeyCaptureDeadline = time.Now().Add(hotkeyCaptureLease)
+	return nil
+}
+
+// Called with settingsMu held. Enforce the deadline at the API boundary too:
+// timer scheduling can be delayed under load.
+func (s *Service) hotkeyCaptureValidLocked(capture uint32) bool {
+	return capture != 0 && s.hotkeyCapture == capture && !s.hotkeyWindowInactive &&
+		!s.hotkeysStopped && time.Now().Before(s.hotkeyCaptureDeadline)
+}
+
+func (s *Service) clearHotkeyCaptureLocked() {
+	s.hotkeyCapture = 0
+	if s.hotkeyCaptureTimer != nil {
+		s.hotkeyCaptureTimer.Stop()
+		s.hotkeyCaptureTimer = nil
+	}
+}
+
+func (s *Service) expireHotkeyCapture(capture uint32) {
+	s.settingsMu.Lock()
+	if s.hotkeyCapture != capture {
+		s.settingsMu.Unlock()
+		return
+	}
+	if remaining := time.Until(s.hotkeyCaptureDeadline); remaining > 0 {
+		s.hotkeyCaptureTimer = time.AfterFunc(remaining, func() { s.expireHotkeyCapture(capture) })
+		s.settingsMu.Unlock()
+		return
+	}
+	s.clearHotkeyCaptureLocked()
+	s.settingsMu.Unlock()
+	s.applyHotkeys()
+}
+
+// SetHotkeyWindowInactive cancels recording when the window loses focus or
+// becomes hidden, even when its WebView is idle.
+// The native window calls this without waiting for JavaScript.
+func (s *Service) SetHotkeyWindowInactive(inactive bool) {
+	s.settingsMu.Lock()
+	s.hotkeyWindowInactive = inactive
+	cancelled := inactive && s.hotkeyCapture != 0
+	if cancelled {
+		s.clearHotkeyCaptureLocked()
+	}
+	s.settingsMu.Unlock()
+	if cancelled {
+		s.applyHotkeys()
+	}
+}
+
+func (s *Service) applyHotkeys() {
+	// Serialize snapshots as well as Apply, so a stale snapshot cannot win.
+	s.hotkeyApplyMu.Lock()
+	defer s.hotkeyApplyMu.Unlock()
+	s.settingsMu.RLock()
+	enabled := s.hotkeysEnabled && s.hotkeyCapture == 0
 	var bindings []hotkeys.Binding
 	if enabled {
 		bindings = make([]hotkeys.Binding, 0, len(clientsettings.HotkeyActions))
@@ -243,7 +374,7 @@ func (s *Service) notifyHotkey(action, cue string) {
 	if title == "" {
 		return
 	}
-	if err := notifier.send(title, "Ctrl + Alt + "+key); err != nil {
+	if err := notifier.send(title, strings.ReplaceAll(key, "+", " + ")); err != nil {
 		log.Printf("hotkey popup failed: error=%v", err)
 	}
 }
