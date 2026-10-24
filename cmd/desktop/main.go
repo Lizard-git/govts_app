@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/updater"
+	"uniclog.io/sonoryx/internal/apppopup"
 	"uniclog.io/sonoryx/internal/audio"
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/clientapp"
@@ -61,6 +62,9 @@ func main() {
 	}
 	var mainWindow *application.WebviewWindow
 	var quitting atomic.Bool
+	var popup atomic.Pointer[apppopup.Popup]
+	var popupLifecycle sync.Mutex
+	popupStopped := false // guarded by popupLifecycle
 	app := application.New(application.Options{
 		Name:        "Sonoryx",
 		Description: "Голосовой клиент Sonoryx",
@@ -90,6 +94,20 @@ func main() {
 			AdditionalBrowserArgs: []string{"--autoplay-policy=no-user-gesture-required"},
 		},
 	})
+	// Wait until Wails has configured process DPI awareness before creating HWNDs.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		popupLifecycle.Lock()
+		defer popupLifecycle.Unlock()
+		if popupStopped || popup.Load() != nil {
+			return
+		}
+		window, err := apppopup.New(applicationIcon)
+		if err != nil {
+			log.Printf("app popup unavailable: %v", err)
+			return
+		}
+		popup.Store(window)
+	})
 	clientupdate.RecordRecoveryStartup(applicationVersion())
 	if err := clientupdate.Initialize(updates, app, applicationVersion(), rawUpdatePublicKey); err != nil {
 		log.Printf("initialize updater: %v", err)
@@ -98,9 +116,18 @@ func main() {
 	bridgeCtx, cancelBridge := context.WithCancel(context.Background())
 	stopBridge := wailsui.StartEventBridge(bridgeCtx, app, client)
 	stopServerStatus := wailsui.ConfigureServerStatuses(app, service)
+	wailsui.StartHotkeys(service)
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
+			wailsui.StopHotkeys(service)
+			popupLifecycle.Lock()
+			popupStopped = true
+			popupWindow := popup.Swap(nil)
+			popupLifecycle.Unlock()
+			if popupWindow != nil {
+				popupWindow.Close()
+			}
 			clientupdate.Stop(updates)
 			cancelBridge()
 			stopBridge()
@@ -132,12 +159,24 @@ func main() {
 		if service.CloseToTray() {
 			event.Cancel()
 			mainWindow.Hide()
+			mainWindowHidden.Store(true)
 			return
 		}
 		quitting.Store(true)
 		app.Quit()
 	})
 	installTray(app, mainWindow, client, service, &quitting)
+	trackMainWindowVisibility(mainWindow, service)
+	wailsui.ConfigureHotkeyNotifications(service,
+		func() bool { return mainWindowHidden.Load() },
+		func(title, body string) error {
+			window := popup.Load()
+			if window == nil {
+				return nil
+			}
+			window.SetLook(apppopup.ParseLook(service.PopupLook()))
+			return window.Show(title, body)
+		})
 
 	if err := app.Run(); err != nil {
 		shutdown()
@@ -148,10 +187,35 @@ func main() {
 	shutdown()
 }
 
+// mainWindowHidden mirrors the main window without asking it. The hotkey
+// handler reads it while shutdown, which runs on the main thread, may be
+// waiting for that handler; a window call would wait for the main thread too.
+var mainWindowHidden atomic.Bool
+
+func trackMainWindowVisibility(window *application.WebviewWindow, service *wailsui.Service) {
+	hide := func(*application.WindowEvent) {
+		mainWindowHidden.Store(true)
+		service.SetHotkeyWindowInactive(true)
+	}
+	show := func(*application.WindowEvent) { mainWindowHidden.Store(false) }
+	window.RegisterHook(events.Common.WindowHide, hide)
+	window.RegisterHook(events.Common.WindowMinimise, hide)
+	window.RegisterHook(events.Common.WindowShow, show)
+	window.RegisterHook(events.Common.WindowRestore, show)
+	window.RegisterHook(events.Common.WindowUnMinimise, show)
+	window.RegisterHook(events.Common.WindowLostFocus, func(*application.WindowEvent) {
+		service.SetHotkeyWindowInactive(true)
+	})
+	window.RegisterHook(events.Common.WindowFocus, func(*application.WindowEvent) {
+		service.SetHotkeyWindowInactive(false)
+	})
+}
+
 func showMainWindow(window *application.WebviewWindow) {
 	window.UnMinimise()
 	window.Show()
 	window.Focus()
+	mainWindowHidden.Store(false)
 }
 
 func installTray(app *application.App, window *application.WebviewWindow, client *clientapp.App, service *wailsui.Service, quitting *atomic.Bool) {

@@ -45,7 +45,23 @@ export function logDiagnostic(operation: string, message: unknown): void {
         .finally(() => { diagnosticsInFlight--; });
 }
 
+export type HotkeyAction = "mute" | "deafen" | "away";
+// Complete shortcut: optional Ctrl/Alt/Shift/Win modifiers and A-Z, 0-9 or F1-F12.
+export type Hotkey = {action: HotkeyAction; key: string; status: "active" | "off" | "failed"};
+
 export const desktopAPI = {
+    hotkeys: (): Promise<Hotkey[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.Hotkeys"),
+    setHotkey: (action: HotkeyAction, key: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkey", action, key),
+    beginHotkeyCapture: (): Promise<number> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.BeginHotkeyCapture"),
+    endHotkeyCapture: (capture: number): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.EndHotkeyCapture", capture),
+    renewHotkeyCapture: (capture: number): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.RenewHotkeyCapture", capture),
+    setCapturedHotkey: (capture: number, action: HotkeyAction, key: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetCapturedHotkey", capture, action, key),
+    hotkeysEnabled: (): Promise<boolean> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.HotkeysEnabled"),
+    setHotkeysEnabled: (value: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeysEnabled", value),
+    hotkeyNotifications: (): Promise<boolean> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.HotkeyNotifications"),
+    setHotkeyNotifications: (value: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeyNotifications", value),
+    setHotkeyNotices: (texts: Record<string, string>): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetHotkeyNotices", texts),
+    setPopupLook: (colors: Record<string, string>): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetPopupLook", colors),
     recentServers: (): Promise<RecentServer[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.RecentServers"),
     refreshServerStatuses: (): Promise<void> => Service.RefreshServerStatuses(),
     onServerStatusChanged: (listener: () => void) => Events.On("server-status-changed", listener),

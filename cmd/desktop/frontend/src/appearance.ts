@@ -1,3 +1,4 @@
+import {desktopAPI} from "./api";
 import {errorCode} from "./locales";
 
 // Применение внешнего вида. Базовые цвета совпадают с theme.css.
@@ -491,4 +492,12 @@ export function applyAppearance(appearance: Appearance): void {
     const computed = getComputedStyle(root);
     root.style.setProperty("--field-chevron", chevron(computed.getPropertyValue("--muted")));
     root.style.setProperty("--field-chevron-active", chevron(computed.getPropertyValue("--text")));
+
+    const palette = custom ? normalized.custom : themePalettes[normalized.theme as BuiltinTheme];
+    void desktopAPI.setPopupLook({
+        card: palette.card,
+        line: palette.line,
+        text: palette.text,
+        muted: palette.muted,
+    }).catch(() => undefined);
 }
