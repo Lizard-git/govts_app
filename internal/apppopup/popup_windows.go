@@ -308,7 +308,8 @@ func (p *window) drawIcon(dc w32.HDC, x, y int32) {
 	}
 	previous := w32.SelectObject(mem, w32.HGDIOBJ(p.icon))
 	size := uintptr(p.iconSize)
-	alphaBlend.Call(uintptr(dc), uintptr(x), uintptr(y), size, size, uintptr(mem), 0, 0, size, size, blendSourceAlpha)
+	// A failed blend only leaves the card without its mark.
+	_, _, _ = alphaBlend.Call(uintptr(dc), uintptr(x), uintptr(y), size, size, uintptr(mem), 0, 0, size, size, blendSourceAlpha)
 	w32.SelectObject(mem, previous)
 	w32.DeleteDC(mem)
 }
