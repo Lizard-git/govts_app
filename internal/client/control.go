@@ -52,6 +52,10 @@ func ControlLoop(
 				case state.voicePages <- voiceStateEnvelope{generation: generation, packet: packet}:
 				case <-ctx.Done():
 					return ctx.Err()
+				default:
+					// Voice assembly/configuration must not stall heartbeat and
+					// snapshot responses. A missing page is recovered by retry.
+					state.RequestVoiceResync(generation)
 				}
 			case protocol.PacketChatChanged:
 				if packet.RequestID == 0 && len(packet.Payload) == 0 {

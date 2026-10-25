@@ -17,8 +17,8 @@ const (
 	MaxVoiceStateEntries       = 16
 	MaxVoiceStatePages         = 256
 	MaxVoiceSources            = MaxVoiceStateEntries * MaxVoiceStatePages
-	voiceStateHeaderSize       = 60
-	voiceSourceSize            = 21
+	VoiceStateHeaderSize       = 60
+	VoiceStateSourceSize       = 21
 )
 
 var ErrInvalidVoiceState = errors.New("invalid voice state")
@@ -85,7 +85,7 @@ func EncodeVoiceState(page VoiceStatePage) ([]byte, error) {
 	if err := validateVoiceStatePage(page); err != nil {
 		return nil, err
 	}
-	payload := make([]byte, 0, voiceStateHeaderSize+voiceSourceSize*len(page.Sources))
+	payload := make([]byte, 0, VoiceStateHeaderSize+VoiceStateSourceSize*len(page.Sources))
 	payload = append(payload, VoiceControlVersion, page.Flags)
 	payload = binary.BigEndian.AppendUint64(payload, page.Revision)
 	payload = binary.BigEndian.AppendUint64(payload, page.BaseRevision)
@@ -109,11 +109,11 @@ func EncodeVoiceState(page VoiceStatePage) ([]byte, error) {
 }
 
 func DecodeVoiceState(payload []byte) (VoiceStatePage, error) {
-	if len(payload) < voiceStateHeaderSize || payload[0] != VoiceControlVersion {
+	if len(payload) < VoiceStateHeaderSize || payload[0] != VoiceControlVersion {
 		return VoiceStatePage{}, ErrInvalidVoiceState
 	}
 	count := int(payload[59])
-	if count > MaxVoiceStateEntries || len(payload) != voiceStateHeaderSize+voiceSourceSize*count {
+	if count > MaxVoiceStateEntries || len(payload) != VoiceStateHeaderSize+VoiceStateSourceSize*count {
 		return VoiceStatePage{}, ErrInvalidVoiceState
 	}
 	page := VoiceStatePage{
@@ -131,7 +131,7 @@ func DecodeVoiceState(payload []byte) (VoiceStatePage, error) {
 		PageCount:            binary.BigEndian.Uint16(payload[57:59]),
 		Sources:              make([]VoiceSourceState, 0, count),
 	}
-	for rest := payload[voiceStateHeaderSize:]; len(rest) > 0; rest = rest[voiceSourceSize:] {
+	for rest := payload[VoiceStateHeaderSize:]; len(rest) > 0; rest = rest[VoiceStateSourceSize:] {
 		page.Sources = append(page.Sources, VoiceSourceState{
 			SenderID:    binary.BigEndian.Uint64(rest[:8]),
 			SourceEpoch: binary.BigEndian.Uint32(rest[8:12]),

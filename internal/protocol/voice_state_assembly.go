@@ -21,11 +21,12 @@ type VoiceStateSnapshot struct {
 // has atomically installed them; duplicates can then be acknowledged again.
 // Call Reset after installation to release the completed assembly.
 type VoiceStateAssembler struct {
-	header  VoiceStatePage
-	started time.Time
-	pages   [MaxVoiceStatePages][]VoiceSourceState
-	seen    [MaxVoiceStatePages]bool
-	count   uint16
+	header   VoiceStatePage
+	started  time.Time
+	pages    [MaxVoiceStatePages][]VoiceSourceState
+	seen     [MaxVoiceStatePages]bool
+	count    uint16
+	complete bool
 }
 
 func (a *VoiceStateAssembler) Reset() { *a = VoiceStateAssembler{} }
@@ -89,6 +90,12 @@ func (a *VoiceStateAssembler) Add(page VoiceStatePage, installedRevision uint64,
 	if a.count != a.header.PageCount {
 		return nil, false, nil
 	}
+	if a.complete {
+		// The caller already owns this completed candidate while waiting for
+		// its profile. Still validate duplicate bytes above, without rebuilding
+		// all sources for every repeated page of a large snapshot.
+		return nil, false, nil
+	}
 	sources := make([]VoiceSourceState, 0, int(a.header.PageCount)*MaxVoiceStateEntries)
 	ids := make(map[uint64]struct{})
 	for _, entries := range a.pages[:a.header.PageCount] {
@@ -103,6 +110,7 @@ func (a *VoiceStateAssembler) Add(page VoiceStatePage, installedRevision uint64,
 	}
 	// Keep pages until installation or expiry, so contradictory retransmissions
 	// of the completed revision cannot replace its immutable contents.
+	a.complete = true
 	return &VoiceStateSnapshot{Header: a.header, Sources: sources}, false, nil
 }
 

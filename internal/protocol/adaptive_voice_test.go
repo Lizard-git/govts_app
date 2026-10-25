@@ -369,3 +369,55 @@ func FuzzAdaptiveVoiceDecoders(f *testing.F) {
 		_, _ = DecodeVoiceReport(p)
 	})
 }
+
+func TestVoiceStateAssemblerDoesNotRebuildCompletedDuplicates(t *testing.T) {
+	page := adaptiveStateHeader()
+	page.Sources = adaptiveSources(1)
+	var a VoiceStateAssembler
+	now := time.Unix(100, 0)
+	if snapshot, _, err := a.Add(page, 0, now); err != nil || snapshot == nil {
+		t.Fatalf("initial assembly: %+v %v", snapshot, err)
+	}
+	for i := 0; i < 100; i++ {
+		if snapshot, reack, err := a.Add(page, 0, now.Add(time.Millisecond)); err != nil || snapshot != nil || reack {
+			t.Fatal("completed snapshot rebuilt before installation")
+		}
+	}
+	bad := page
+	bad.Sources = append([]VoiceSourceState(nil), page.Sources...)
+	bad.Sources[0].SourceEpoch++
+	if _, _, err := a.Add(bad, 0, now.Add(time.Millisecond)); err == nil {
+		t.Fatal("completed assembly accepted conflicting duplicate")
+	}
+}
+
+func TestAdaptiveVoiceControlPacketsCannotUseAnotherSessionID(t *testing.T) {
+	for _, kind := range []uint8{PacketVoiceSummary, PacketVoiceReport, PacketVoiceState, PacketVoiceStateAck, PacketVoiceStateRequest} {
+		client, server := NewSecureDatagramCodec(false), NewSecureDatagramCodec(true)
+		var c2s, s2c [32]byte
+		c2s[0], s2c[0] = 1, 2
+		for _, codec := range []*SecureDatagramCodec{client, server} {
+			if err := codec.Install(9, c2s, s2c); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, direction := range []struct{ send, receive *SecureDatagramCodec }{{client, server}, {server, client}} {
+			packet := VoicePacket{Type: kind, SessionID: 8}
+			wire, err := direction.send.Encode(DatagramContext{KeyOwnerID: 9}, packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := direction.receive.Decode(DatagramContext{KeyOwnerID: 9}, wire); !errors.Is(err, ErrRejectedDatagram) {
+				t.Fatalf("type %d accepted foreign SessionID: %v", kind, err)
+			}
+			packet.SessionID = 9
+			wire, err = direction.send.Encode(DatagramContext{KeyOwnerID: 9}, packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := direction.receive.Decode(DatagramContext{KeyOwnerID: 9}, wire); err != nil {
+				t.Fatalf("type %d rejected owner: %v", kind, err)
+			}
+		}
+	}
+}

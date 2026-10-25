@@ -420,3 +420,38 @@ func TestVoiceStateLoopInstallsOnlyCompletePages(t *testing.T) {
 		t.Fatal("partial state installed")
 	}
 }
+
+func TestVoiceStateQueueBackpressureDoesNotBlockHeartbeat(t *testing.T) {
+	s, p := voiceClientFixture()
+	for i := 0; i < cap(s.voicePages); i++ {
+		s.voicePages <- voiceStateEnvelope{generation: s.Generation()}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	control := make(chan protocol.VoicePacket, 2)
+	response := s.RegisterRequest(77)
+	go func() { done <- ControlLoop(ctx, s, control) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("control loop did not stop")
+		}
+	})
+	control <- voiceTestPacket(t, s, p)
+	control <- protocol.VoicePacket{Type: protocol.PacketHeartbeatAck, SessionID: s.SessionID(), RequestID: 77}
+	select {
+	case ack := <-response:
+		if ack.Type != protocol.PacketHeartbeatAck {
+			t.Fatal("wrong response")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("full voice queue blocked heartbeat response")
+	}
+	select {
+	case <-s.voiceResync:
+	default:
+		t.Fatal("dropped state page did not request resync")
+	}
+}

@@ -50,22 +50,24 @@ const (
 type sessionIDGenerator func() (uint64, error)
 
 type Hub struct {
-	mu            sync.RWMutex
-	sessions      map[uint64]*Session
-	screenStreams map[domain.StreamID]domain.ScreenStream
-	streamByOwner map[uint64]domain.StreamID
-	channels      map[domain.ChannelID]*domain.Channel
-	newSessionID  sessionIDGenerator
-	nextChannelID domain.ChannelID
-	revision      domain.StateRevision
-	serverInfo    domain.ServerInfo
-	serverVersion appversion.Number
-	voiceBundles  bool
-	voiceUplink   bool
-	publicStatus  bool
-	maxSessions   int
-	outbox        []domain.StateEvent
-	eventReady    chan struct{}
+	mu               sync.RWMutex
+	sessions         map[uint64]*Session
+	screenStreams    map[domain.StreamID]domain.ScreenStream
+	streamByOwner    map[uint64]domain.StreamID
+	channels         map[domain.ChannelID]*domain.Channel
+	newSessionID     sessionIDGenerator
+	nextChannelID    domain.ChannelID
+	revision         domain.StateRevision
+	serverInfo       domain.ServerInfo
+	serverVersion    appversion.Number
+	voiceBundles     bool
+	voiceUplink      bool
+	voiceStateBudget voiceStateByteBudget
+	voiceStateCursor uint64
+	publicStatus     bool
+	maxSessions      int
+	outbox           []domain.StateEvent
+	eventReady       chan struct{}
 }
 
 // OperationalSnapshot is a point-in-time copy for local server diagnostics.

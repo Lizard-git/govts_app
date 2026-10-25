@@ -74,6 +74,7 @@ type voiceControlSession struct {
 	lastDatagram     uint32
 	barrier          uint32
 	profileRevision  uint64
+	stateBudget      voiceStateByteBudget
 }
 
 type voiceStatePending struct {
@@ -153,11 +154,22 @@ func (h *Hub) invalidateVoiceStatesLocked(event domain.StateEvent) {
 			affected = event.Participant.ChannelID != 0 && session.ChannelID == event.Participant.ChannelID
 		case domain.ParticipantAudio:
 			source := h.sessions[event.SessionID]
-			affected = source != nil && source.ChannelID == session.ChannelID
+			if source != nil && source.ChannelID == session.ChannelID {
+				affected = session.ID == source.ID
+				if !affected {
+					// Peers only need a source epoch change. Their deafen flag
+					// does not change any entry in this recipient's snapshot.
+					ackEpoch, ackKnown := control.ackSources[source.ID]
+					pendingKnown := control.pending != nil && control.pending.sources[source.ID] == source.SourceEpoch
+					affected = !pendingKnown && (!ackKnown || ackEpoch != source.SourceEpoch)
+				}
+			}
 		case domain.ChannelUpdated:
-			affected = session.ChannelID == event.Channel.ID
+			// Profile updates assign this exact domain revision before emit.
+			// Topic/name/reordering changes do not change voice state.
+			affected = session.ChannelID == event.Channel.ID && control.profileRevision == uint64(event.Revision)
 		}
-		if affected {
+		if affected && (!control.dirty || control.revision == control.ackRevision) {
 			// Never wrap revision into a previously acknowledged identity.
 			if control.revision == math.MaxUint64 {
 				// The identity is unusable; retire after this traversal to avoid
@@ -173,8 +185,7 @@ func (h *Hub) invalidateVoiceStatesLocked(event domain.StateEvent) {
 	}
 }
 
-// RequestVoiceState activates state delivery for the new voice runtime. Current
-// clients do not send this request until their v2 integration is enabled. The
+// RequestVoiceState activates delivery after the client joins a channel. The
 // request gate is separate from transport/heartbeat lifetime and timers.
 func (h *Hub) RequestVoiceState(id uint64, now time.Time) error {
 	h.mu.Lock()
@@ -262,7 +273,24 @@ func (h *Hub) DueVoiceStates(now time.Time) []VoiceStateDelivery {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var deliveries []VoiceStateDelivery
+	// Traverse recipients fairly and count channel members once. Reserving a
+	// whole immutable snapshot avoids partially budget-starved assemblies and
+	// bounds snapshot construction as well as outgoing bytes during churn.
+	ids := make([]uint64, 0, len(h.sessions))
+	members := make(map[domain.ChannelID]int)
 	for _, session := range h.sessions {
+		members[session.ChannelID]++
+		if session.voiceControl != nil {
+			ids = append(ids, session.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	start := sort.Search(len(ids), func(i int) bool { return ids[i] > h.voiceStateCursor })
+	for i := 0; i < len(ids); i++ {
+		session := h.sessions[ids[(start+i)%len(ids)]]
+		if session == nil {
+			continue
+		}
 		control := session.voiceControl
 		if control == nil {
 			continue
@@ -271,6 +299,25 @@ func (h *Hub) DueVoiceStates(now time.Time) []VoiceStateDelivery {
 			h.retireVoiceSessionLocked(session)
 			continue
 		}
+		pending := control.pending
+		if !control.dirty && (pending == nil || now.Before(pending.next)) {
+			continue
+		}
+		cost := voiceStateSnapshotWireSize(members[session.ChannelID])
+		if !control.dirty {
+			cost = 0
+			for _, payload := range pending.payloads {
+				cost += len(payload) + voiceStatePacketOverhead
+			}
+		}
+		if !control.stateBudget.canSpend(now, cost, voiceStateRecipientBytesPerSecond, voiceStateRecipientBurstBytes) {
+			continue
+		}
+		if !h.voiceStateBudget.canSpend(now, cost, voiceStateGlobalBytesPerSecond, voiceStateGlobalBurstBytes) {
+			// Keep this recipient at the head until the next refill rather
+			// than letting smaller snapshots consume its reserved turn.
+			break
+		}
 		if control.dirty {
 			pending, err := h.voiceStatePendingLocked(session)
 			if err != nil {
@@ -278,10 +325,10 @@ func (h *Hub) DueVoiceStates(now time.Time) []VoiceStateDelivery {
 			}
 			control.pending, control.dirty = pending, false
 		}
-		pending := control.pending
-		if pending == nil || now.Before(pending.next) {
-			continue
-		}
+		pending = control.pending
+		control.stateBudget.spend(cost)
+		h.voiceStateBudget.spend(cost)
+		h.voiceStateCursor = session.ID
 		delivery := VoiceStateDelivery{Session: *cloneSession(session)}
 		for _, payload := range pending.payloads {
 			delivery.Packets = append(delivery.Packets, protocol.VoicePacket{Type: protocol.PacketVoiceState, SessionID: session.ID, Payload: bytes.Clone(payload)})
@@ -357,7 +404,7 @@ func (h *Hub) SetVoiceUplink(enabled bool) {
 
 func (h *Hub) invalidateVoiceConfigLocked() {
 	for _, session := range h.sessions {
-		if control := session.voiceControl; control != nil && control.revision != math.MaxUint64 {
+		if control := session.voiceControl; control != nil && control.revision != math.MaxUint64 && (!control.dirty || control.revision == control.ackRevision) {
 			control.revision++
 			control.dirty, control.pending = true, nil
 		}

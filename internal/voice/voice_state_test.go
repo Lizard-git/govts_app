@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"sync"
@@ -421,5 +422,84 @@ func TestVoiceProfileEpochExhaustionKeepsDomainEventRevisionsDistinct(t *testing
 	events := h.takeEvents()
 	if len(events) != 2 || events[0].Kind != domain.ParticipantLeft || events[1].Kind != domain.ChannelUpdated || events[0].Revision >= events[1].Revision {
 		t.Fatalf("non-monotonic domain events: %+v", events)
+	}
+}
+
+func TestVoiceStatePeerDeafenDoesNotFanOutSnapshots(t *testing.T) {
+	for _, acknowledged := range []bool{false, true} {
+		t.Run(fmt.Sprint(acknowledged), func(t *testing.T) {
+			h := NewHub()
+			peer, listener := joinedVoiceSession(t, h, "peer"), joinedVoiceSession(t, h, "listener")
+			now := time.Unix(100, 0)
+			if err := h.RequestVoiceState(listener.ID, now); err != nil {
+				t.Fatal(err)
+			}
+			first := h.DueVoiceStates(now)
+			page, err := protocol.DecodeVoiceState(first[0].Packets[0].Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if acknowledged && !h.AckVoiceState(listener.ID, page.Revision) {
+				t.Fatal("ack")
+			}
+			for i := 0; i < 50; i++ {
+				if err := h.SetAudioState(peer.ID, false, i%2 == 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := h.DueVoiceStates(now.Add(100 * time.Millisecond)); len(got) != 0 {
+				t.Fatal("peer deafen triggered snapshot fanout")
+			}
+			if !acknowledged {
+				retry := h.DueVoiceStates(now.Add(250 * time.Millisecond))
+				if len(retry) != 1 || !bytes.Equal(retry[0].Packets[0].Payload, first[0].Packets[0].Payload) {
+					t.Fatal("peer deafen replaced immutable pending snapshot")
+				}
+			}
+		})
+	}
+}
+
+func TestVoiceStateChannelMetadataDoesNotInvalidateAudio(t *testing.T) {
+	h := NewHub()
+	listener := joinedVoiceSession(t, h, "listener")
+	now := time.Unix(100, 0)
+	if err := h.RequestVoiceState(listener.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	page := onlyVoiceState(t, h, now)
+	if !h.AckVoiceState(listener.ID, page.Revision) {
+		t.Fatal("ack")
+	}
+	channel, _ := h.GetChannel(DefaultChannelID)
+	channel.Topic = "metadata only"
+	if _, err := h.UpdateChannel(channel); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.DueVoiceStates(now.Add(time.Second)); len(got) != 0 {
+		t.Fatal("channel topic triggered voice snapshot")
+	}
+}
+
+func TestVoiceStateResnapshotThenMutationDoesNotReuseAckedRevision(t *testing.T) {
+	h := NewHub()
+	s := joinedVoiceSession(t, h, "listener")
+	now := time.Unix(100, 0)
+	if err := h.RequestVoiceState(s.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	first := onlyVoiceState(t, h, now)
+	if !h.AckVoiceState(s.ID, first.Revision) {
+		t.Fatal("ack")
+	}
+	if err := h.RequestVoiceState(s.ID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.SetAudioState(s.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	next := onlyVoiceState(t, h, now.Add(time.Second))
+	if next.Revision <= first.Revision || next.Flags&protocol.VoiceStateOwnMuted == 0 {
+		t.Fatal("changed payload reused acknowledged revision")
 	}
 }
