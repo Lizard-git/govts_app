@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pion/transport/v4"
-	"github.com/pion/transport/v4/stdnet"
+	"github.com/pion/transport/v5"
+	"github.com/pion/transport/v5/stdnet"
 )
 
 // Socket and resolver methods of stdnet.Net are stateless and are shared. Its
@@ -23,6 +23,8 @@ type bufferedMediaNet struct {
 	ports   map[uint16]uint64 // port -> open sequence
 	opened  uint64
 }
+
+var _ transport.Net = (*bufferedMediaNet)(nil)
 
 func newBufferedMediaNet() (*bufferedMediaNet, error) {
 	network, err := stdnet.NewNet()
