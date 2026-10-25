@@ -85,6 +85,7 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
     const reason = (value: number) => value === 1 ? m.connection.budget : value === 2 ? m.connection.congestion : "";
     const mode = (value?: Mode) => !value?.known || status !== "connected" ? "—" : value.reason === 3 ? m.connection.disabled : `${value.desired}${value.limited ? "*" : ""}`;
     const modeDetails = (value?: Mode) => !value?.known || status !== "connected" ? "—" : `${value.desired}/${value.allowed}/${value.actual || "—"} ${reason(value.reason)}`;
+    const protectionHint = `${m.connection.protectionTitle}\n${m.connection.modeDetails}: ↓ ${modeDetails(stats?.voice?.incoming)} / ↑ ${modeDetails(stats?.voice?.outgoing)}. ${m.connection.modeDetailsTitle}`;
     return <div className="connection-stats-anchor">
         <button ref={buttonRef} type="button" className={`status-pill ${status}`} aria-label={m.connection.statsButton(statusLabel)}
                 aria-expanded={open} aria-controls="connection-stats-popup" onClick={() => setOpen((value) => !value)}>
@@ -97,21 +98,14 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
                 <span title={m.connection.lossIn}>↓ {status === "connected" && stats?.incomingKnown ? `${stats.incomingLoss.toFixed(1)}%` : "—"}</span>
                 {" / "}<span title={m.connection.lossOut}>↑ {status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</span>
             </strong></div>
-            <div className="connection-stat-row"><span title={m.connection.protectionTitle}>{m.connection.protection}</span><strong title={`${m.connection.protectionTitle} ${m.connection.limitedTitle}`} aria-label={`↓ ${mode(stats?.voice?.incoming)} / ↑ ${mode(stats?.voice?.outgoing)}. ${m.connection.limitedTitle}`}>
+            <div className="connection-stat-row"><span title={protectionHint}>{m.connection.protection}</span><strong title={protectionHint} aria-label={`↓ ${mode(stats?.voice?.incoming)} / ↑ ${mode(stats?.voice?.outgoing)}. ${protectionHint}`}>
                 ↓ {mode(stats?.voice?.incoming)} / ↑ {mode(stats?.voice?.outgoing)}
             </strong></div>
-            <details className="connection-voice-details"><summary>{m.connection.details}</summary>
-                <p className="device-hint">{m.connection.lossWindow}</p>
-                <div className="connection-stat-row"><span>{m.connection.recovered}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.restored : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.restored : "—"}</strong></div>
-                <div className="connection-stat-row"><span>{m.connection.plc}</span><strong>{stats?.incomingKnown ? stats.voice.incoming.plc : "—"}</strong></div>
+            <details className="connection-voice-details"><summary title={m.connection.lossWindow}>{m.connection.details}</summary>
+                <div className="connection-stat-row"><span title={m.connection.recoveredTitle}>{m.connection.recovered}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.restored : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.restored : "—"}</strong></div>
+                <div className="connection-stat-row"><span title={m.connection.plcTitle}>{m.connection.plc}</span><strong>{stats?.incomingKnown ? stats.voice.incoming.plc : "—"}</strong></div>
                 <div className="connection-stat-row"><span>{m.connection.late}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.late : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.late : "—"}</strong></div>
                 <div className="connection-stat-row"><span title={m.connection.burstsTitle}>{m.connection.bursts}</span><strong>{stats?.incomingKnown ? `${stats.lossBurstsSingle} / ${stats.lossBurstsDouble} / ${stats.lossBurstsLong}` : "—"}</strong></div>
-                <div className="connection-stat-row"><span title={m.connection.modeDetailsTitle}>↓ {m.connection.modeDetails}</span><strong>{modeDetails(stats?.voice?.incoming)}</strong></div>
-                <div className="connection-stat-row"><span title={m.connection.modeDetailsTitle}>↑ {m.connection.modeDetails}</span><strong>{modeDetails(stats?.voice?.outgoing)}</strong></div>
-                <div className="connection-stat-row"><span>{m.connection.receivedCopies}</span><strong>{stats?.voice?.receivedCopies ?? "—"}</strong></div>
-                <div className="connection-stat-row"><span>{m.connection.sizeProtocol}</span><strong>{stats?.voice ? `${stats.voice.sizeDrops} / ${stats.voice.protocolDrops}` : "—"}</strong></div>
-                <div className="connection-stat-row"><span>{m.connection.drops}</span><strong>{stats?.voice ? `${stats.voice.budgetDrops} / ${stats.voice.repairBudgetDrops} / ${stats.voice.queueDrops} / ${stats.voice.writeFailures}` : "—"}</strong></div>
-                <p className="device-hint">{m.connection.dropsTitle}</p>
             </details>
             {sharing.active && status === "connected" && <section className="connection-screen-stats" aria-label={m.connection.shareStats}>
                 <h2>{m.connection.shareTitle}</h2>
