@@ -57,7 +57,7 @@ const (
 
 // AuthInit.Sequence carries the requested protocol/server compatibility level,
 // not the desktop executable's independently incremented release version.
-const minimumSecureClientVersion appversion.Number = 3 << 16 // 0.3.0: snapshot v7 and presence
+const minimumSecureClientVersion appversion.Number = 4 << 24 // 4.0.0: revision-checked voice control
 
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.

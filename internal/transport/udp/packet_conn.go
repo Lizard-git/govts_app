@@ -12,12 +12,49 @@ import (
 	"uniclog.io/sonoryx/internal/protocol"
 )
 
+var ErrSendExpired = errors.New("voice send deadline expired")
+
+type writeGate struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (g *writeGate) initialize() {
+	g.once.Do(func() { g.token = make(chan struct{}, 1); g.token <- struct{}{} })
+}
+func (g *writeGate) Lock()   { g.initialize(); <-g.token }
+func (g *writeGate) Unlock() { g.token <- struct{}{} }
+func (g *writeGate) LockBefore(deadline time.Time) bool {
+	if deadline.IsZero() {
+		g.Lock()
+		return true
+	}
+	g.initialize()
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return false
+	}
+	select {
+	case <-g.token:
+		return true
+	default:
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-g.token:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 type packetConn struct {
 	conn  *net.UDPConn
 	codec protocol.DatagramCodec
 
 	readMu  sync.Mutex
-	writeMu sync.Mutex
+	writeMu writeGate
 	codecMu sync.Mutex
 
 	closeOnce sync.Once
@@ -131,6 +168,9 @@ func (c *ClientPacketConn) ClearSession(expectedSessionID uint64) error {
 }
 
 func (c *ClientPacketConn) SendPacket(packet protocol.VoicePacket) error {
+	return c.SendPacketBefore(packet, time.Time{})
+}
+func (c *ClientPacketConn) SendPacketBefore(packet protocol.VoicePacket, notAfter time.Time) error {
 	ownerID := c.sessionID.Load()
 	if ownerID == 0 && packet.SessionID != 0 {
 		return errors.New("client packet connection is not bound to a session")
@@ -151,7 +191,7 @@ func (c *ClientPacketConn) SendPacket(packet protocol.VoicePacket) error {
 	return c.packetConn.write(ctx, packet, func(data []byte) error {
 		_, err := c.packetConn.conn.Write(data)
 		return err
-	})
+	}, notAfter)
 }
 
 func (c *ClientPacketConn) ReceivePacket() (protocol.VoicePacket, error) {
@@ -214,6 +254,9 @@ func (c *ServerPacketConn) WritePacket(
 	addr *net.UDPAddr,
 	packet protocol.VoicePacket,
 ) error {
+	return c.WritePacketBefore(recipientID, addr, packet, time.Time{})
+}
+func (c *ServerPacketConn) WritePacketBefore(recipientID uint64, addr *net.UDPAddr, packet protocol.VoicePacket, notAfter time.Time) error {
 	if addr == nil {
 		return errors.New("recipient UDP address is required")
 	}
@@ -225,7 +268,7 @@ func (c *ServerPacketConn) WritePacket(
 	return c.packetConn.write(ctx, packet, func(data []byte) error {
 		_, err := c.packetConn.conn.WriteToUDP(data, addr)
 		return err
-	})
+	}, notAfter)
 }
 
 func (c *ServerPacketConn) SetReadDeadline(deadline time.Time) error {
@@ -262,10 +305,24 @@ func (c *packetConn) write(
 	ctx protocol.DatagramContext,
 	packet protocol.VoicePacket,
 	write func([]byte) error,
+	deadlines ...time.Time,
 ) error {
-	c.writeMu.Lock()
+	notAfter := time.Time{}
+	if len(deadlines) > 0 {
+		notAfter = deadlines[0]
+	}
+	if !c.writeMu.LockBefore(notAfter) {
+		return ErrSendExpired
+	}
 	defer c.writeMu.Unlock()
-	if err := c.conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+	if !notAfter.IsZero() && time.Now().After(notAfter) {
+		return ErrSendExpired
+	}
+	deadline := time.Now().Add(time.Second)
+	if !notAfter.IsZero() && notAfter.Before(deadline) {
+		deadline = notAfter
+	}
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
 
@@ -281,7 +338,14 @@ func (c *packetConn) write(
 			protocol.MaxWireDatagramSize,
 		)
 	}
-	return write(data)
+	if !notAfter.IsZero() && time.Now().After(notAfter) {
+		return ErrSendExpired
+	}
+	err = write(data)
+	if err != nil && !notAfter.IsZero() && !time.Now().Before(notAfter) {
+		return errors.Join(ErrSendExpired, err)
+	}
+	return err
 }
 
 func (c *packetConn) encode(

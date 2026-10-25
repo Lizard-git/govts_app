@@ -39,6 +39,9 @@ func (s *Service) enableSettings(path string) error {
 	}
 	s.settingsMu.Unlock()
 	var restoreErrors []error
+	if err := s.client.SetVoiceReserveKiB(settings.VoiceUplinkReserveKiB); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
 	if err := s.client.SetVADMode(settings.VADMode); err != nil {
 		restoreErrors = append(restoreErrors, err)
 	}
@@ -104,29 +107,30 @@ func (s *Service) saveSettings() (saveErr error) {
 	hotkeysEnabled := s.hotkeysEnabled
 	s.settingsMu.RUnlock()
 	return s.settings.Save(clientsettings.Settings{
-		DisplayName:         displayName,
-		CaptureDeviceID:     devices.CaptureID,
-		PlaybackDeviceID:    devices.PlaybackID,
-		Deafened:            s.client.SavedDeafened(),
-		RNNoiseEnabled:      view.RNNoiseEnabled,
-		RNNoiseSensitivity:  view.RNNoiseSensitivity,
-		MicrophoneGain:      view.MicrophoneGain,
-		VADEnabled:          view.VADEnabled,
-		VADMode:             view.VADMode,
-		VADSensitivity:      view.VADSensitivity,
-		TrustedMediaKeys:    trustedMediaKeys,
-		Theme:               theme,
-		Locale:              locale,
-		CloseToTray:         closeToTray,
-		SoundPack:           view.SoundPack,
-		SoundVolume:         view.SoundVolume,
-		MuteOnAway:          view.MuteOnAway,
-		DeafenOnAway:        view.DeafenOnAway,
-		SoundCues:           clientsettings.NormalizeSoundCues(view.SoundCues),
-		RecentServers:       recentServers,
-		Hotkeys:             hotkeyKeys,
-		HotkeyNotifications: hotkeyNotifications,
-		HotkeysEnabled:      hotkeysEnabled,
+		DisplayName:           displayName,
+		VoiceUplinkReserveKiB: s.client.VoiceReserveKiB(),
+		CaptureDeviceID:       devices.CaptureID,
+		PlaybackDeviceID:      devices.PlaybackID,
+		Deafened:              s.client.SavedDeafened(),
+		RNNoiseEnabled:        view.RNNoiseEnabled,
+		RNNoiseSensitivity:    view.RNNoiseSensitivity,
+		MicrophoneGain:        view.MicrophoneGain,
+		VADEnabled:            view.VADEnabled,
+		VADMode:               view.VADMode,
+		VADSensitivity:        view.VADSensitivity,
+		TrustedMediaKeys:      trustedMediaKeys,
+		Theme:                 theme,
+		Locale:                locale,
+		CloseToTray:           closeToTray,
+		SoundPack:             view.SoundPack,
+		SoundVolume:           view.SoundVolume,
+		MuteOnAway:            view.MuteOnAway,
+		DeafenOnAway:          view.DeafenOnAway,
+		SoundCues:             clientsettings.NormalizeSoundCues(view.SoundCues),
+		RecentServers:         recentServers,
+		Hotkeys:               hotkeyKeys,
+		HotkeyNotifications:   hotkeyNotifications,
+		HotkeysEnabled:        hotkeysEnabled,
 	})
 }
 

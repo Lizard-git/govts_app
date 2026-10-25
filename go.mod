@@ -15,7 +15,7 @@ require (
 	github.com/pion/transport/v4 v4.1.0
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/rolandhe/go-vad v0.0.0-20260516173913-73b02b0699ec
-	github.com/wailsapp/wails/v3 v3.0.0-beta.30
+	github.com/wailsapp/wails/v3 v3.0.0-beta.34
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.43.0
@@ -42,6 +42,6 @@ require (
 	github.com/pion/stun/v4 v4.0.0 // indirect
 	github.com/pion/turn/v5 v5.1.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )

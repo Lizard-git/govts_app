@@ -24,6 +24,20 @@ import (
 	"uniclog.io/sonoryx/internal/voice"
 )
 
+type voiceReserveConfig struct {
+	Uplink                                                         bool
+	RecipientKiB, GlobalKiB, ControlRecipientKiB, ControlGlobalKiB int
+}
+
+func (c voiceReserveConfig) validate() error {
+	for _, value := range []int{c.RecipientKiB, c.GlobalKiB, c.ControlRecipientKiB, c.ControlGlobalKiB} {
+		if value < 1 || value > 1048576 {
+			return errors.New("voice reserve must be 1..1048576 KiB/s")
+		}
+	}
+	return nil
+}
+
 func main() {
 	showVersion := flag.Bool("version", false, "print server version and exit")
 	configPath := flag.String("config", "", "path to server JSON config")
@@ -37,7 +51,12 @@ func main() {
 	mediaIdentity := flag.String("media-identity", "sonoryx-media", "path prefix for generated media TLS certificate and key")
 	mediaAdaptive := flag.Bool("media-adaptive-bitrate", false, "estimate each viewer's rate, cap the screen source with REMB and pace viewer RTP")
 	voiceIdentity := flag.String("voice-identity", "sonoryx-voice.seed", "path to persistent server signing seed")
-	voiceRedundancy := flag.Bool("voice-redundancy", false, "repeat the previous voice frame in each server → client datagram for clients that support it")
+	voiceRedundancy := flag.Bool("voice-redundancy", false, "enable adaptive 2/3-frame downstream voice protection")
+	voiceUplink := flag.Bool("voice-uplink-redundancy", false, "permit adaptive 2/3-frame upstream voice protection")
+	voiceRecipientReserve := flag.Int("voice-recipient-reserve-kib", 128, "downstream reserve per recipient in KiB/s")
+	voiceGlobalReserve := flag.Int("voice-global-reserve-kib", 8192, "global downstream reserve in KiB/s")
+	voiceControlRecipient := flag.Int("voice-control-recipient-kib", 64, "VoiceState bytes per recipient in KiB/s")
+	voiceControlGlobal := flag.Int("voice-control-global-kib", 4096, "global VoiceState bytes in KiB/s")
 	publicStatus := flag.Bool("public-status", false, "allow unauthenticated UDP queries of the connected session count")
 	maxSessions := flag.Int("max-sessions", voice.DefaultMaxSessions, "maximum number of online sessions")
 	flag.Parse()
@@ -62,7 +81,7 @@ func main() {
 	if !explicit["media-identity"] {
 		*mediaIdentity = legacyPath(*mediaIdentity, "govts-media", ".key")
 	}
-	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *mediaAdaptive, *voiceRedundancy, *publicStatus, *maxSessions)
+	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *mediaAdaptive, *voiceRedundancy, *publicStatus, *maxSessions, voiceReserveConfig{Uplink: *voiceUplink, RecipientKiB: *voiceRecipientReserve, GlobalKiB: *voiceGlobalReserve, ControlRecipientKiB: *voiceControlRecipient, ControlGlobalKiB: *voiceControlGlobal})
 	if err != nil {
 		log.Printf("server stopped with error: %v", err)
 	}
@@ -87,7 +106,10 @@ func legacyPath(current, legacy, suffix string) string {
 	return legacy
 }
 
-func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, mediaAdaptive, voiceRedundancy, publicStatus bool, maxSessions int) error {
+func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, mediaAdaptive, voiceRedundancy, publicStatus bool, maxSessions int, voiceReserves voiceReserveConfig) error {
+	if err := voiceReserves.validate(); err != nil {
+		return err
+	}
 	if maxSessions < 1 {
 		return errors.New("max-sessions must be positive")
 	}
@@ -126,6 +148,10 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 	}
 	hub.SetServerVersion(currentVersion)
 	hub.SetVoiceBundles(voiceRedundancy)
+	hub.SetVoiceUplink(voiceReserves.Uplink)
+	hub.SetVoiceReserves(voiceReserves.RecipientKiB*1024, voiceReserves.GlobalKiB*1024)
+	hub.SetVoiceControlRates(voiceReserves.ControlRecipientKiB*1024, voiceReserves.ControlGlobalKiB*1024)
+
 	hub.SetPublicStatus(publicStatus)
 	hub.SetMaxSessions(maxSessions)
 	if mediaPort != 0 && (mediaPort < 1 || mediaPort > 65535) {

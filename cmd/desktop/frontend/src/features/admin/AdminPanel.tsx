@@ -236,7 +236,7 @@ function parseDraft(draft: ChannelDraft): AdminChannelInput | null {
     const position = whole(draft.position, 4294967295);
     const maxUsers = whole(draft.maxUsers, 4294967295);
     const level = parseLevel(draft.minJoinLevel);
-    const kbps = whole(draft.bitrateKbps, 510);
+    const kbps = whole(draft.bitrateKbps, 472);
     if (name === "" || utf8Length(name) > 64 || utf8Length(draft.topic) > 128 || utf8Length(draft.description) > 512 ||
         position === null || maxUsers === null || level === null || kbps === null || kbps < 6) return null;
     return {parentId: draft.parentId, name, topic: draft.topic, description: draft.description, position, maxUsers,

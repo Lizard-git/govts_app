@@ -21,11 +21,13 @@ var (
 )
 
 type streamDecoder struct {
+	identity audio.VoiceIdentity
 	decoder  audio.Decoder
 	lastSeen time.Time
 }
 
 type streamDecoders struct {
+	pruned     voiceMediaStamp
 	newDecoder DecoderFactory
 	bySender   map[uint64]streamDecoder
 }
@@ -45,6 +47,9 @@ func (d *streamDecoders) decodeAt(
 	frame audio.MediaFrame,
 	now time.Time,
 ) (audio.MediaPCMFrame, error) {
+	if stream, ok := d.bySender[frame.SenderID]; ok && stream.identity != frame.Voice {
+		delete(d.bySender, frame.SenderID)
+	}
 	if frame.Missing {
 		return d.concealAt(frame, now)
 	}
@@ -60,6 +65,7 @@ func (d *streamDecoders) decodeAt(
 			)
 		}
 		stream.decoder = decoder
+		stream.identity = frame.Voice
 	}
 	stream.lastSeen = now
 	d.bySender[frame.SenderID] = stream
@@ -78,6 +84,7 @@ func (d *streamDecoders) decodeAt(
 	}
 
 	return audio.MediaPCMFrame{
+		Voice:    frame.Voice,
 		SenderID: frame.SenderID,
 		Sequence: frame.Sequence,
 		Samples:  samples,
@@ -114,6 +121,7 @@ func (d *streamDecoders) concealAt(
 	}
 
 	return audio.MediaPCMFrame{
+		Voice:    frame.Voice,
 		SenderID: frame.SenderID,
 		Sequence: frame.Sequence,
 		Samples:  samples,
@@ -133,6 +141,22 @@ func (d *streamDecoders) RemoveInactive(now time.Time, timeout time.Duration) in
 	return removed
 }
 
+func (d *streamDecoders) Prune(state *State) {
+	if state == nil {
+		return
+	}
+	stamp := state.mediaStamp()
+	if stamp == d.pruned {
+		return
+	}
+	d.pruned = stamp
+	for id, stream := range d.bySender {
+		if !state.VoiceMediaAllowed(id, stream.identity) {
+			delete(d.bySender, id)
+		}
+	}
+}
+
 func DecodeLoop(
 	ctx context.Context,
 	newDecoder DecoderFactory,
@@ -144,6 +168,14 @@ func DecodeLoop(
 	invalid := logging.NewFailures("audio_decode")
 	defer invalid.Close()
 	decoders := newStreamDecoders(newDecoder)
+	var state *State
+	var changes <-chan struct{}
+	if len(states) > 0 {
+		state = states[0]
+		var unsubscribe func()
+		changes, unsubscribe = state.Subscribe(ctx)
+		defer unsubscribe()
+	}
 	cleanupTicker := time.NewTicker(streamCleanupInterval)
 	defer cleanupTicker.Stop()
 
@@ -151,7 +183,10 @@ func DecodeLoop(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-changes:
+			decoders.Prune(state)
 		case now := <-cleanupTicker.C:
+			decoders.Prune(state)
 			decoders.RemoveInactive(now, DefaultStreamIdleTimeout)
 
 		case frame, ok := <-encodedCh:
@@ -159,6 +194,10 @@ func DecodeLoop(
 				return nil
 			}
 
+			decoders.Prune(state)
+			if state != nil && !state.VoiceMediaAllowed(frame.SenderID, frame.Voice) {
+				continue
+			}
 			pcmFrame, err := decoders.decode(frame)
 			if errors.Is(err, errLossNotConcealed) {
 				continue
@@ -170,8 +209,13 @@ func DecodeLoop(
 			if err != nil {
 				return err
 			}
+			if state != nil && !state.VoiceMediaAllowed(frame.SenderID, frame.Voice) {
+				delete(decoders.bySender, frame.SenderID)
+				continue
+			}
 			if frame.Missing && len(states) > 0 {
 				states[0].RecordVoiceConcealed()
+				states[0].VoiceEndpoint().Frame(frame.DatagramSequence, 2, 1)
 			}
 			if len(states) > 0 && !states[0].ObserveSpeaking(frame.SenderID, pcmFrame.Samples, time.Now()) {
 				continue

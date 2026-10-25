@@ -81,6 +81,11 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
 
     const statusLabel = m.connection.status[status as keyof typeof m.connection.status] ?? status;
     const ping = stats?.pingAvailable ? m.connection.pingValue(stats.pingMs.toFixed(0), stats.pingVariationAvailable ? stats.pingVariationMs.toFixed(1) : "") : "—";
+    type Mode = {known: boolean; desired: number; allowed: number; actual: number; reason: number; limited: boolean};
+    const reason = (value: number) => value === 1 ? m.connection.budget : value === 2 ? m.connection.congestion : "";
+    const actualFrames = (value?: Mode) => status === "connected" && value && value.actual >= 1 && value.actual <= 3 ? `${value.actual}` : "—";
+    const modeDetails = (value?: Mode) => !value?.known || status !== "connected" ? "—" : `${value.desired}/${value.allowed}/${value.actual || "—"} ${reason(value.reason)}`;
+    const protectionHint = `${m.connection.protectionTitle}\n${m.connection.modeDetails}: ↓ ${modeDetails(stats?.voice?.incoming)} / ↑ ${modeDetails(stats?.voice?.outgoing)}. ${m.connection.modeDetailsTitle}`;
     return <div className="connection-stats-anchor">
         <button ref={buttonRef} type="button" className={`status-pill ${status}`} aria-label={m.connection.statsButton(statusLabel)}
                 aria-expanded={open} aria-controls="connection-stats-popup" onClick={() => setOpen((value) => !value)}>
@@ -88,12 +93,20 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
         </button>
         {open && <div ref={popupRef} id="connection-stats-popup" className="connection-stats-popup" role="region" aria-label={m.connection.statsRegion}>
             <h2>{m.connection.statsTitle}</h2>
-            <div className="connection-stat-row"><span>{m.connection.lossIn}</span><strong title={stats?.incomingKnown ? undefined : m.connection.noVoiceYet}>{status === "connected" ? `${(stats?.incomingLoss ?? 0).toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>{m.connection.recovered}</span><strong title={m.connection.recoveredTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.recoveredLoss.toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>{m.connection.plc}</span><strong title={m.connection.plcTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.concealedLoss.toFixed(1)}%` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>{m.connection.bursts}</span><strong title={m.connection.burstsTitle}>{status === "connected" && stats?.incomingKnown ? `${stats.lossBurstsSingle} / ${stats.lossBurstsDouble} / ${stats.lossBurstsLong}` : "—"}</strong></div>
-            <div className="connection-stat-row"><span>{m.connection.lossOut}</span><strong title={stats?.outgoingKnown ? undefined : m.connection.waitingServer}>{status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</strong></div>
             <div className="connection-stat-row"><span>{m.connection.ping}</span><strong>{ping}</strong></div>
+            <div className="connection-stat-row"><span title={m.connection.lossWindow}>{m.connection.lossCompact}</span><strong>
+                <span title={m.connection.lossIn}>↓ {status === "connected" && stats?.incomingKnown ? `${stats.incomingLoss.toFixed(1)}%` : "—"}</span>
+                {" / "}<span title={m.connection.lossOut}>↑ {status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</span>
+            </strong></div>
+            <div className="connection-stat-row"><span title={protectionHint}>{m.connection.protection}</span><strong title={protectionHint} aria-label={`↓ ${actualFrames(stats?.voice?.incoming)} / ↑ ${actualFrames(stats?.voice?.outgoing)}. ${protectionHint}`}>
+                ↓ {actualFrames(stats?.voice?.incoming)} / ↑ {actualFrames(stats?.voice?.outgoing)}
+            </strong></div>
+            <details className="connection-voice-details"><summary title={m.connection.lossWindow}>{m.connection.details}</summary>
+                <div className="connection-stat-row"><span title={m.connection.recoveredTitle}>{m.connection.recovered}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.restored : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.restored : "—"}</strong></div>
+                <div className="connection-stat-row"><span title={m.connection.plcTitle}>{m.connection.plc}</span><strong>{stats?.incomingKnown ? stats.voice.incoming.plc : "—"}</strong></div>
+                <div className="connection-stat-row"><span>{m.connection.late}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.late : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.late : "—"}</strong></div>
+                <div className="connection-stat-row"><span title={m.connection.burstsTitle}>{m.connection.bursts}</span><strong>{stats?.incomingKnown ? `${stats.lossBurstsSingle} / ${stats.lossBurstsDouble} / ${stats.lossBurstsLong}` : "—"}</strong></div>
+            </details>
             {sharing.active && status === "connected" && <section className="connection-screen-stats" aria-label={m.connection.shareStats}>
                 <h2>{m.connection.shareTitle}</h2>
                 <div className="connection-stat-row"><span>{m.connection.quality}</span><strong>{screenStats?.selected ?? `${sharing.settings.resolution} / ${sharing.settings.fps} FPS / ${sharing.settings.codec}`}</strong></div>

@@ -44,6 +44,26 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketVoiceSummary, protocol.PacketVoiceReport:
+				if packet.RequestID == 0 && packet.Sequence == 0 {
+					if err := state.AcceptVoiceTelemetry(generation, packet, time.Now()); err != nil {
+						state.RecordVoiceProtocolDrop(generation)
+						invalidEvents.RecordKind("voice_telemetry", err, packet.SessionID)
+					}
+				}
+			case protocol.PacketVoiceState:
+				if packet.RequestID != 0 || packet.Sequence != 0 {
+					continue
+				}
+				select {
+				case state.voicePages <- voiceStateEnvelope{generation: generation, packet: packet}:
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					// Voice assembly/configuration must not stall heartbeat and
+					// snapshot responses. A missing page is recovered by retry.
+					state.RequestVoiceResync(generation)
+				}
 			case protocol.PacketChatChanged:
 				if packet.RequestID == 0 && len(packet.Payload) == 0 {
 					state.ChatChanged()
@@ -146,11 +166,13 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 		return fmt.Errorf("%w: heartbeat deadline must be positive", ErrConnectionLost)
 	}
 	attemptTimeout := deadline / heartbeatAttempts
+	generation := state.Generation()
 	started := time.Now()
 	count, end := state.VoiceSentInWindow()
 	// The 30-second range uses 16 bits for the final sequence and 14 for its size.
 	window := uint32(end)<<14 | uint32(count)
-	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat, Sequence: window}, attemptTimeout, heartbeatAttempts)
+	attempts := 0
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat, Sequence: window}, attemptTimeout, heartbeatAttempts, func() error { attempts++; return nil })
 	if err != nil {
 		return fmt.Errorf("%w: heartbeat: %w", ErrConnectionLost, err)
 	}
@@ -162,6 +184,9 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 	}
 	if response.Type == protocol.PacketSessionInvalid {
 		return fmt.Errorf("%w: server rejected session", ErrConnectionLost)
+	}
+	if attempts == 1 {
+		state.RecordVoiceRTT(generation, response.RequestID, time.Since(started), time.Now())
 	}
 	state.MarkHeartbeatAck(time.Now())
 	state.measurements.recordPing(time.Since(started), time.Now())
@@ -196,44 +221,88 @@ func joinChannelWithTimeout(
 	state *State,
 	channelID domain.ChannelID,
 	timeout time.Duration,
-) error {
+) (runErr error) {
 	generation := state.Generation()
-	payload, err := protocol.EncodeJoinChannelRequest(channelID)
+	if channelID == 0 {
+		return errors.New("channel ID must not be zero")
+	}
+	unlock, err := state.lockVoiceCommand(ctx, generation)
 	if err != nil {
 		return err
 	}
-
-	packet := protocol.VoicePacket{
-		Type:    protocol.PacketJoinChannel,
-		Payload: payload,
-	}
-	response, err := DoRequest(ctx, conn, state, packet, timeout)
-	if err != nil {
-		return fmt.Errorf("join channel %d: %w", channelID, err)
-	}
-	if err := validateJoinResponse(response, channelID); err != nil {
+	defer unlock()
+	changingChannel := state.ChannelID() != channelID
+	if err := state.beginVoiceCommand(generation, changingChannel, changingChannel); err != nil {
 		return err
 	}
-
-	_, revision, _ := protocol.DecodeJoinChannelAck(response.Payload)
-	if !state.ConfirmChannel(generation, channelID, revision) {
-		return errors.New("client session changed during join")
+	uncertain := false
+	defer func() { runErr = state.finishVoiceCommand(generation, uncertain, runErr) }()
+	for attempt := 0; attempt < 3; attempt++ {
+		expected, err := state.voiceCommandRevision(generation)
+		if err != nil {
+			return err
+		}
+		payload, err := protocol.EncodeJoinChannelRequest(channelID, expected)
+		if err != nil {
+			return err
+		}
+		response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketJoinChannel, Payload: payload}, timeout, requestAttempts, func() error {
+			_, err := state.voiceCommandRevision(generation)
+			if err == nil {
+				uncertain = true
+			}
+			return err
+		})
+		if err != nil {
+			var rejection *ServerRequestError
+			if errors.As(err, &rejection) {
+				uncertain = false
+			}
+			return fmt.Errorf("join channel %d: %w", channelID, err)
+		}
+		if response.Type != protocol.PacketJoinChannelAck {
+			return fmt.Errorf("unexpected join response: type=%d", response.Type)
+		}
+		ack, err := protocol.DecodeVoiceControlAck(response.Payload)
+		if err != nil {
+			return err
+		}
+		if ack.Status == protocol.VoiceControlOK {
+			if err := validateJoinResponse(response, channelID); err != nil {
+				return err
+			}
+		}
+		current, err := state.acceptVoiceCommandAck(generation, expected, ack)
+		if err != nil {
+			return err
+		}
+		uncertain = false
+		if ack.Status == protocol.VoiceControlStale {
+			continue
+		}
+		if current && !state.ConfirmChannel(generation, channelID, ack.DomainRevision) {
+			return ErrConnectionLost
+		}
+		return nil
 	}
-	return nil
+	return ErrVoiceControlStale
 }
 
 func validateJoinResponse(response ControlResponse, requestedChannel domain.ChannelID) error {
 	if response.Type != protocol.PacketJoinChannelAck {
 		return fmt.Errorf("unexpected join response: type=%d", response.Type)
 	}
-	confirmedChannel, _, err := protocol.DecodeJoinChannelAck(response.Payload)
+	ack, err := protocol.DecodeVoiceControlAck(response.Payload)
 	if err != nil {
 		return fmt.Errorf("invalid join response: %w", err)
 	}
-	if confirmedChannel != requestedChannel {
+	if ack.Status != protocol.VoiceControlOK {
+		return ErrVoiceControlStale
+	}
+	if ack.ChannelID != requestedChannel {
 		return fmt.Errorf(
 			"join response channel mismatch: got %d, want %d",
-			confirmedChannel,
+			ack.ChannelID,
 			requestedChannel,
 		)
 	}

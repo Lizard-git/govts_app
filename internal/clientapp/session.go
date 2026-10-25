@@ -101,9 +101,11 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 		return networkLoop("receive", func() error { return voiceclient.ReceiveLoop(ctx, conn, encodedInCh, controlCh, state) })
 	})
 	supervisor.GoNamed("mix", func(ctx context.Context) error {
-		return voiceclient.MixLoop(ctx, decodedCh, pcmOutCh, 20*time.Millisecond, state.NotificationSounds())
+		return voiceclient.MixLoopWithState(ctx, decodedCh, pcmOutCh, 20*time.Millisecond, state)
 	})
-	supervisor.GoNamed("playback", func(ctx context.Context) error { return voiceclient.PlaybackLoop(ctx, player, pcmOutCh, state.Audio) })
+	supervisor.GoNamed("playback", func(ctx context.Context) error {
+		return voiceclient.PlaybackLoopWithState(ctx, player, pcmOutCh, state)
+	})
 	supervisor.GoNamed("control", func(ctx context.Context) error { return voiceclient.ControlLoop(ctx, state, controlCh) })
 	supervisor.GoNamed("speaking", func(ctx context.Context) error { return voiceclient.SpeakingLoop(ctx, state) })
 	supervisor.GoNamed("notices", func(ctx context.Context) error { return voiceclient.ConsoleStateLoop(ctx, state, noticeOutput) })
@@ -144,6 +146,10 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err := encoder.Configure(activeProfile); err != nil {
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
+	supervisor.GoNamed("voice_telemetry", func(ctx context.Context) error { return voiceclient.VoiceTelemetryLoop(ctx, conn, state) })
+	supervisor.GoNamed("voice_state", func(ctx context.Context) error {
+		return voiceclient.VoiceStateLoop(ctx, conn, state, encoder.Configure)
+	})
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
 	if !firstConnection && !topologyUnchanged {
 		logger.Printf("reconnected; channel structure changed")
@@ -179,28 +185,6 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	})
 	supervisor.GoNamed("audio_state", func(ctx context.Context) error {
 		return networkLoop("audio state", func() error { return voiceclient.AudioStateLoop(ctx, conn, state) })
-	})
-	supervisor.GoNamed("audio_profile", func(ctx context.Context) error {
-		changed, unsubscribe := state.Subscribe(ctx)
-		defer unsubscribe()
-		channelID := state.ChannelID()
-		profile := activeProfile
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-changed:
-				nextChannelID := state.ChannelID()
-				nextProfile, profileErr := channelAudioProfile(state.Snapshot(), nextChannelID)
-				if profileErr != nil || (nextChannelID == channelID && nextProfile == profile) {
-					continue
-				}
-				if err := encoder.Configure(nextProfile); err != nil {
-					return fmt.Errorf("configure Opus encoder for channel %d: %w", nextChannelID, err)
-				}
-				channelID, profile = nextChannelID, nextProfile
-			}
-		}
 	})
 	supervisor.GoNamed("audio_devices", func(ctx context.Context) error {
 		current := devices

@@ -79,7 +79,7 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 	}
 	defer store.Close()
 	hub := voice.NewHub()
-	version, err := appversion.Parse("0.3.0")
+	version, err := appversion.Parse(appversion.MinimumServerVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestRemoteAdministrationOverSecureUDP(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = connection.Close() })
-		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, name, private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.3.0")
+		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, name, private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, appversion.MinimumServerVersion)
 		if err != nil {
 			t.Fatal(err)
 		}

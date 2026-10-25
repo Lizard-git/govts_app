@@ -18,6 +18,7 @@ import (
 	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 var (
@@ -50,31 +51,39 @@ const (
 type sessionIDGenerator func() (uint64, error)
 
 type Hub struct {
-	mu            sync.RWMutex
-	sessions      map[uint64]*Session
-	screenStreams map[domain.StreamID]domain.ScreenStream
-	streamByOwner map[uint64]domain.StreamID
-	channels      map[domain.ChannelID]*domain.Channel
-	newSessionID  sessionIDGenerator
-	nextChannelID domain.ChannelID
-	revision      domain.StateRevision
-	serverInfo    domain.ServerInfo
-	serverVersion appversion.Number
-	voiceBundles  bool
-	publicStatus  bool
-	maxSessions   int
-	outbox        []domain.StateEvent
-	eventReady    chan struct{}
+	voiceStateRecipientRate, voiceStateGlobalRate int
+	voiceStateDeferrals                           uint64
+	voiceReserve                                  int
+	voicePool                                     *voiceflow.Pool
+	mu                                            sync.RWMutex
+	sessions                                      map[uint64]*Session
+	screenStreams                                 map[domain.StreamID]domain.ScreenStream
+	streamByOwner                                 map[uint64]domain.StreamID
+	channels                                      map[domain.ChannelID]*domain.Channel
+	newSessionID                                  sessionIDGenerator
+	nextChannelID                                 domain.ChannelID
+	revision                                      domain.StateRevision
+	serverInfo                                    domain.ServerInfo
+	serverVersion                                 appversion.Number
+	voiceBundles                                  bool
+	voiceUplink                                   bool
+	voiceStateBudget                              voiceStateByteBudget
+	voiceStateCursor                              uint64
+	publicStatus                                  bool
+	maxSessions                                   int
+	outbox                                        []domain.StateEvent
+	eventReady                                    chan struct{}
 }
 
 // OperationalSnapshot is a point-in-time copy for local server diagnostics.
 // Unlike the future client state snapshot, it intentionally contains runtime
 // session data such as UDP endpoints and LastSeen.
 type OperationalSnapshot struct {
-	Revision   domain.StateRevision
-	ServerInfo domain.ServerInfo
-	Channels   []domain.Channel
-	Sessions   []Session
+	VoiceControlBudgetDeferrals uint64
+	Revision                    domain.StateRevision
+	ServerInfo                  domain.ServerInfo
+	Channels                    []domain.Channel
+	Sessions                    []Session
 }
 
 func NewHub() *Hub {
@@ -215,7 +224,16 @@ func (h *Hub) SetMaxSessions(limit int) {
 func (h *Hub) SetVoiceBundles(enabled bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.voiceBundles == enabled {
+		return
+	}
 	h.voiceBundles = enabled
+	for _, s := range h.sessions {
+		if s.voiceFlow != nil {
+			s.voiceFlow.SetEnabled(enabled)
+		}
+	}
+	h.invalidateVoiceConfigLocked()
 	if !enabled {
 		for _, session := range h.sessions {
 			session.lastVoice = protocol.VoiceBundleFrame{}
@@ -310,7 +328,7 @@ func (h *Hub) recordVoicePacketAt(id uint64, sequence uint32, at time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.sessions[id]
-	if s == nil || sequence == 0 {
+	if s == nil {
 		return
 	}
 	trimVoiceArrivals(s, at)
@@ -366,12 +384,19 @@ func (h *Hub) JoinChannel(id uint64, channelID domain.ChannelID) error {
 func (h *Hub) SetAudioState(id uint64, muted, deafened bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.setAudioStateLocked(id, muted, deafened)
+}
+
+func (h *Hub) setAudioStateLocked(id uint64, muted, deafened bool) error {
 	session, ok := h.sessions[id]
 	if !ok {
 		return ErrSessionNotFound
 	}
 	if session.Muted == muted && session.Deafened == deafened {
 		return nil
+	}
+	if err := h.advanceVoiceIdentityLocked(session, session.Muted != muted, session.Deafened != deafened); err != nil {
+		return err
 	}
 	session.Muted = muted
 	session.Deafened = deafened
@@ -561,10 +586,19 @@ func (h *Hub) joinChannelLocked(id uint64, channelID domain.ChannelID) error {
 	if channel.MaxUsers > 0 && h.channelMemberCountLocked(channelID) >= channel.MaxUsers {
 		return fmt.Errorf("%w: %q", ErrChannelFull, channel.Name)
 	}
+	if h.channelMemberCountLocked(channelID) >= protocol.MaxVoiceSources {
+		return fmt.Errorf("%w: voice source limit %d", ErrChannelFull, protocol.MaxVoiceSources)
+	}
+	if err := h.advanceVoiceIdentityLocked(session, true, true); err != nil {
+		return err
+	}
 
 	h.stopScreenShareByOwnerLocked(id)
 	session.ChannelID = channelID
 	h.revision++
+	if session.voiceControl != nil {
+		session.voiceControl.profileRevision = uint64(h.revision)
+	}
 	h.emitLocked(domain.StateEvent{Kind: domain.ParticipantMoved, SessionID: id, ChannelID: channelID})
 	return nil
 }
@@ -770,7 +804,7 @@ func (h *Hub) Inspect() OperationalSnapshot {
 	}
 	sortSessionsByID(sessions)
 
-	return OperationalSnapshot{
+	return OperationalSnapshot{VoiceControlBudgetDeferrals: h.voiceStateDeferrals,
 		Revision:   h.revision,
 		ServerInfo: h.serverInfo,
 		Channels:   h.channelsSnapshotLocked(),
@@ -1174,6 +1208,9 @@ func cloneSession(session *Session) *Session {
 	clone.voiceArrivals = nil
 	clone.voiceSeen = nil
 	clone.lastVoice = protocol.VoiceBundleFrame{}
+	clone.voiceControl = nil
+	clone.voiceFrames = nil
+	clone.voiceFlow = nil
 	return &clone
 }
 

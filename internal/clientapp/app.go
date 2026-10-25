@@ -818,3 +818,12 @@ func openClientPacketConn(endpoint netip.AddrPort) (*udp.ClientPacketConn, *prot
 	}
 	return conn, codec, nil
 }
+
+func (a *App) SetVoiceReserveKiB(value int) error {
+	if value < 1 || value > 1048576 {
+		return errors.New("voice reserve must be 1..1048576 KiB/s")
+	}
+	a.state.SetVoiceReserve(value * 1024)
+	return nil
+}
+func (a *App) VoiceReserveKiB() int { return a.state.VoiceReserve() / 1024 }

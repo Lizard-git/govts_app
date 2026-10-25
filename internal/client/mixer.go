@@ -55,6 +55,7 @@ func cueWakeFrames(epoch uint64) []audio.MediaPCMFrame {
 }
 
 type pcmMixer struct {
+	pruned        voiceMediaStamp
 	bySender      map[uint64][]audio.MediaPCMFrame
 	droppedFrames uint64
 }
@@ -110,12 +111,16 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	sampleCount := 0
 	duration := time.Duration(0)
 	var cue uint8
+	var voices []audio.VoiceReference
 	for _, frame := range frames {
 		if frame.PlaybackEpoch != epoch {
 			if frame.Cue != 0 {
 				audio.SoundLogf("sound cue dropped: kind=%s reason=stale_epoch epoch=%d current=%d", NotificationSoundKind(frame.Cue), frame.PlaybackEpoch, epoch)
 			}
 			continue
+		}
+		if frame.Voice.Generation != 0 {
+			voices = append(voices, audio.VoiceReference{SenderID: frame.SenderID, Identity: frame.Voice})
 		}
 		if frame.Cue != 0 {
 			cue = frame.Cue
@@ -142,7 +147,7 @@ func mixPCMFrames(frames []audio.MediaPCMFrame) audio.PCMFrame {
 	for i, sum := range sums {
 		samples[i] = clampInt16(sum)
 	}
-	return audio.PCMFrame{Samples: samples, Duration: duration, PlaybackEpoch: epoch, Cue: cue}
+	return audio.PCMFrame{Voices: voices, Samples: samples, Duration: duration, PlaybackEpoch: epoch, Cue: cue}
 }
 
 func clampInt16(value int64) int16 {
@@ -160,6 +165,35 @@ func clampInt16(value int64) int16 {
 	return int16(value)
 }
 
+func (m *pcmMixer) Prune(state *State) {
+	if state == nil {
+		return
+	}
+	stamp := state.mediaStamp()
+	if stamp == m.pruned {
+		return
+	}
+	m.pruned = stamp
+	for id, queue := range m.bySender {
+		kept := queue[:0]
+		for _, frame := range queue {
+			if state.VoiceMediaAllowed(id, frame.Voice) {
+				kept = append(kept, frame)
+			}
+		}
+		clear(queue[len(kept):])
+		if len(kept) == 0 {
+			delete(m.bySender, id)
+		} else {
+			m.bySender[id] = kept
+		}
+	}
+}
+
+func MixLoopWithState(ctx context.Context, decoded <-chan audio.MediaPCMFrame, mixed chan<- audio.PCMFrame, interval time.Duration, state *State) error {
+	return mixLoop(ctx, decoded, mixed, interval, state, state.NotificationSounds())
+}
+
 func MixLoop(
 	ctx context.Context,
 	decodedCh <-chan audio.MediaPCMFrame,
@@ -167,6 +201,17 @@ func MixLoop(
 	interval time.Duration,
 	notifications ...<-chan NotificationSound,
 ) error {
+	return mixLoop(ctx, decodedCh, mixedCh, interval, nil, notifications...)
+}
+
+func mixLoop(ctx context.Context, decodedCh <-chan audio.MediaPCMFrame, mixedCh chan<- audio.PCMFrame, interval time.Duration, state *State, notifications ...<-chan NotificationSound) error {
+	var changes <-chan struct{}
+	if state != nil {
+		var unsubscribe func()
+		changes, unsubscribe = state.Subscribe(ctx)
+		defer unsubscribe()
+	}
+
 	defer close(mixedCh)
 	if interval <= 0 {
 		interval = frameDuration
@@ -215,6 +260,7 @@ func MixLoop(
 	// ticks and stays on the same clock as voice.
 	mixOnce := func() error {
 		drainNotifications()
+		mixer.Prune(state)
 		if len(effects) > 0 {
 			mixer.Push(effects[0])
 			effects = effects[1:]
@@ -233,11 +279,26 @@ func MixLoop(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-changes:
+			mixer.Prune(state)
 		case frame, ok := <-decodedCh:
 			if !ok {
+				mixer.Prune(state)
 				return drainMixer(ctx, mixer, mixedCh)
 			}
-			mixer.Push(frame)
+			if state != nil {
+				state.mu.RLock()
+				allowed := state.voiceMediaAllowedLocked(frame.SenderID, frame.Voice)
+				if allowed {
+					mixer.Push(frame)
+				}
+				state.mu.RUnlock()
+				if !allowed {
+					continue
+				}
+			} else {
+				mixer.Push(frame)
+			}
 			select {
 			case <-ticker.C:
 				if err := mixOnce(); err != nil {

@@ -11,6 +11,8 @@ import {MediaTrustDialog} from "./features/screen/MediaTrustConfirm";
 import {ScreenShareDialog, useScreenSharing, type ScreenSharingState} from "./features/screen/ScreenShareDialog";
 import {AudioControls, ConnectionPage, LobbyBar, StatusBar, type Page} from "./features/connection/ConnectionViews";
 import {ParticipantRow} from "./features/participants/ParticipantRow";
+import {ConnectionProgress} from "./features/connection/ConnectionProgress";
+import {EventPanel} from "./features/connection/EventPanel";
 import {RecentServers} from "./features/connection/RecentServers";
 import {rememberServerAddress} from "./features/connection/ConnectionViews";
 import {Icon} from "./components/Icon";
@@ -574,7 +576,7 @@ function ChannelsPage({view, events, invoke, sharing, screenMedia, onError, onRe
                 <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError} refreshingServers={refreshingServers} onRefreshServers={onRefreshServers}/>
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
-            <section className="channel-stage">{selected ? <>
+            <section className={`channel-stage ${view.connectionStatus !== "connected" ? "connection-pending" : ""}`}>{selected && view.connectionStatus === "connected" ? <>
                 <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || m.channels.voice}>{selected.topic || m.channels.voice}</p></div>
                     <button className="info-toggle" aria-label={m.channels.info} aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
@@ -616,8 +618,8 @@ function ChannelsPage({view, events, invoke, sharing, screenMedia, onError, onRe
                         {chatStore && <ChatPanel store={chatStore} localName={localChatName} target={{kind: "direct", id: chat.userId}} title={m.channels.direct(participants.find((participant) => participant.userId === chat.userId)?.displayName ?? dialogs.find((d) => d.userId === chat.userId)?.displayName ?? chat.displayName)} online={participants.some((p) => p.userId === chat.userId)} active={contentTab === `direct:${chat.userId}`} connected={view.connectionStatus === "connected"}/>}
                     </div>)}
                 </section>
-            </> : <div className="empty-state">{m.channels.waitingChannel}</div>}
-                <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div>
+            </> : <ConnectionProgress view={view} events={events}/>}
+                {view.connectionStatus === "connected" && <div className="channel-audio-dock"><AudioControls view={view} invoke={invoke} sharing={sharing}/></div>}
             </section>
             {infoVisible && <div className="workspace-divider info-divider" {...workspaceResize.separatorProps("info")}/>}
             {showInfo && selected && <section id="channel-info-pane" className="panel channel-detail">{selected ? <><div className="channel-info-heading"><span>{m.channels.info}</span><button aria-label={m.channels.closeInfo} onClick={() => setShowInfo(false)}>×</button></div>
@@ -709,26 +711,6 @@ function ChannelTree({channels, participants, screenOwners, canKick, canBan, can
         <div className="empty-state">{m.channels.noChannels}</div>}</div>;
 }
 
-function EventPanel({events, active}: {events: ClientEventDTO[]; active: boolean}) {
-    const {m, htmlLang} = useLocale();
-    const listRef = useRef<HTMLDivElement>(null);
-    const stickToBottom = useRef(true);
-    useEffect(() => {
-        if (active && stickToBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-    }, [events, active]);
-    return <section className="panel event-panel" aria-label={m.channels.eventLog}>
-        <div className="event-list" ref={listRef} onScroll={(event) => {
-            const element = event.currentTarget;
-            stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 12;
-        }}>{events.length === 0 ? <div className="empty-event">{m.channels.eventsEmpty}</div> :
-            events.map((item) => <div className={`event-row kind-${item.kind}`} key={item.sequence}>
-                <time>{new Date(item.time).toLocaleTimeString(htmlLang, {
-                    hour: "2-digit", minute: "2-digit", second: "2-digit"
-                })}</time>
-                <span className="event-marker"/><span>{item.message}</span>
-            </div>)}</div>
-    </section>;
-}
 
 function vadModeOptions(m: Messages): SelectOption[] {
     return [

@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/audio/vad"
 	"uniclog.io/sonoryx/internal/audio/voicegate"
+	"uniclog.io/sonoryx/internal/logging"
 	"uniclog.io/sonoryx/internal/protocol"
 	"uniclog.io/sonoryx/internal/transport/udp"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 const frameDuration = 20 * time.Millisecond
@@ -42,6 +45,9 @@ func EncodeLoopWithPipeline(
 	states ...*State,
 ) error {
 	defer close(audioCh)
+	invalid := logging.NewFailures("audio_encode")
+	defer invalid.Close()
+	var localSequence uint32
 	var pipelineEpoch uint64
 	var havePipelineEpoch bool
 	var vadEnabled bool
@@ -158,11 +164,27 @@ func EncodeLoopWithPipeline(
 						continue
 					}
 				}
+				identity := audio.VoiceIdentity{}
+				localSequence++
+				sequence := localSequence
+				if len(states) > 0 {
+					var allowed bool
+					identity, sequence, allowed = states[0].reserveVoiceFrame(released.ControlEpoch)
+					if !allowed {
+						continue
+					}
+				}
+				createdAt := time.Now()
 				buffer, err := encoder.Encode(released.Samples)
 				if err != nil {
-					return err
+					invalid.Record(err, sequence)
+					continue
 				}
-				frame := audio.Frame{Data: buffer, Duration: released.Duration, ControlEpoch: released.ControlEpoch}
+				if len(buffer) == 0 || len(buffer) > protocol.MaxVoiceFrameSize {
+					invalid.Record(protocol.ErrInvalidVoiceBundle, sequence)
+					continue
+				}
+				frame := audio.Frame{Voice: identity, Sequence: sequence, CreatedAt: createdAt, Data: buffer, Duration: released.Duration, ControlEpoch: released.ControlEpoch}
 				select {
 				case audioCh <- frame:
 				case <-ctx.Done():
@@ -178,8 +200,11 @@ func SendLoopWithStats(ctx context.Context, conn *udp.ClientPacketConn, sessionI
 }
 
 func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64, audioCh <-chan audio.Frame, control *AudioControlState, state *State) error {
-	sequence := uint32(1)
-
+	var datagram uint32
+	var history voiceflow.Window
+	var identity audio.VoiceIdentity
+	invalid := logging.NewFailures("voice_send")
+	defer invalid.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -188,13 +213,69 @@ func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64,
 			if !ok {
 				return nil
 			}
-			sent := protocol.NewVoicePacket(sessionID, sequence, frame.Data)
-			packetSent := false
 			send := func() error {
-				if err := conn.SendPacket(sent); err != nil {
+				if frame.Voice.SourceEpoch == 0 {
+					return nil
+				}
+
+				if state != nil {
+					// Keep the session/epoch stable through the write and accounting.
+					state.mu.RLock()
+					defer state.mu.RUnlock()
+					if !state.outgoingVoiceAllowedLocked(frame.Voice) {
+						return nil
+					}
+				}
+				if !frame.CreatedAt.IsZero() && time.Since(frame.CreatedAt) > 40*time.Millisecond {
+					if state != nil {
+						state.voiceFlow.QueueDrop(time.Now())
+					}
+					return nil
+				}
+				if identity != frame.Voice {
+					identity = frame.Voice
+					history = voiceflow.Window{}
+				}
+				now := time.Now()
+				primary := protocol.VoiceBundleFrame{Sequence: frame.Sequence, Payload: frame.Data}
+				if _, err := history.Accept([]protocol.VoiceBundleFrame{primary}, now); err != nil {
 					return err
 				}
-				packetSent = true
+				count := 1
+				if state != nil {
+					state.voiceFlow.SetEnabled(state.voice.header.EnabledDirections&protocol.VoiceDirectionUp != 0)
+					count = state.voiceFlow.FrameCount(now)
+				}
+				if state != nil {
+					state.voiceFlow.SizeDrops(history.SizeDrops(primary, count, now))
+				}
+				frames := history.ForFrame(primary, count, now)
+				if state != nil {
+					frames = state.voiceFlow.Select(frames, true, now)
+				}
+
+				datagram++ // An attempted local write consumes a transport sequence too.
+				packet, err := protocol.NewVoiceBundleV2Packet(sessionID, protocol.VoiceBundleV2{DatagramSequence: datagram, SourceEpoch: identity.SourceEpoch, Frames: frames}, true)
+				if err != nil {
+					return err
+				}
+				notAfter := time.Time{}
+				if !frame.CreatedAt.IsZero() {
+					notAfter = frame.CreatedAt.Add(40 * time.Millisecond)
+				}
+				err = conn.SendPacketBefore(packet, notAfter)
+				if errors.Is(err, udp.ErrSendExpired) && state != nil {
+					state.voiceFlow.QueueDrop(time.Now())
+				}
+				if state != nil {
+					state.voiceFlow.Sent(datagram, err == nil, true, time.Now())
+				}
+				if err != nil {
+					return err
+				}
+				if state != nil {
+					state.RecordVoiceSent(datagram)
+				}
 				return nil
 			}
 			var err error
@@ -204,13 +285,10 @@ func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64,
 				err = send()
 			}
 			if err != nil {
-				return err
-			}
-			if packetSent {
-				if state != nil {
-					state.RecordVoiceSent(sequence)
+				if errors.Is(err, net.ErrClosed) {
+					return err
 				}
-				sequence++
+				invalid.Record(err, sessionID)
 			}
 		}
 	}

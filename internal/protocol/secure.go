@@ -218,7 +218,7 @@ func (c *SecureDatagramCodec) Decode(ctx DatagramContext, datagram []byte) (Voic
 		return VoicePacket{}, rejectDatagram(fmt.Errorf("%w: %w", ErrSecureAuthentication, err))
 	}
 	packet, err := DecodePacket(plain)
-	if err != nil || isAuthPacket(packet.Type) || IsServerStatusPacket(packet.Type) || (c.server && packet.SessionID != id) || (!c.server && packet.Type != PacketVoice && packet.Type != PacketVoiceBundle && packet.SessionID != id) {
+	if err != nil || isAuthPacket(packet.Type) || IsServerStatusPacket(packet.Type) || (c.server && packet.SessionID != id) || (!c.server && packet.Type != PacketVoice && packet.Type != PacketVoiceBundle && packet.Type != PacketVoiceBundleV2 && packet.SessionID != id) {
 		return VoicePacket{}, rejectDatagram(errors.New("invalid secure packet"))
 	}
 	session.markReceived(counter)

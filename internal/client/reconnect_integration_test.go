@@ -78,9 +78,24 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantVoice := []byte{1, 2, 3, 4}
-	if err := clientConn.SendPacket(protocol.VoicePacket{Type: protocol.PacketVoice, SessionID: secondID, Sequence: 9, Payload: wantVoice}); err != nil {
+	if err := secondHub.RequestVoiceState(receiverID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	for _, delivery := range secondHub.DueVoiceStates(time.Now()) {
+		page, err := protocol.DecodeVoiceState(delivery.Packets[0].Payload)
+		if err != nil || !secondHub.AckVoiceState(delivery.Session.ID, page.Revision) {
+			t.Fatal("voice state ack failed", err)
+		}
+	}
+	source, _ := secondHub.Get(secondID)
+	outgoing, err := protocol.NewVoiceBundleV2Packet(secondID, protocol.VoiceBundleV2{DatagramSequence: 1, SourceEpoch: source.SourceEpoch, Frames: []protocol.VoiceBundleFrame{{Sequence: 9, Payload: wantVoice}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clientConn.SendPacket(outgoing); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := receiverConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +103,8 @@ func TestClientRecoversAfterServerHubRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if voicePacket.Type != protocol.PacketVoice || voicePacket.SessionID != secondID || voicePacket.Sequence != 9 || !bytes.Equal(voicePacket.Payload, wantVoice) {
+	bundle, decodeErr := protocol.DecodeVoiceBundleV2Packet(voicePacket, false)
+	if decodeErr != nil || voicePacket.SessionID != secondID || voicePacket.Sequence != 9 || len(bundle.Frames) != 1 || !bytes.Equal(bundle.Frames[0].Payload, wantVoice) {
 		t.Fatalf("voice packet after reconnect = %+v", voicePacket)
 	}
 }

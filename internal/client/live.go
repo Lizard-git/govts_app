@@ -155,6 +155,13 @@ func screenChannel(snapshot domain.ServerSnapshot, sessionID uint64, fallback do
 // The join ACK, the move event and a resync snapshot can each report the
 // move first; the later ones see the channel already set and stay silent.
 func (s *State) queueChannelChangeLocked(from, to domain.ChannelID, via string) {
+	s.Audio.mu.Lock()
+	blocked := s.Audio.commandPlaybackPaused
+	s.Audio.mu.Unlock()
+	if from != 0 && from != to && (blocked || (s.voice != nil && s.voice.header.OwnChannelID != uint64(to))) {
+		s.voiceDeferredChannelCue = true
+		return
+	}
 	if from != 0 && to != 0 && from != to {
 		audio.SoundLogf("local channel changed: from=%d to=%d via=%s", from, to, via)
 		s.queueNotificationSoundLocked(NotificationChannelChanged)

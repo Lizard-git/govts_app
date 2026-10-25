@@ -91,24 +91,48 @@ type AudioMeterDTO struct {
 }
 
 type ConnectionStatsDTO struct {
-	SessionID              string  `json:"sessionId"`
-	Generation             string  `json:"generation"`
-	Status                 string  `json:"status"`
-	PingMS                 float64 `json:"pingMs"`
-	PingVariationMS        float64 `json:"pingVariationMs"`
-	PingAvailable          bool    `json:"pingAvailable"`
-	PingVariationAvailable bool    `json:"pingVariationAvailable"`
-	PingSampleAtMS         int64   `json:"pingSampleAtMs"`
-	IncomingLoss           float64 `json:"incomingLoss"`
-	IncomingKnown          bool    `json:"incomingKnown"`
-	IncomingSampleAtMS     int64   `json:"incomingSampleAtMs"`
-	OutgoingLoss           float64 `json:"outgoingLoss"`
-	OutgoingKnown          bool    `json:"outgoingKnown"`
-	RecoveredLoss          float64 `json:"recoveredLoss"`
-	ConcealedLoss          float64 `json:"concealedLoss"`
-	LossBurstsSingle       int     `json:"lossBurstsSingle"`
-	LossBurstsDouble       int     `json:"lossBurstsDouble"`
-	LossBurstsLong         int     `json:"lossBurstsLong"`
+	Voice                  VoiceStatsDTO `json:"voice"`
+	SessionID              string        `json:"sessionId"`
+	Generation             string        `json:"generation"`
+	Status                 string        `json:"status"`
+	PingMS                 float64       `json:"pingMs"`
+	PingVariationMS        float64       `json:"pingVariationMs"`
+	PingAvailable          bool          `json:"pingAvailable"`
+	PingVariationAvailable bool          `json:"pingVariationAvailable"`
+	PingSampleAtMS         int64         `json:"pingSampleAtMs"`
+	IncomingLoss           float64       `json:"incomingLoss"`
+	IncomingKnown          bool          `json:"incomingKnown"`
+	IncomingSampleAtMS     int64         `json:"incomingSampleAtMs"`
+	OutgoingLoss           float64       `json:"outgoingLoss"`
+	OutgoingKnown          bool          `json:"outgoingKnown"`
+	RecoveredLoss          float64       `json:"recoveredLoss"`
+	ConcealedLoss          float64       `json:"concealedLoss"`
+	LossBurstsSingle       int           `json:"lossBurstsSingle"`
+	LossBurstsDouble       int           `json:"lossBurstsDouble"`
+	LossBurstsLong         int           `json:"lossBurstsLong"`
+}
+
+type VoiceDirectionDTO struct {
+	Known    bool   `json:"known"`
+	Desired  byte   `json:"desired"`
+	Allowed  byte   `json:"allowed"`
+	Actual   byte   `json:"actual"`
+	Reason   byte   `json:"reason"`
+	Limited  bool   `json:"limited"`
+	Restored uint64 `json:"restored"`
+	Late     uint64 `json:"late"`
+	PLC      uint64 `json:"plc"`
+}
+type VoiceStatsDTO struct {
+	ReceivedCopies    uint64            `json:"receivedCopies"`
+	SizeDrops         uint64            `json:"sizeDrops"`
+	ProtocolDrops     uint64            `json:"protocolDrops"`
+	Incoming          VoiceDirectionDTO `json:"incoming"`
+	Outgoing          VoiceDirectionDTO `json:"outgoing"`
+	BudgetDrops       uint64            `json:"budgetDrops"`
+	RepairBudgetDrops uint64            `json:"repairBudgetDrops"`
+	QueueDrops        uint64            `json:"queueDrops"`
+	WriteFailures     uint64            `json:"writeFailures"`
 }
 
 type ClientViewDTO struct {

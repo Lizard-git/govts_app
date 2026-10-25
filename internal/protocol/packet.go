@@ -59,6 +59,15 @@ const (
 	PacketAdminRequest
 	PacketAdminAck
 
+	// Adaptive voice protocol. These IDs are reserved while its runtime
+	// integration is in progress; existing packet IDs must remain stable.
+	PacketVoiceBundleV2
+	PacketVoiceSummary
+	PacketVoiceReport
+	PacketVoiceState
+	PacketVoiceStateAck
+	PacketVoiceStateRequest
+
 	PacketEnd
 )
 

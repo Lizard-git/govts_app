@@ -8,6 +8,9 @@ import (
 )
 
 type Frame struct {
+	Voice        VoiceIdentity
+	Sequence     uint32
+	CreatedAt    time.Time
 	ControlEpoch uint64
 	Data         []byte
 	Duration     time.Duration
@@ -17,14 +20,20 @@ type Frame struct {
 // SenderID and Sequence identify the stream and the frame order within it.
 // Missing marks a placeholder for a frame lost in transit; it has no Data.
 type MediaFrame struct {
-	SenderID uint64
-	Sequence uint32
-	Data     []byte
-	Duration time.Duration
-	Missing  bool
+	DatagramSequence uint32
+	ArrivedAt        time.Time
+	Redundant        bool
+	Voice            VoiceIdentity
+	Batch            []MediaFrame
+	SenderID         uint64
+	Sequence         uint32
+	Data             []byte
+	Duration         time.Duration
+	Missing          bool
 }
 
 type PCMFrame struct {
+	Voices        []VoiceReference
 	PlaybackEpoch uint64
 	ControlEpoch  uint64
 	Samples       []int16
@@ -35,12 +44,26 @@ type PCMFrame struct {
 
 // MediaPCMFrame is decoded PCM that still belongs to a remote audio stream.
 type MediaPCMFrame struct {
+	Voice         VoiceIdentity
 	PlaybackEpoch uint64
 	SenderID      uint64
 	Sequence      uint32
 	Samples       []int16
 	Duration      time.Duration
 	Cue           uint8
+}
+
+// A zero identity denotes local audio/effects. Network ingress always assigns
+// a nonzero session generation and server-owned source/receiver epochs.
+type VoiceIdentity struct {
+	Generation    uint64
+	SourceEpoch   uint32
+	ReceiverEpoch uint32
+}
+
+type VoiceReference struct {
+	SenderID uint64
+	Identity VoiceIdentity
 }
 
 // PlaybackStats reports how much audio waits for the output device and how

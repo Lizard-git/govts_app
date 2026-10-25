@@ -27,8 +27,13 @@ param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$TmuxSession = 'sonoryx-server',
 
-    # Repeat the previous voice frame in each server -> client datagram.
+    # Enable adaptive voice protection from server to clients.
+    # Disable with -VoiceRedundancy:$false.
     [switch]$VoiceRedundancy = $true,
+
+    # Enable adaptive voice protection from clients to server.
+    # Disable with -VoiceUplinkRedundancy:$false.
+    [switch]$VoiceUplinkRedundancy = $true,
 
     # Expose the connected session count without authentication.
     [switch]$PublicStatus  = $true,
@@ -88,9 +93,10 @@ try {
 }
 
 $voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
+$voiceUplinkRedundancyValue = if ($VoiceUplinkRedundancy) { '1' } else { '0' }
 $publicStatusValue = if ($PublicStatus) { '1' } else { '0' }
 $mediaAdaptiveValue = if ($MediaAdaptive) { '1' } else { '0' }
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' PUBLIC_STATUS='$publicStatusValue' MEDIA_ADAPTIVE='$mediaAdaptiveValue' '$remoteScript' '$remoteBinary'"
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' VOICE_UPLINK_REDUNDANCY='$voiceUplinkRedundancyValue' PUBLIC_STATUS='$publicStatusValue' MEDIA_ADAPTIVE='$mediaAdaptiveValue' '$remoteScript' '$remoteBinary'"
 Write-Host "Remote command ($Target): $remoteCommand"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {

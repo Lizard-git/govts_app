@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"uniclog.io/sonoryx/internal/audio"
+	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 const DefaultJitterDepth = 3
@@ -50,30 +52,38 @@ func newJitterBuffer(depth int) *jitterBuffer {
 }
 
 func (b *jitterBuffer) Push(frame audio.MediaFrame) []audio.MediaFrame {
-	if !b.initialized {
-		b.initialized = true
-		b.next = frame.Sequence
-	} else if b.started && sequenceBefore(frame.Sequence, b.next) {
-		b.stats.TooOld++
-		return nil
-	}
+	return b.PushBatch([]audio.MediaFrame{frame})
+}
 
-	if _, exists := b.pending[frame.Sequence]; exists {
-		b.stats.Duplicates++
-		return nil
-	}
-	b.pending[frame.Sequence] = frame
-
-	if !b.started {
-		if sequenceBefore(frame.Sequence, b.next) {
+// Insert every copy before deciding whether a gap requires PLC.
+func (b *jitterBuffer) PushBatch(frames []audio.MediaFrame) []audio.MediaFrame {
+	for _, frame := range frames {
+		if !b.initialized {
+			b.initialized = true
+			b.next = frame.Sequence
+		} else if b.started && sequenceBefore(frame.Sequence, b.next) {
+			b.stats.TooOld++
+			continue
+		}
+		if _, exists := b.pending[frame.Sequence]; exists {
+			b.stats.Duplicates++
+			continue
+		}
+		// Wire input cannot create an unbounded pending map.
+		if frame.Voice.Generation != 0 && len(b.pending) >= 128 {
+			continue
+		}
+		b.pending[frame.Sequence] = frame
+		if !b.started && sequenceBefore(frame.Sequence, b.next) {
 			b.next = frame.Sequence
 		}
+	}
+	if !b.started {
 		if len(b.pending) < b.depth {
 			return nil
 		}
 		b.started = true
 	}
-
 	ready := b.release(false)
 	if len(ready) > 0 {
 		b.waitTicks = 0
@@ -144,6 +154,7 @@ func (b *jitterBuffer) appendMissing(
 	count := min(distance, maxConcealedFrames)
 	for i := uint32(0); i < count; i++ {
 		ready = append(ready, audio.MediaFrame{
+			Voice:    following.Voice,
 			SenderID: following.SenderID,
 			Sequence: b.next + i,
 			Duration: following.Duration,
@@ -174,12 +185,18 @@ func sequenceBefore(left uint32, right uint32) bool {
 }
 
 type streamJitterBuffers struct {
-	depth    int
-	bySender map[uint64]jitterStream
-	onGap    func(length uint32)
+	pruned     voiceMediaStamp
+	depth      int
+	bySender   map[uint64]jitterStream
+	onGap      func(length uint32)
+	onMetric   func(sequence, restored, late uint32)
+	onProtocol func()
 }
 
 type jitterStream struct {
+	clock    *deadlineJitter
+	identity audio.VoiceIdentity
+	history  *voiceflow.Window
 	buffer   *jitterBuffer
 	lastSeen time.Time
 }
@@ -199,27 +216,84 @@ func (b *streamJitterBuffers) PushAt(
 	frame audio.MediaFrame,
 	now time.Time,
 ) []audio.MediaFrame {
+	frames := frame.Batch
+	if len(frames) == 0 {
+		frames = []audio.MediaFrame{frame}
+	}
+	frame = frames[0]
 	stream, ok := b.bySender[frame.SenderID]
-	if !ok {
+	if !ok || stream.identity != frame.Voice {
+		stream.identity = frame.Voice
+		stream.history = &voiceflow.Window{}
 		stream.buffer = newJitterBuffer(b.depth)
 		stream.buffer.onGap = b.onGap
+		if frame.Voice.Generation != 0 {
+			stream.clock = newDeadlineJitter()
+			stream.clock.onGap = b.onGap
+			stream.clock.onMetric = b.onMetric
+		}
+	}
+	if frame.Voice.Generation != 0 {
+		wire := make([]protocol.VoiceBundleFrame, 0, len(frames))
+		for _, f := range frames {
+			wire = append(wire, protocol.VoiceBundleFrame{Sequence: f.Sequence, Payload: f.Data})
+		}
+		lateBefore := stream.history.Late
+		added, err := stream.history.Accept(wire, now)
+		if err != nil {
+			if b.onProtocol != nil {
+				b.onProtocol()
+			}
+			return nil
+		}
+		originals := frames
+		if b.onMetric != nil && stream.history.Late > lateBefore {
+			b.onMetric(frame.DatagramSequence, 0, uint32(stream.history.Late-lateBefore))
+		}
+		frames = nil
+		for _, f := range added {
+			copy := frame
+			for _, original := range originals {
+				if original.Sequence == f.Sequence {
+					copy = original
+					break
+				}
+			}
+			copy.Sequence = f.Sequence
+			copy.Data = f.Payload
+			frames = append(frames, copy)
+		}
 	}
 	stream.lastSeen = now
 	b.bySender[frame.SenderID] = stream
-	return stream.buffer.Push(frame)
+	if stream.clock != nil {
+		stream.clock.Push(frames, now)
+		return nil
+	}
+	return stream.buffer.PushBatch(frames)
 }
 
 func (b *streamJitterBuffers) Flush() []audio.MediaFrame {
 	var ready []audio.MediaFrame
 	for _, stream := range b.bySender {
+		if stream.clock != nil {
+			continue
+		}
 		ready = append(ready, stream.buffer.Flush()...)
 	}
 	return ready
 }
 
 func (b *streamJitterBuffers) Tick() []audio.MediaFrame {
+	return b.TickAt(time.Now())
+}
+func (b *streamJitterBuffers) TickAt(now time.Time) []audio.MediaFrame {
 	var ready []audio.MediaFrame
 	for _, stream := range b.bySender {
+		if stream.clock != nil {
+			ready = append(ready, stream.clock.Tick(now)...)
+			continue
+		}
 		ready = append(ready, stream.buffer.Tick()...)
 	}
 	return ready
@@ -237,6 +311,22 @@ func (b *streamJitterBuffers) RemoveInactive(now time.Time, timeout time.Duratio
 	return removed
 }
 
+func (b *streamJitterBuffers) Prune(state *State) {
+	if state == nil {
+		return
+	}
+	stamp := state.mediaStamp()
+	if stamp == b.pruned {
+		return
+	}
+	b.pruned = stamp
+	for id, stream := range b.bySender {
+		if !state.VoiceMediaAllowed(id, stream.identity) {
+			delete(b.bySender, id)
+		}
+	}
+}
+
 func JitterLoop(
 	ctx context.Context,
 	mediaCh <-chan audio.MediaFrame,
@@ -246,8 +336,22 @@ func JitterLoop(
 ) error {
 	defer close(orderedCh)
 	buffers := newStreamJitterBuffers(depth)
+	var state *State
+	var changes <-chan struct{}
+	if len(states) > 0 {
+		state = states[0]
+		var unsubscribe func()
+		changes, unsubscribe = state.Subscribe(ctx)
+		defer unsubscribe()
+	}
 	if len(states) > 0 {
 		buffers.onGap = states[0].RecordVoiceLossBurst
+		endpoint := states[0].VoiceEndpoint()
+		buffers.onProtocol = endpoint.ProtocolDrop
+		buffers.onMetric = func(sequence, restored, late uint32) {
+			endpoint.Frame(sequence, 0, restored)
+			endpoint.Frame(sequence, 1, late)
+		}
 	}
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
@@ -256,16 +360,43 @@ func JitterLoop(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-changes:
+			buffers.Prune(state)
 		case now := <-ticker.C:
+			buffers.Prune(state)
 			buffers.RemoveInactive(now, DefaultStreamIdleTimeout)
-			if err := sendOrderedFrames(ctx, orderedCh, buffers.Tick()); err != nil {
+			if err := sendOrderedFrames(ctx, orderedCh, buffers.TickAt(now)); err != nil {
 				return err
 			}
 		case frame, ok := <-mediaCh:
 			if !ok {
+				buffers.Prune(state)
 				return sendOrderedFrames(ctx, orderedCh, buffers.Flush())
 			}
-			if err := sendOrderedFrames(ctx, orderedCh, buffers.Push(frame)); err != nil {
+			buffers.Prune(state)
+			var ready []audio.MediaFrame
+			if state != nil {
+				state.mu.RLock()
+				valid := true
+				frames := frame.Batch
+				if len(frames) == 0 {
+					frames = []audio.MediaFrame{frame}
+				}
+				for _, f := range frames {
+					if !state.voiceMediaAllowedLocked(f.SenderID, f.Voice) {
+						valid = false
+						break
+					}
+				}
+				if valid {
+					ready = buffers.Push(frame)
+				}
+				state.mu.RUnlock()
+			} else {
+				ready = buffers.Push(frame)
+			}
+
+			if err := sendOrderedFrames(ctx, orderedCh, ready); err != nil {
 				return err
 			}
 		}

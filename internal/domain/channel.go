@@ -74,8 +74,9 @@ func ValidateAudioProfile(profile AudioProfile) error {
 	if profile.SampleRate != 48_000 || profile.Channels != 1 || profile.FrameDurationMS != 20 {
 		return fmt.Errorf("unsupported PCM format %d Hz/%d channels/%d ms", profile.SampleRate, profile.Channels, profile.FrameDurationMS)
 	}
-	if profile.Bitrate < 6_000 || profile.Bitrate > 510_000 {
-		return fmt.Errorf("Opus bitrate %d is outside 6000..510000", profile.Bitrate)
+	// 20 ms at 472 kbit/s is 1180 bytes, the v2 single-frame ceiling.
+	if profile.Bitrate < 6_000 || profile.Bitrate > 472_000 {
+		return fmt.Errorf("Opus bitrate %d is outside 6000..472000", profile.Bitrate)
 	}
 	if profile.Application != OpusApplicationAudio && profile.Application != OpusApplicationVoIP {
 		return fmt.Errorf("unsupported Opus application %d", profile.Application)

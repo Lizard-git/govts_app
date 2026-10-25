@@ -188,13 +188,14 @@ func TestSendLoopRejectsQueuedFramesFromBeforeMute(t *testing.T) {
 	_, _, current := a.Snapshot()
 	frames := make(chan audio.Frame, 2)
 	frames <- audio.Frame{ControlEpoch: old, Data: []byte{1}}
-	frames <- audio.Frame{ControlEpoch: current, Data: []byte{2}}
+	frames <- audio.Frame{Voice: audio.VoiceIdentity{SourceEpoch: 1}, Sequence: 1, ControlEpoch: current, Data: []byte{2}}
 	close(frames)
 	if err := SendLoopWithStats(peer.ctx, peer.clientConn, 42, frames, a, nil); err != nil {
 		t.Fatal(err)
 	}
 	packet, _, err := peer.receiveRequest()
-	if err != nil || packet.Type != protocol.PacketVoice || packet.Sequence != 1 || !bytes.Equal(packet.Payload, []byte{2}) {
+	bundle, decodeErr := protocol.DecodeVoiceBundleV2Packet(packet, true)
+	if err != nil || decodeErr != nil || packet.Sequence != 1 || len(bundle.Frames) != 1 || !bytes.Equal(bundle.Frames[0].Payload, []byte{2}) {
 		t.Fatalf("sent old frame: %+v, %v", packet, err)
 	}
 	peer.serverConn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))

@@ -16,25 +16,28 @@ import (
 // SetMuted and Send share the same lock. On return, an earlier send has
 // completed and no later send can use an old capture epoch, even after unmute.
 type AudioControlState struct {
-	mu                 sync.Mutex
-	meterMu            sync.RWMutex
-	sendMu             sync.Mutex
-	muted, deafened    bool
-	captureAvailable   bool
-	rnnoiseEnabled     bool
-	rnnoiseSensitivity float32
-	microphoneGain     float32
-	vadEnabled         bool
-	vadMode            voicegate.Mode
-	vadSensitivity     float32
-	vadOpen            bool
-	epoch              uint64
-	playbackEpoch      uint64
-	soundPack          string
-	soundVolume        float32
-	muteOnAway         bool
-	deafenOnAway       bool
-	soundCues          map[string]bool
+	mu                    sync.Mutex
+	meterMu               sync.RWMutex
+	sendMu                sync.Mutex
+	voicePaused           bool
+	commandCapturePaused  bool
+	commandPlaybackPaused bool
+	muted, deafened       bool
+	captureAvailable      bool
+	rnnoiseEnabled        bool
+	rnnoiseSensitivity    float32
+	microphoneGain        float32
+	vadEnabled            bool
+	vadMode               voicegate.Mode
+	vadSensitivity        float32
+	vadOpen               bool
+	epoch                 uint64
+	playbackEpoch         uint64
+	soundPack             string
+	soundVolume           float32
+	muteOnAway            bool
+	deafenOnAway          bool
+	soundCues             map[string]bool
 	// soundCueView is every cue with its state. It is built once per change
 	// and shared read-only with snapshots.
 	soundCueView       map[string]bool
@@ -380,8 +383,10 @@ func (a *AudioControlState) AttachPlayer(player audio.DeafenPlayer) (func(), err
 func (a *AudioControlState) Send(epoch uint64, send func() error) error {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
-	muted, _, current := a.Snapshot()
-	if muted || epoch != current {
+	a.mu.Lock()
+	allowed := !a.muted && !a.voicePaused && !a.commandCapturePaused && epoch == a.epoch
+	a.mu.Unlock()
+	if !allowed {
 		return nil
 	}
 	return send()
@@ -630,12 +635,12 @@ func (a *AudioControlState) UnmuteForReturn() error {
 func (a *AudioControlState) PlaybackSnapshot() (bool, uint64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.deafened, a.playbackEpoch
+	return a.deafened || a.commandPlaybackPaused, a.playbackEpoch
 }
 func (a *AudioControlState) Play(epoch uint64, write func() error) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.deafened || epoch != a.playbackEpoch {
+	if a.deafened || a.commandPlaybackPaused || epoch != a.playbackEpoch {
 		return nil
 	}
 	return write()

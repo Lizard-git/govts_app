@@ -397,6 +397,11 @@ func (s *Service) Snapshot() ClientViewDTO {
 func (s *Service) ConnectionStats() ConnectionStatsDTO {
 	stats := s.client.ConnectionStats()
 	return ConnectionStatsDTO{
+		Voice: VoiceStatsDTO{ReceivedCopies: stats.Voice.ReceivedCopies, SizeDrops: stats.Voice.Drops.Size, ProtocolDrops: stats.Voice.Drops.Protocol,
+			Incoming:    VoiceDirectionDTO{Known: stats.Voice.RemoteKnown, Desired: stats.Voice.Remote.DesiredFrames, Allowed: stats.Voice.Remote.AllowedFrames, Actual: stats.Voice.RemoteActual, Reason: stats.Voice.Remote.Reason, Limited: stats.Voice.RemoteLimited, Restored: stats.Voice.Incoming.Restored, Late: stats.Voice.Incoming.Late, PLC: stats.Voice.Incoming.PLC},
+			Outgoing:    VoiceDirectionDTO{Known: connectionStatus(stats.Status) == "connected", Desired: stats.Voice.Local.DesiredFrames, Allowed: stats.Voice.Local.AllowedFrames, Actual: stats.Voice.Actual, Reason: stats.Voice.Local.Reason, Limited: stats.Voice.Limited, Restored: stats.Voice.Outgoing.Restored, Late: stats.Voice.Outgoing.Late},
+			BudgetDrops: stats.Voice.Drops.Budget, RepairBudgetDrops: stats.Voice.Drops.RepairBudget, QueueDrops: stats.Voice.Drops.Queue, WriteFailures: stats.Voice.Drops.Write,
+		},
 		SessionID:              formatUint64(stats.SessionID),
 		Generation:             formatUint64(stats.Generation),
 		Status:                 connectionStatus(stats.Status),
