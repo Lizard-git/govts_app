@@ -204,6 +204,7 @@ func (h *Hub) RequestVoiceState(id uint64, now time.Time) error {
 	if session.voiceControl == nil {
 		session.voiceControl = &voiceControlSession{revision: 1, dirty: true, profileRevision: uint64(h.revision)}
 	}
+	h.voiceEndpointLocked(session, now)
 	control := session.voiceControl
 	if !control.lastRequest.IsZero() && now.Sub(control.lastRequest) < time.Second {
 		return nil
@@ -276,6 +277,13 @@ func (h *Hub) DueVoiceStates(now time.Time) []VoiceStateDelivery {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var deliveries []VoiceStateDelivery
+	recipientRate, globalRate := h.voiceStateRecipientRate, h.voiceStateGlobalRate
+	if recipientRate <= 0 {
+		recipientRate = voiceStateRecipientBytesPerSecond
+	}
+	if globalRate <= 0 {
+		globalRate = voiceStateGlobalBytesPerSecond
+	}
 	// Traverse recipients fairly and count channel members once. Reserving a
 	// whole immutable snapshot avoids partially budget-starved assemblies and
 	// bounds snapshot construction as well as outgoing bytes during churn.
@@ -313,10 +321,12 @@ func (h *Hub) DueVoiceStates(now time.Time) []VoiceStateDelivery {
 				cost += len(payload) + voiceStatePacketOverhead
 			}
 		}
-		if !control.stateBudget.canSpend(now, cost, voiceStateRecipientBytesPerSecond, voiceStateRecipientBurstBytes) {
+		if !control.stateBudget.canSpend(now, cost, recipientRate, voiceStateRecipientBurstBytes) {
+			h.voiceStateDeferrals++
 			continue
 		}
-		if !h.voiceStateBudget.canSpend(now, cost, voiceStateGlobalBytesPerSecond, voiceStateGlobalBurstBytes) {
+		if !h.voiceStateBudget.canSpend(now, cost, globalRate, voiceStateGlobalBurstBytes) {
+			h.voiceStateDeferrals++
 			// Keep this recipient at the head until the next refill rather
 			// than letting smaller snapshots consume its reserved turn.
 			break

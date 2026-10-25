@@ -27,6 +27,7 @@ type Session struct {
 	OwnControlRevision uint64
 	voiceControl       *voiceControlSession
 	voiceFrames        *voiceflow.Window
+	voiceFlow          *voiceflow.Endpoint
 	// attentionUsed counts reserved wakes in the current burst.
 	// attentionStep is the next lock rung. attentionUntil is when the
 	// current lock ends; the zero time means there is no lock.

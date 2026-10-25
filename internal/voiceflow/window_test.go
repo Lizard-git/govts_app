@@ -87,3 +87,41 @@ func TestWindowCopiesAreImmutableAndOldestDroppedFirst(t *testing.T) {
 		t.Fatal("history aliases input")
 	}
 }
+
+func TestLateCopiesAreCountedOnceAndStillImmutable(t *testing.T) {
+	var w Window
+	now := time.Unix(100, 0)
+	_, _ = w.Accept([]protocol.VoiceBundleFrame{sampleFrame(1, 3)}, now)
+	_, _ = w.Accept([]protocol.VoiceBundleFrame{sampleFrame(3, 3)}, now.Add(40*time.Millisecond))
+	late := sampleFrame(2, 3)
+	if frames, err := w.Accept([]protocol.VoiceBundleFrame{late}, now.Add(121*time.Millisecond)); err != nil || len(frames) != 0 || w.Late != 1 {
+		t.Fatal("late copy not classified", err)
+	}
+	_, _ = w.Accept([]protocol.VoiceBundleFrame{late}, now.Add(122*time.Millisecond))
+	if w.Late != 1 {
+		t.Fatal("duplicate late copy counted twice")
+	}
+	bad := sampleFrame(2, 4)
+	if _, err := w.Accept([]protocol.VoiceBundleFrame{bad, sampleFrame(4, 3)}, now.Add(123*time.Millisecond)); !errors.Is(err, ErrFrameConflict) {
+		t.Fatal("late identity changed bytes", err)
+	}
+	frames, err := w.Accept([]protocol.VoiceBundleFrame{sampleFrame(4, 3)}, now.Add(124*time.Millisecond))
+	if err != nil || len(frames) != 1 {
+		t.Fatal("conflict partially inserted fresh frame")
+	}
+}
+
+func TestTimelineBurstCannotBeRenewedByEveryPacket(t *testing.T) {
+	var w Window
+	now := time.Unix(100, 0)
+	_, _ = w.Accept([]protocol.VoiceBundleFrame{sampleFrame(1, 3)}, now)
+	if _, err := w.Accept([]protocol.VoiceBundleFrame{sampleFrame(65, 3)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Accept([]protocol.VoiceBundleFrame{sampleFrame(129, 3)}, now); !errors.Is(err, ErrSequenceJump) {
+		t.Fatal("per-packet burst bypassed timeline rate", err)
+	}
+	if _, err := w.Accept([]protocol.VoiceBundleFrame{sampleFrame(165, 3)}, now.Add(time.Second)); err != nil {
+		t.Fatal("legitimate long-loss gap rejected", err)
+	}
+}

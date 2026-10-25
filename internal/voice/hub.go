@@ -18,6 +18,7 @@ import (
 	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 var (
@@ -50,34 +51,39 @@ const (
 type sessionIDGenerator func() (uint64, error)
 
 type Hub struct {
-	mu               sync.RWMutex
-	sessions         map[uint64]*Session
-	screenStreams    map[domain.StreamID]domain.ScreenStream
-	streamByOwner    map[uint64]domain.StreamID
-	channels         map[domain.ChannelID]*domain.Channel
-	newSessionID     sessionIDGenerator
-	nextChannelID    domain.ChannelID
-	revision         domain.StateRevision
-	serverInfo       domain.ServerInfo
-	serverVersion    appversion.Number
-	voiceBundles     bool
-	voiceUplink      bool
-	voiceStateBudget voiceStateByteBudget
-	voiceStateCursor uint64
-	publicStatus     bool
-	maxSessions      int
-	outbox           []domain.StateEvent
-	eventReady       chan struct{}
+	voiceStateRecipientRate, voiceStateGlobalRate int
+	voiceStateDeferrals                           uint64
+	voiceReserve                                  int
+	voicePool                                     *voiceflow.Pool
+	mu                                            sync.RWMutex
+	sessions                                      map[uint64]*Session
+	screenStreams                                 map[domain.StreamID]domain.ScreenStream
+	streamByOwner                                 map[uint64]domain.StreamID
+	channels                                      map[domain.ChannelID]*domain.Channel
+	newSessionID                                  sessionIDGenerator
+	nextChannelID                                 domain.ChannelID
+	revision                                      domain.StateRevision
+	serverInfo                                    domain.ServerInfo
+	serverVersion                                 appversion.Number
+	voiceBundles                                  bool
+	voiceUplink                                   bool
+	voiceStateBudget                              voiceStateByteBudget
+	voiceStateCursor                              uint64
+	publicStatus                                  bool
+	maxSessions                                   int
+	outbox                                        []domain.StateEvent
+	eventReady                                    chan struct{}
 }
 
 // OperationalSnapshot is a point-in-time copy for local server diagnostics.
 // Unlike the future client state snapshot, it intentionally contains runtime
 // session data such as UDP endpoints and LastSeen.
 type OperationalSnapshot struct {
-	Revision   domain.StateRevision
-	ServerInfo domain.ServerInfo
-	Channels   []domain.Channel
-	Sessions   []Session
+	VoiceControlBudgetDeferrals uint64
+	Revision                    domain.StateRevision
+	ServerInfo                  domain.ServerInfo
+	Channels                    []domain.Channel
+	Sessions                    []Session
 }
 
 func NewHub() *Hub {
@@ -222,6 +228,11 @@ func (h *Hub) SetVoiceBundles(enabled bool) {
 		return
 	}
 	h.voiceBundles = enabled
+	for _, s := range h.sessions {
+		if s.voiceFlow != nil {
+			s.voiceFlow.SetEnabled(enabled)
+		}
+	}
 	h.invalidateVoiceConfigLocked()
 	if !enabled {
 		for _, session := range h.sessions {
@@ -793,7 +804,7 @@ func (h *Hub) Inspect() OperationalSnapshot {
 	}
 	sortSessionsByID(sessions)
 
-	return OperationalSnapshot{
+	return OperationalSnapshot{VoiceControlBudgetDeferrals: h.voiceStateDeferrals,
 		Revision:   h.revision,
 		ServerInfo: h.serverInfo,
 		Channels:   h.channelsSnapshotLocked(),
@@ -1199,6 +1210,7 @@ func cloneSession(session *Session) *Session {
 	clone.lastVoice = protocol.VoiceBundleFrame{}
 	clone.voiceControl = nil
 	clone.voiceFrames = nil
+	clone.voiceFlow = nil
 	return &clone
 }
 

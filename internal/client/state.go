@@ -8,9 +8,12 @@ import (
 
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 type State struct {
+	voiceFlow               *voiceflow.Endpoint
+	voiceReserve            int
 	mu                      sync.RWMutex
 	syncMu                  sync.Mutex
 	syncSerial              uint64
@@ -83,6 +86,7 @@ func NewState(sessionID uint64, name string) *State {
 		voiceCommandGate:   make(chan struct{}, 1),
 		ownControlRevision: 1,
 	}
+	s.voiceFlow = voiceflow.NewEndpoint(protocol.VoiceUpstream, time.Now())
 	s.Audio = NewAudioControlState(func() { s.audioChanged() })
 	return s
 }

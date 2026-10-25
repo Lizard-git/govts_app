@@ -185,11 +185,12 @@ func sequenceBefore(left uint32, right uint32) bool {
 }
 
 type streamJitterBuffers struct {
-	pruned   voiceMediaStamp
-	depth    int
-	bySender map[uint64]jitterStream
-	onGap    func(length uint32)
-	onMetric func(restored, late uint32)
+	pruned     voiceMediaStamp
+	depth      int
+	bySender   map[uint64]jitterStream
+	onGap      func(length uint32)
+	onMetric   func(sequence, restored, late uint32)
+	onProtocol func()
 }
 
 type jitterStream struct {
@@ -237,11 +238,18 @@ func (b *streamJitterBuffers) PushAt(
 		for _, f := range frames {
 			wire = append(wire, protocol.VoiceBundleFrame{Sequence: f.Sequence, Payload: f.Data})
 		}
+		lateBefore := stream.history.Late
 		added, err := stream.history.Accept(wire, now)
 		if err != nil {
+			if b.onProtocol != nil {
+				b.onProtocol()
+			}
 			return nil
 		}
 		originals := frames
+		if b.onMetric != nil && stream.history.Late > lateBefore {
+			b.onMetric(frame.DatagramSequence, 0, uint32(stream.history.Late-lateBefore))
+		}
 		frames = nil
 		for _, f := range added {
 			copy := frame
@@ -338,6 +346,12 @@ func JitterLoop(
 	}
 	if len(states) > 0 {
 		buffers.onGap = states[0].RecordVoiceLossBurst
+		endpoint := states[0].VoiceEndpoint()
+		buffers.onProtocol = endpoint.ProtocolDrop
+		buffers.onMetric = func(sequence, restored, late uint32) {
+			endpoint.Frame(sequence, 0, restored)
+			endpoint.Frame(sequence, 1, late)
+		}
 	}
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()

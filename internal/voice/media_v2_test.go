@@ -8,6 +8,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/protocol"
 	"uniclog.io/sonoryx/internal/transport/udp"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 type voiceWrite struct {
@@ -173,5 +174,57 @@ func TestMediaV2SizeFallbackAndReservedPackets(t *testing.T) {
 	}
 	if len(codec.writes) != 2 {
 		t.Fatal("reserved v1 packet forwarded")
+	}
+}
+
+func TestAdaptiveDownstreamModesAreIndependentPerRecipient(t *testing.T) {
+	h, conn, codec, speaker, listener := mediaServerFixture(t)
+	other := joinedVoiceSession(t, h, "other")
+	h.SetVoiceBundles(true)
+	ackMediaState(t, h, listener.ID)
+	ackMediaState(t, h, other.ID)
+	origin := time.Now().Add(-3 * time.Second)
+	flow := voiceflow.NewEndpoint(protocol.VoiceDownstream, origin)
+	flow.SetEnabled(true)
+	var seq uint32
+	for second := 0; second < 3; second++ {
+		for i := 0; i < 50; i++ {
+			seq++
+			flow.Sent(seq, true, true, origin.Add(time.Duration(second)*time.Second+time.Duration(i)*20*time.Millisecond))
+		}
+		summary, _ := flow.Tick(origin.Add(time.Duration(second+1) * time.Second))
+		var report protocol.VoiceReport
+		report.Direction = protocol.VoiceDownstream
+		for _, s := range summary.Intervals {
+			report.Intervals = append(report.Intervals, protocol.VoiceReceiveInterval{ID: s.ID, FirstSequence: s.FirstSequence, LastSequence: s.LastSequence, ReceivedUnique: 45, Flags: protocol.VoiceIntervalComplete | protocol.VoiceBurstValid})
+		}
+		if err := flow.AcceptReport(report, origin.Add(time.Duration(second+1)*time.Second+100*time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if flow.Stats(time.Now()).Local.DesiredFrames != 3 {
+		t.Fatal("training did not activate three frames")
+	}
+	h.mu.Lock()
+	h.sessions[listener.ID].voiceFlow = flow
+	h.sessions[listener.ID].voiceControl.lastDatagram = seq
+	h.mu.Unlock()
+	for n := uint32(1); n <= 3; n++ {
+		if err := HandleVoicePacket(conn, h, upstreamMedia(t, speaker, n, protocol.VoiceBundleFrame{Sequence: n, Payload: []byte{byte(n)}}), speaker.Addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counts := map[uint64]int{}
+	for _, write := range codec.writes {
+		if write.bundle.Frames[len(write.bundle.Frames)-1].Sequence == 3 {
+			counts[write.recipient] = len(write.bundle.Frames)
+		}
+	}
+	if counts[listener.ID] != 3 || counts[other.ID] != 2 {
+		t.Fatalf("recipient modes were coupled: %v", counts)
+	}
+	current, _ := h.Get(speaker.ID)
+	if current.SourceEpoch != speaker.SourceEpoch {
+		t.Fatal("protection mode reset source epoch")
 	}
 }

@@ -44,6 +44,13 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketVoiceSummary, protocol.PacketVoiceReport:
+				if packet.RequestID == 0 && packet.Sequence == 0 {
+					if err := state.AcceptVoiceTelemetry(generation, packet, time.Now()); err != nil {
+						state.RecordVoiceProtocolDrop(generation)
+						invalidEvents.RecordKind("voice_telemetry", err, packet.SessionID)
+					}
+				}
 			case protocol.PacketVoiceState:
 				if packet.RequestID != 0 || packet.Sequence != 0 {
 					continue
@@ -159,11 +166,13 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 		return fmt.Errorf("%w: heartbeat deadline must be positive", ErrConnectionLost)
 	}
 	attemptTimeout := deadline / heartbeatAttempts
+	generation := state.Generation()
 	started := time.Now()
 	count, end := state.VoiceSentInWindow()
 	// The 30-second range uses 16 bits for the final sequence and 14 for its size.
 	window := uint32(end)<<14 | uint32(count)
-	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat, Sequence: window}, attemptTimeout, heartbeatAttempts)
+	attempts := 0
+	response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketHeartbeat, Sequence: window}, attemptTimeout, heartbeatAttempts, func() error { attempts++; return nil })
 	if err != nil {
 		return fmt.Errorf("%w: heartbeat: %w", ErrConnectionLost, err)
 	}
@@ -175,6 +184,9 @@ func heartbeatProbe(ctx context.Context, conn *udp.ClientPacketConn, state *Stat
 	}
 	if response.Type == protocol.PacketSessionInvalid {
 		return fmt.Errorf("%w: server rejected session", ErrConnectionLost)
+	}
+	if attempts == 1 {
+		state.RecordVoiceRTT(generation, response.RequestID, time.Since(started), time.Now())
 	}
 	state.MarkHeartbeatAck(time.Now())
 	state.measurements.recordPing(time.Since(started), time.Now())

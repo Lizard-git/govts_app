@@ -20,15 +20,16 @@ type Frame struct {
 // SenderID and Sequence identify the stream and the frame order within it.
 // Missing marks a placeholder for a frame lost in transit; it has no Data.
 type MediaFrame struct {
-	ArrivedAt time.Time
-	Redundant bool
-	Voice     VoiceIdentity
-	Batch     []MediaFrame
-	SenderID  uint64
-	Sequence  uint32
-	Data      []byte
-	Duration  time.Duration
-	Missing   bool
+	DatagramSequence uint32
+	ArrivedAt        time.Time
+	Redundant        bool
+	Voice            VoiceIdentity
+	Batch            []MediaFrame
+	SenderID         uint64
+	Sequence         uint32
+	Data             []byte
+	Duration         time.Duration
+	Missing          bool
 }
 
 type PCMFrame struct {

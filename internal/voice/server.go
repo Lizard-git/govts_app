@@ -31,6 +31,8 @@ func HandlePacket(
 		return err
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(conn, hub, cache, packet, addr)
+	case protocol.PacketVoiceSummary, protocol.PacketVoiceReport:
+		return HandleVoiceTelemetry(hub, packet, addr, time.Now())
 	case protocol.PacketVoiceStateRequest, protocol.PacketVoiceStateAck:
 		return HandleVoiceStateControl(hub, packet, addr, time.Now())
 	case protocol.PacketDisconnect:
@@ -126,7 +128,7 @@ func ServeUDP(
 			authenticator.policyGate.Unlock()
 		}
 		if err := handleErr; err != nil {
-			if packet.Type == protocol.PacketVoiceBundleV2 {
+			if packet.Type == protocol.PacketVoiceBundleV2 || packet.Type == protocol.PacketVoiceSummary || packet.Type == protocol.PacketVoiceReport {
 				rejected.RecordKind("voice_packet", err, addr)
 				continue
 			}

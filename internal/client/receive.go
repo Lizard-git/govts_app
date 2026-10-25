@@ -51,6 +51,9 @@ func ReceiveLoop(
 				}
 			}
 			if errors.Is(err, protocol.ErrRejectedDatagram) {
+				if state != nil {
+					state.RecordVoiceProtocolDrop(generation)
+				}
 				rejected.RecordKind(protocol.DatagramFailureReason(err), err, conn.RemoteAddr())
 				continue
 			}
@@ -64,6 +67,9 @@ func ReceiveLoop(
 		case protocol.PacketVoiceBundleV2:
 			bundle, err := protocol.DecodeVoiceBundleV2Packet(packet, false)
 			if err != nil {
+				if state != nil {
+					state.RecordVoiceProtocolDrop(generation)
+				}
 				rejected.RecordKind("malformed_packet", err, conn.RemoteAddr())
 				continue
 			}
@@ -75,7 +81,7 @@ func ReceiveLoop(
 				continue
 			}
 			// One transport stream spans all speakers; frame sequences are independent.
-			state.RecordVoiceDatagram(generation, bundle.DatagramSequence)
+			state.RecordVoiceDatagram(generation, bundle.DatagramSequence, byte(len(bundle.Frames)))
 			if !state.VoiceBundleAllowed(generation, packet.SessionID, bundle) {
 				state.RequestVoiceResync(generation)
 				continue
@@ -84,7 +90,7 @@ func ReceiveLoop(
 			batch := make([]audio.MediaFrame, 0, len(bundle.Frames))
 			arrival := time.Now()
 			for i, f := range bundle.Frames {
-				batch = append(batch, audio.MediaFrame{ArrivedAt: arrival, Redundant: i < len(bundle.Frames)-1, Voice: identity, SenderID: packet.SessionID, Sequence: f.Sequence, Data: f.Payload, Duration: frameDuration})
+				batch = append(batch, audio.MediaFrame{DatagramSequence: bundle.DatagramSequence, ArrivedAt: arrival, Redundant: i < len(bundle.Frames)-1, Voice: identity, SenderID: packet.SessionID, Sequence: f.Sequence, Data: f.Payload, Duration: frameDuration})
 			}
 			frame := batch[0]
 			if len(batch) > 1 {

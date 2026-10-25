@@ -215,6 +215,7 @@ func DecodeLoop(
 			}
 			if frame.Missing && len(states) > 0 {
 				states[0].RecordVoiceConcealed()
+				states[0].VoiceEndpoint().Frame(frame.DatagramSequence, 2, 1)
 			}
 			if len(states) > 0 && !states[0].ObserveSpeaking(frame.SenderID, pcmFrame.Samples, time.Now()) {
 				continue

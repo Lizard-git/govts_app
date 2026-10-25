@@ -18,7 +18,7 @@ type deadlineJitter struct {
 	inGap                     bool
 	prototype                 audio.MediaFrame
 	onGap                     func(uint32)
-	onMetric                  func(restored, late uint32)
+	onMetric                  func(sequence, restored, late uint32)
 }
 
 func newDeadlineJitter() *deadlineJitter {
@@ -62,7 +62,7 @@ func (d *deadlineJitter) Push(frames []audio.MediaFrame, now time.Time) {
 	for _, frame := range frames {
 		if int32(frame.Sequence-d.next) < 0 || now.After(d.due(frame.Sequence)) {
 			if d.onMetric != nil {
-				d.onMetric(0, 1)
+				d.onMetric(frame.DatagramSequence, 0, 1)
 			}
 			d.target = min(80*time.Millisecond, d.target+frameDuration)
 			d.goodActive = 0
@@ -76,7 +76,7 @@ func (d *deadlineJitter) Push(frames []audio.MediaFrame, now time.Time) {
 		}
 		d.pending[frame.Sequence] = frame
 		if frame.Redundant && d.onMetric != nil {
-			d.onMetric(1, 0)
+			d.onMetric(frame.DatagramSequence, 1, 0)
 		}
 	}
 	d.goodActive += activeStep
@@ -99,9 +99,10 @@ func (d *deadlineJitter) Tick(now time.Time) []audio.MediaFrame {
 		d.deadline = d.deadline.Add(behind * frameDuration)
 		for sequence := range d.pending {
 			if int32(sequence-d.next) < 0 {
+				frame := d.pending[sequence]
 				delete(d.pending, sequence)
 				if d.onMetric != nil {
-					d.onMetric(0, 1)
+					d.onMetric(frame.DatagramSequence, 0, 1)
 				}
 			}
 		}
@@ -109,6 +110,9 @@ func (d *deadlineJitter) Tick(now time.Time) []audio.MediaFrame {
 	frame, exists := d.pending[d.next]
 	if exists {
 		delete(d.pending, d.next)
+		if d.inGap && d.onGap != nil {
+			d.onGap(uint32(d.concealed))
+		}
 		d.concealed = 0
 		d.inGap = false
 	} else {
@@ -125,9 +129,7 @@ func (d *deadlineJitter) Tick(now time.Time) []audio.MediaFrame {
 		}
 		if !d.inGap {
 			d.inGap = true
-			if d.onGap != nil {
-				d.onGap(nearest - d.next)
-			}
+
 		}
 		d.concealed++
 		frame = d.prototype

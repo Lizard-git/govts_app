@@ -46,7 +46,9 @@ func DispatchEvents(ctx context.Context, hub *Hub, writer EventWriter) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-voiceTicker.C:
-			for _, delivery := range hub.DueVoiceStates(now) {
+			deliveries := hub.DueVoiceStates(now)
+			deliveries = append(deliveries, hub.DueVoiceTelemetry(now)...)
+			for _, delivery := range deliveries {
 				for _, packet := range delivery.Packets {
 					if err := ctx.Err(); err != nil {
 						return err

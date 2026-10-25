@@ -10,6 +10,7 @@ import (
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/logging"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 type voiceStateEnvelope struct {
@@ -30,6 +31,10 @@ type VoicePacketSender interface {
 
 func (s *State) clearVoiceStateLocked() {
 	s.voice = nil
+	s.voiceFlow = voiceflow.NewEndpoint(protocol.VoiceUpstream, time.Now())
+	if s.voiceReserve > 0 {
+		s.voiceFlow.SetBudget(s.voiceReserve)
+	}
 	s.voiceFrameEpoch, s.voiceFrameSequence = 0, 0
 	s.ownControlRevision = 1
 	s.lastVoiceCommandAck = nil
@@ -246,6 +251,7 @@ func (s *State) installVoiceState(generation uint64, snapshot *protocol.VoiceSta
 	}
 	s.Audio.voicePaused = false
 	s.voice = candidate
+	s.voiceFlow.SetEnabled(header.EnabledDirections&protocol.VoiceDirectionUp != 0)
 	s.ownControlRevision = header.OwnControlRevision
 	if err := s.resumeVoiceCommandsLocked(); err != nil {
 		return err

@@ -146,6 +146,7 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err := encoder.Configure(activeProfile); err != nil {
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
+	supervisor.GoNamed("voice_telemetry", func(ctx context.Context) error { return voiceclient.VoiceTelemetryLoop(ctx, conn, state) })
 	supervisor.GoNamed("voice_state", func(ctx context.Context) error {
 		return voiceclient.VoiceStateLoop(ctx, conn, state, encoder.Configure)
 	})

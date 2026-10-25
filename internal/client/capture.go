@@ -214,9 +214,10 @@ func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64,
 				return nil
 			}
 			send := func() error {
-				if frame.Voice.SourceEpoch == 0 || (!frame.CreatedAt.IsZero() && time.Since(frame.CreatedAt) > 40*time.Millisecond) {
+				if frame.Voice.SourceEpoch == 0 {
 					return nil
 				}
+
 				if state != nil {
 					// Keep the session/epoch stable through the write and accounting.
 					state.mu.RLock()
@@ -224,6 +225,12 @@ func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64,
 					if !state.outgoingVoiceAllowedLocked(frame.Voice) {
 						return nil
 					}
+				}
+				if !frame.CreatedAt.IsZero() && time.Since(frame.CreatedAt) > 40*time.Millisecond {
+					if state != nil {
+						state.voiceFlow.QueueDrop(time.Now())
+					}
+					return nil
 				}
 				if identity != frame.Voice {
 					identity = frame.Voice
@@ -236,17 +243,34 @@ func sendLoop(ctx context.Context, conn *udp.ClientPacketConn, sessionID uint64,
 				}
 				count := 1
 				if state != nil {
-					if state.voice != nil && state.voice.header.EnabledDirections&protocol.VoiceDirectionUp != 0 {
-						count = 2
-					}
+					state.voiceFlow.SetEnabled(state.voice.header.EnabledDirections&protocol.VoiceDirectionUp != 0)
+					count = state.voiceFlow.FrameCount(now)
+				}
+				if state != nil {
+					state.voiceFlow.SizeDrops(history.SizeDrops(primary, count, now))
 				}
 				frames := history.ForFrame(primary, count, now)
+				if state != nil {
+					frames = state.voiceFlow.Select(frames, true, now)
+				}
+
 				datagram++ // An attempted local write consumes a transport sequence too.
 				packet, err := protocol.NewVoiceBundleV2Packet(sessionID, protocol.VoiceBundleV2{DatagramSequence: datagram, SourceEpoch: identity.SourceEpoch, Frames: frames}, true)
 				if err != nil {
 					return err
 				}
-				if err = conn.SendPacket(packet); err != nil {
+				notAfter := time.Time{}
+				if !frame.CreatedAt.IsZero() {
+					notAfter = frame.CreatedAt.Add(40 * time.Millisecond)
+				}
+				err = conn.SendPacketBefore(packet, notAfter)
+				if errors.Is(err, udp.ErrSendExpired) && state != nil {
+					state.voiceFlow.QueueDrop(time.Now())
+				}
+				if state != nil {
+					state.voiceFlow.Sent(datagram, err == nil, true, time.Now())
+				}
+				if err != nil {
 					return err
 				}
 				if state != nil {

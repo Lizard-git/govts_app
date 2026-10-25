@@ -3,6 +3,7 @@ package client
 import (
 	"sync"
 	"time"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 const statsWindow = 30 * time.Second
@@ -14,6 +15,7 @@ const maxStatsPackets = 4096
 const maxSequenceGap = 64
 
 type ConnectionStats struct {
+	Voice                  voiceflow.Snapshot
 	SessionID              uint64
 	Generation             uint64
 	Status                 ConnectionStatus
@@ -372,6 +374,13 @@ func (s *State) ConnectionStats() ConnectionStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := s.measurements.snapshot(time.Now())
+	result.Voice = s.voiceFlow.Stats(time.Now())
+	if s.voice != nil {
+		result.IncomingKnown = result.Voice.Incoming.Known
+		result.IncomingLoss = result.Voice.Incoming.Loss
+		result.OutgoingKnown = result.Voice.Outgoing.Known
+		result.OutgoingLoss = result.Voice.Outgoing.Loss
+	}
 	result.SessionID = s.sessionID
 	result.Generation = s.generation
 	result.Status = s.status
@@ -390,11 +399,15 @@ func (s *State) RecordVoiceArrival(sender uint64, sequence uint32) {
 
 // RecordVoiceDatagram observes v2 transport before any audio policy filter.
 // Summary/report interval accounting will replace this rolling estimate.
-func (s *State) RecordVoiceDatagram(generation uint64, sequence uint32) {
+func (s *State) RecordVoiceDatagram(generation uint64, sequence uint32, frameCounts ...byte) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.generation != generation || s.sessionID == 0 {
 		return
+	}
+	s.voiceFlow.Receive(sequence, time.Now())
+	if len(frameCounts) > 0 {
+		s.voiceFlow.ReceivedFrames(frameCounts[0])
 	}
 	s.measurements.mu.Lock()
 	s.measurements.datagramMode = true
