@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/protocol"
 )
 
 type State struct {
@@ -23,6 +24,9 @@ type State struct {
 	Audio              *AudioControlState
 	measurements       connectionMeasurements
 	chatRevision       uint64
+	voice              *installedVoiceState
+	voicePages         chan voiceStateEnvelope
+	voiceResync        chan struct{}
 
 	sessionID        uint64
 	joinLevel        uint16
@@ -67,6 +71,8 @@ func NewState(sessionID uint64, name string) *State {
 		notices:            make(chan string, 64),
 		notificationSounds: make(chan NotificationSound, 8),
 		speaking:           make(map[uint64]time.Time),
+		voicePages:         make(chan voiceStateEnvelope, protocol.MaxVoiceStateEntries),
+		voiceResync:        make(chan struct{}, 1),
 	}
 	s.Audio = NewAudioControlState(func() { s.audioChanged() })
 	return s
@@ -129,6 +135,7 @@ func (s *State) PrepareConnection() error {
 		return errors.New("cannot prepare connection with pending requests")
 	}
 	s.generation++
+	s.clearVoiceStateLocked()
 	s.syncedGeneration = 0
 	s.observedRevision = 0
 	s.sessionID = 0
@@ -151,6 +158,7 @@ func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.generation++
+	s.clearVoiceStateLocked()
 	s.status = status
 	s.snapshotFresh = false
 	s.lastHeartbeatAck = time.Time{}
@@ -195,6 +203,7 @@ func (s *State) StartSession(sessionID uint64) (uint64, error) {
 		return 0, errors.New("cannot start session with pending requests")
 	}
 	s.generation++
+	s.clearVoiceStateLocked()
 	s.sessionID = sessionID
 	s.joinLevel = 0
 	s.permissions = 0

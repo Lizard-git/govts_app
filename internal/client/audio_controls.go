@@ -19,6 +19,7 @@ type AudioControlState struct {
 	mu                 sync.Mutex
 	meterMu            sync.RWMutex
 	sendMu             sync.Mutex
+	voicePaused        bool
 	muted, deafened    bool
 	captureAvailable   bool
 	rnnoiseEnabled     bool
@@ -380,8 +381,10 @@ func (a *AudioControlState) AttachPlayer(player audio.DeafenPlayer) (func(), err
 func (a *AudioControlState) Send(epoch uint64, send func() error) error {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
-	muted, _, current := a.Snapshot()
-	if muted || epoch != current {
+	a.mu.Lock()
+	allowed := !a.muted && !a.voicePaused && epoch == a.epoch
+	a.mu.Unlock()
+	if !allowed {
 		return nil
 	}
 	return send()

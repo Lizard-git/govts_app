@@ -144,6 +144,9 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err := encoder.Configure(activeProfile); err != nil {
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
+	supervisor.GoNamed("voice_state", func(ctx context.Context) error {
+		return voiceclient.VoiceStateLoop(ctx, conn, state, encoder.Configure)
+	})
 	topologyUnchanged := voiceclient.SameChannelTopology(oldSnapshot, currentSnapshot)
 	if !firstConnection && !topologyUnchanged {
 		logger.Printf("reconnected; channel structure changed")
@@ -179,28 +182,6 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	})
 	supervisor.GoNamed("audio_state", func(ctx context.Context) error {
 		return networkLoop("audio state", func() error { return voiceclient.AudioStateLoop(ctx, conn, state) })
-	})
-	supervisor.GoNamed("audio_profile", func(ctx context.Context) error {
-		changed, unsubscribe := state.Subscribe(ctx)
-		defer unsubscribe()
-		channelID := state.ChannelID()
-		profile := activeProfile
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-changed:
-				nextChannelID := state.ChannelID()
-				nextProfile, profileErr := channelAudioProfile(state.Snapshot(), nextChannelID)
-				if profileErr != nil || (nextChannelID == channelID && nextProfile == profile) {
-					continue
-				}
-				if err := encoder.Configure(nextProfile); err != nil {
-					return fmt.Errorf("configure Opus encoder for channel %d: %w", nextChannelID, err)
-				}
-				channelID, profile = nextChannelID, nextProfile
-			}
-		}
 	})
 	supervisor.GoNamed("audio_devices", func(ctx context.Context) error {
 		current := devices

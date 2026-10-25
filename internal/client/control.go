@@ -44,6 +44,15 @@ func ControlLoop(
 			}
 
 			switch packet.Type {
+			case protocol.PacketVoiceState:
+				if packet.RequestID != 0 || packet.Sequence != 0 {
+					continue
+				}
+				select {
+				case state.voicePages <- voiceStateEnvelope{generation: generation, packet: packet}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			case protocol.PacketChatChanged:
 				if packet.RequestID == 0 && len(packet.Payload) == 0 {
 					state.ChatChanged()
