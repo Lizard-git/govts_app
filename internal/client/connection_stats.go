@@ -76,6 +76,9 @@ func (s *voiceSequence) dropOldestMissing(cutoff time.Time, limit int) {
 }
 
 type connectionMeasurements struct {
+	// V2 has one transport sequence for all speakers, preserved across audio
+	// transitions. Only the full session reset clears this baseline.
+	datagramMode     bool
 	mu               sync.Mutex
 	pings            []float64
 	pingAt           time.Time
@@ -94,6 +97,7 @@ type connectionMeasurements struct {
 func (m *connectionMeasurements) reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.datagramMode = false
 	m.pings = nil
 	m.pingAt = time.Time{}
 	m.voiceAt = time.Time{}
@@ -111,6 +115,9 @@ func (m *connectionMeasurements) reset() {
 func (m *connectionMeasurements) resetIncoming() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.datagramMode {
+		return
+	}
 	m.arrivals = nil
 	m.senders = nil
 	m.voiceAt = time.Time{}
@@ -122,6 +129,9 @@ func (m *connectionMeasurements) resetIncoming() {
 func (m *connectionMeasurements) resetSender(sender uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.datagramMode {
+		return
+	}
 	delete(m.senders, sender)
 }
 
@@ -376,6 +386,20 @@ func (s *State) ConnectionStats() ConnectionStats {
 
 func (s *State) RecordVoiceArrival(sender uint64, sequence uint32) {
 	s.measurements.recordVoice(sender, sequence, time.Now())
+}
+
+// RecordVoiceDatagram observes v2 transport before any audio policy filter.
+// Summary/report interval accounting will replace this rolling estimate.
+func (s *State) RecordVoiceDatagram(generation uint64, sequence uint32) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.generation != generation || s.sessionID == 0 {
+		return
+	}
+	s.measurements.mu.Lock()
+	s.measurements.datagramMode = true
+	s.measurements.mu.Unlock()
+	s.measurements.recordVoice(0, sequence, time.Now())
 }
 
 // RecordVoiceRedundant observes a redundant frame copy from PacketVoiceBundle.

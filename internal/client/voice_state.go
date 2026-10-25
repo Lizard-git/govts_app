@@ -30,6 +30,7 @@ type VoicePacketSender interface {
 
 func (s *State) clearVoiceStateLocked() {
 	s.voice = nil
+	s.voiceFrameEpoch, s.voiceFrameSequence = 0, 0
 	s.ownControlRevision = 1
 	s.lastVoiceCommandAck = nil
 	s.voiceCommandInFlight = false

@@ -557,15 +557,11 @@ func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 	resultCh := make(chan error, 1)
 
 	go func() {
-		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh)
+		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh, receiveVoiceFixture())
 	}()
 
-	want := protocol.VoicePacket{
-		Type:      protocol.PacketVoice,
-		SessionID: 73,
-		Sequence:  19,
-		Payload:   []byte("encoded opus frame"),
-	}
+	want := downstreamVoicePacket(t, 73, 19, []byte("encoded opus frame"))
+
 	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
 	if err := serverConn.WritePacket(42, clientAddr, want); err != nil {
 		t.Fatal(err)
@@ -579,7 +575,7 @@ func TestReceiveLoopPreservesMediaStreamIdentity(t *testing.T) {
 		if got.Sequence != want.Sequence {
 			t.Errorf("MediaFrame.Sequence = %d, want %d", got.Sequence, want.Sequence)
 		}
-		if string(got.Data) != string(want.Payload) {
+		if string(got.Data) != "encoded opus frame" {
 			t.Errorf("MediaFrame.Data = %q, want %q", got.Data, want.Payload)
 		}
 	case <-time.After(time.Second):
@@ -656,17 +652,12 @@ func TestReceiveLoopSkipsRejectedDatagram(t *testing.T) {
 	controlCh := make(chan protocol.VoicePacket, 1)
 	resultCh := make(chan error, 1)
 	go func() {
-		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh)
+		resultCh <- ReceiveLoop(ctx, clientConn, encodedCh, controlCh, receiveVoiceFixture())
 	}()
 
 	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
 	for sequence := uint32(1); sequence <= 2; sequence++ {
-		if err := serverConn.WritePacket(42, clientAddr, protocol.VoicePacket{
-			Type:      protocol.PacketVoice,
-			SessionID: 73,
-			Sequence:  sequence,
-			Payload:   []byte{byte(sequence)},
-		}); err != nil {
+		if err := serverConn.WritePacket(42, clientAddr, downstreamVoicePacket(t, 73, sequence, []byte{byte(sequence)})); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -909,4 +900,19 @@ func mustJoinAckPayload(t *testing.T, channelID domain.ChannelID) []byte {
 		t.Fatal(err)
 	}
 	return payload
+}
+
+func receiveVoiceFixture() *State {
+	s := NewState(42, "listener")
+	s.SetChannelID(1)
+	s.voice = &installedVoiceState{header: protocol.VoiceStatePage{OwnChannelID: 1, OwnReceiverEpoch: 1}, sources: map[uint64]protocol.VoiceSourceState{73: {SenderID: 73, SourceEpoch: 1, ChannelID: 1}}}
+	return s
+}
+func downstreamVoicePacket(t *testing.T, sender uint64, sequence uint32, payload []byte) protocol.VoicePacket {
+	t.Helper()
+	p, err := protocol.NewVoiceBundleV2Packet(sender, protocol.VoiceBundleV2{DatagramSequence: sequence, SourceEpoch: 1, ReceiverEpoch: 1, Frames: []protocol.VoiceBundleFrame{{Sequence: sequence, Payload: payload}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

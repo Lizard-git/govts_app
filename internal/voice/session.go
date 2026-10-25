@@ -6,6 +6,7 @@ import (
 
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
+	"uniclog.io/sonoryx/internal/voiceflow"
 )
 
 type Session struct {
@@ -25,6 +26,7 @@ type Session struct {
 	ReceiverEpoch      uint32
 	OwnControlRevision uint64
 	voiceControl       *voiceControlSession
+	voiceFrames        *voiceflow.Window
 	// attentionUsed counts reserved wakes in the current burst.
 	// attentionStep is the next lock rung. attentionUntil is when the
 	// current lock ends; the zero time means there is no lock.

@@ -9,6 +9,8 @@ import (
 	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/audio/vad"
 	"uniclog.io/sonoryx/internal/audio/voicegate"
+	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/protocol"
 )
 
 type countingEncoder struct{ calls int }
@@ -72,6 +74,7 @@ func (*blockingFilter) Close() error { return nil }
 
 func runCapturePipeline(t *testing.T, state *State, detector vad.Detector, samples ...int16) ([]audio.Frame, int, error) {
 	t.Helper()
+	installCaptureVoice(t, state)
 	encoder := &countingEncoder{}
 	gate, err := voicegate.New(state.Audio.VADSnapshot().GateConfig())
 	if err != nil {
@@ -183,5 +186,13 @@ func TestCaptureMuteBarrierRejectsBufferedPreRoll(t *testing.T) {
 	}
 	if encoder.calls != 0 || len(audioCh) != 0 {
 		t.Fatalf("stale pre-roll escaped mute barrier: encodes=%d frames=%d", encoder.calls, len(audioCh))
+	}
+}
+
+func installCaptureVoice(t *testing.T, s *State) {
+	t.Helper()
+	snapshot := &protocol.VoiceStateSnapshot{Header: protocol.VoiceStatePage{Flags: protocol.VoiceStateFull, Revision: 1, OwnControlRevision: 1, OwnSourceEpoch: 1, OwnReceiverEpoch: 1, OwnChannelID: uint64(s.ChannelID()), AudioProfileRevision: 10, PageCount: 1}, Sources: []protocol.VoiceSourceState{{SenderID: s.SessionID(), SourceEpoch: 1, ChannelID: uint64(s.ChannelID())}}}
+	if err := s.installVoiceState(s.Generation(), snapshot, func(domain.AudioProfile) error { return nil }); err != nil {
+		t.Fatal(err)
 	}
 }

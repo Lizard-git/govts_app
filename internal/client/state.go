@@ -32,6 +32,8 @@ type State struct {
 	lastVoiceCommandAck     *protocol.VoiceControlAck
 	voiceCommandInFlight    bool
 	voiceDeferredChannelCue bool
+	voiceFrameEpoch         uint32
+	voiceFrameSequence      uint32
 
 	sessionID        uint64
 	joinLevel        uint16

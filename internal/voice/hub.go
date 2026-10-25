@@ -317,7 +317,7 @@ func (h *Hub) recordVoicePacketAt(id uint64, sequence uint32, at time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.sessions[id]
-	if s == nil || sequence == 0 {
+	if s == nil {
 		return
 	}
 	trimVoiceArrivals(s, at)
@@ -1198,6 +1198,7 @@ func cloneSession(session *Session) *Session {
 	clone.voiceSeen = nil
 	clone.lastVoice = protocol.VoiceBundleFrame{}
 	clone.voiceControl = nil
+	clone.voiceFrames = nil
 	return &clone
 }
 

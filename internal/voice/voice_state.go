@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"uniclog.io/sonoryx/internal/domain"
@@ -64,6 +65,7 @@ func (h *Hub) SetAudioStateAtVoiceRevision(id uint64, muted, deafened bool, expe
 }
 
 type voiceControlSession struct {
+	writeMu          sync.Mutex
 	revision         uint64
 	ackRevision      uint64
 	ackReceiverEpoch uint32
@@ -111,6 +113,7 @@ func (h *Hub) advanceVoiceIdentityLocked(session *Session, source, receiver bool
 		return ErrVoiceEpochExhausted
 	}
 	if source {
+		session.voiceFrames = nil
 		session.SourceEpoch++
 		session.lastVoice = protocol.VoiceBundleFrame{}
 		session.voiceSequence, session.voiceSequenceAt = 0, time.Time{}

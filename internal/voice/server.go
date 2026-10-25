@@ -21,7 +21,9 @@ func HandlePacket(
 	addr *net.UDPAddr,
 ) error {
 	switch packet.Type {
-	case protocol.PacketVoice:
+	case protocol.PacketVoice, protocol.PacketVoiceBundle:
+		return nil // reserved old wire formats, never forwarded
+	case protocol.PacketVoiceBundleV2:
 		err := HandleVoicePacket(conn, hub, packet, addr)
 		if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrInvalidSessionAddr) {
 			return nil
@@ -124,6 +126,10 @@ func ServeUDP(
 			authenticator.policyGate.Unlock()
 		}
 		if err := handleErr; err != nil {
+			if packet.Type == protocol.PacketVoiceBundleV2 {
+				rejected.RecordKind("voice_packet", err, addr)
+				continue
+			}
 			log.Printf("cannot handle packet: type=%d session_id=%d request_id=%d addr=%v error=%v", packet.Type, packet.SessionID, packet.RequestID, addr, err)
 			continue
 		}

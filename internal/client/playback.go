@@ -6,12 +6,21 @@ import (
 	"uniclog.io/sonoryx/internal/audio"
 )
 
+func PlaybackLoopWithState(ctx context.Context, player audio.Player, pcm <-chan audio.PCMFrame, state *State) error {
+	return playbackLoop(ctx, player, pcm, state, state.Audio)
+}
+
 func PlaybackLoop(
 	ctx context.Context,
 	player audio.Player,
 	pcmOutCh <-chan audio.PCMFrame,
 	controls ...*AudioControlState,
 ) error {
+	return playbackLoop(ctx, player, pcmOutCh, nil, controls...)
+}
+
+func playbackLoop(ctx context.Context, player audio.Player, pcmOutCh <-chan audio.PCMFrame, state *State, controls ...*AudioControlState) error {
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -26,7 +35,9 @@ func PlaybackLoop(
 				return player.Write(frame.Samples)
 			}
 			var err error
-			if len(controls) > 0 {
+			if state != nil {
+				err = state.playVoicePCM(frame, write)
+			} else if len(controls) > 0 {
 				err = controls[0].Play(frame.PlaybackEpoch, write)
 			} else {
 				err = write()

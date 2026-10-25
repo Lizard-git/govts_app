@@ -185,14 +185,30 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 			t.Fatalf("default join response = %+v, %v", response, err)
 		}
 	}
-	if err := first.SendPacket(protocol.VoicePacket{Type: protocol.PacketVoice, SessionID: firstID, Sequence: 1, Payload: []byte{1, 2, 3}}); err != nil {
+	if err := hub.RequestVoiceState(secondID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	for _, delivery := range hub.DueVoiceStates(time.Now()) {
+		page, err := protocol.DecodeVoiceState(delivery.Packets[0].Payload)
+		if err != nil || !hub.AckVoiceState(delivery.Session.ID, page.Revision) {
+			t.Fatal("voice state ack failed", err)
+		}
+	}
+	source, _ := hub.Get(firstID)
+	outgoing, err := protocol.NewVoiceBundleV2Packet(firstID, protocol.VoiceBundleV2{DatagramSequence: 1, SourceEpoch: source.SourceEpoch, Frames: []protocol.VoiceBundleFrame{{Sequence: 1, Payload: []byte{1, 2, 3}}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.SendPacket(outgoing); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	response, err = second.ReceivePacket()
-	if err != nil || response.Type != protocol.PacketVoice || response.SessionID != firstID || string(response.Payload) != string([]byte{1, 2, 3}) {
+	bundle, decodeErr := protocol.DecodeVoiceBundleV2Packet(response, false)
+	if err != nil || decodeErr != nil || response.SessionID != firstID || len(bundle.Frames) != 1 || string(bundle.Frames[0].Payload) != string([]byte{1, 2, 3}) {
 		t.Fatalf("relayed secure voice = %+v, %v", response, err)
 	}
 	moderate := func(action uint8, target uint64, requestID uint32) {

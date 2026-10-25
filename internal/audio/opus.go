@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"sync"
 
-	"uniclog.io/sonoryx/internal/domain"
 	pionopus "github.com/pion/opus"
+	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/protocol"
 )
 
-const maxOpusPacketSize = 4000
+const maxOpusPacketSize = protocol.MaxVoiceFrameSize
 
 type OpusEncoder struct {
 	config  CodecConfig

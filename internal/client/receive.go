@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"time"
 
@@ -27,6 +26,14 @@ func ReceiveLoop(
 	rejected := logging.NewFailures("client_udp_decode")
 	defer rejected.Close()
 
+	var state *State
+	var generation uint64
+	if len(states) > 0 {
+		state = states[0]
+		if state != nil {
+			generation, _ = state.SessionIdentity()
+		}
+	}
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(receivePollInterval)); err != nil {
 			return err
@@ -51,47 +58,41 @@ func ReceiveLoop(
 		}
 
 		switch packet.Type {
-		case protocol.PacketVoice:
-			if len(states) > 0 && states[0] != nil {
-				states[0].RecordVoiceArrival(packet.SessionID, packet.Sequence)
-			}
-			frame := audio.MediaFrame{
-				SenderID: packet.SessionID,
-				Sequence: packet.Sequence,
-				Data:     packet.Payload,
-				Duration: frameDuration,
-			}
-			if err := sendMediaFrame(ctx, encodedCh, frame); err != nil {
-				return err
-			}
-		case protocol.PacketVoiceBundle:
-			frames, err := protocol.DecodeVoiceBundle(packet.Payload)
-			if err == nil && frames[len(frames)-1].Sequence != packet.Sequence {
-				err = fmt.Errorf("%w: current frame %d does not match header %d", protocol.ErrInvalidVoiceBundle, frames[len(frames)-1].Sequence, packet.Sequence)
-			}
+		case protocol.PacketVoice, protocol.PacketVoiceBundle:
+			// Reserved v1 IDs are never interpreted as audio.
+			continue
+		case protocol.PacketVoiceBundleV2:
+			bundle, err := protocol.DecodeVoiceBundleV2Packet(packet, false)
 			if err != nil {
 				rejected.RecordKind("malformed_packet", err, conn.RemoteAddr())
 				continue
 			}
-			if len(states) > 0 && states[0] != nil {
-				// Raw loss counts datagrams, so only the current frame is an
-				// arrival; earlier frames are redundant copies.
-				states[0].RecordVoiceArrival(packet.SessionID, packet.Sequence)
-				for _, redundant := range frames[:len(frames)-1] {
-					states[0].RecordVoiceRedundant(packet.SessionID, redundant.Sequence)
-				}
+			if state == nil {
+				continue
 			}
-			for _, bundled := range frames {
-				frame := audio.MediaFrame{
-					SenderID: packet.SessionID,
-					Sequence: bundled.Sequence,
-					Data:     bundled.Payload,
-					Duration: frameDuration,
-				}
-				if err := sendMediaFrame(ctx, encodedCh, frame); err != nil {
-					return err
-				}
+			current, _ := state.SessionIdentity()
+			if current != generation {
+				continue
 			}
+			// One transport stream spans all speakers; frame sequences are independent.
+			state.RecordVoiceDatagram(generation, bundle.DatagramSequence)
+			if !state.VoiceBundleAllowed(generation, packet.SessionID, bundle) {
+				state.RequestVoiceResync(generation)
+				continue
+			}
+			identity := audio.VoiceIdentity{Generation: generation, SourceEpoch: bundle.SourceEpoch, ReceiverEpoch: bundle.ReceiverEpoch}
+			batch := make([]audio.MediaFrame, 0, len(bundle.Frames))
+			for _, f := range bundle.Frames {
+				batch = append(batch, audio.MediaFrame{Voice: identity, SenderID: packet.SessionID, Sequence: f.Sequence, Data: f.Payload, Duration: frameDuration})
+			}
+			frame := batch[0]
+			if len(batch) > 1 {
+				frame = audio.MediaFrame{Batch: batch}
+			}
+			if err := sendMediaFrame(ctx, encodedCh, frame); err != nil {
+				return err
+			}
+
 		default:
 			select {
 			case controlCh <- packet:

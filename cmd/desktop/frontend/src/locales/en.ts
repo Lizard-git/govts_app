@@ -504,7 +504,7 @@ export const en = {
         applicationVoipHint: "Best for speech",
         applicationAudio: "Music (Audio)",
         applicationAudioHint: "More faithful for music, uses more bandwidth",
-        channelLimitsHint: "Name up to 64 bytes, topic up to 128, description up to 512. Bitrate 6–510 kbit/s. Users below a new threshold are disconnected from the channel.",
+        channelLimitsHint: "Name up to 64 bytes, topic up to 128, description up to 512. Bitrate 6–472 kbit/s. Users below a new threshold are disconnected from the channel.",
         deleteAccount: "Delete account",
         deleteAccountHint: "The account is forgotten: its rights and level are reset and its direct messages are deleted; channel messages stay. Connecting again with the same key creates a new account.",
         deleteAccountBanned: "A banned account cannot be deleted, because deleting it would lift the ban. Unban it first.",
