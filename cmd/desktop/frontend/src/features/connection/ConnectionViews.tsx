@@ -87,7 +87,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
             {(error || view.lastError) && <div className="form-error" role="alert">{errorText(error || view.lastError, m)}</div>}
             <button className="primary-button" disabled={pending || !server.trim() || !name.trim()}
                 type="submit">{pending ? m.connection.connecting : m.connection.connect}</button>
-        </form><p></p>
+        </form>
     </section></div></div>;
 }
 
