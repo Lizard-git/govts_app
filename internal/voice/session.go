@@ -19,6 +19,12 @@ type Session struct {
 	Muted       bool
 	Deafened    bool
 	Away        bool
+	// Voice identity is server-owned. These counters survive silence and are
+	// independent from transport attempts and the domain event revision.
+	SourceEpoch        uint32
+	ReceiverEpoch      uint32
+	OwnControlRevision uint64
+	voiceControl       *voiceControlSession
 	// attentionUsed counts reserved wakes in the current burst.
 	// attentionStep is the next lock rung. attentionUntil is when the
 	// current lock ends; the zero time means there is no lock.

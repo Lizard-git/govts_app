@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"time"
 
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
@@ -14,6 +15,7 @@ const EventOutboxCapacity = 256
 // Called under h.mu. Drop newest on overflow: revision checks recover the gap.
 func (h *Hub) emitLocked(e domain.StateEvent) {
 	e.Revision = h.revision
+	h.invalidateVoiceStatesLocked(e)
 	if len(h.outbox) < EventOutboxCapacity {
 		h.outbox = append(h.outbox, e)
 	}
@@ -37,10 +39,24 @@ type EventWriter interface {
 
 // One dispatcher per server. Socket writes have bounded deadlines in transport.
 func DispatchEvents(ctx context.Context, hub *Hub, writer EventWriter) error {
+	voiceTicker := time.NewTicker(50 * time.Millisecond)
+	defer voiceTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case now := <-voiceTicker.C:
+			for _, delivery := range hub.DueVoiceStates(now) {
+				for _, packet := range delivery.Packets {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					if err := writer.WritePacket(delivery.Session.ID, delivery.Session.Addr, packet); err != nil {
+						log.Printf("voice state delivery: session_id=%d error=%v", delivery.Session.ID, err)
+						break
+					}
+				}
+			}
 		case <-hub.eventReady:
 			for _, e := range hub.takeEvents() {
 				payload, err := protocol.EncodeStateEvent(e)

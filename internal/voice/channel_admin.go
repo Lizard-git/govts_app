@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"uniclog.io/sonoryx/internal/domain"
+	"uniclog.io/sonoryx/internal/protocol"
 )
 
 // MaxChannels matches the client snapshot limit: a larger tree could not be
@@ -146,12 +147,32 @@ func (h *Hub) UpdateChannel(channel domain.Channel) ([]uint64, error) {
 		return nil, nil
 	}
 	*h.channels[next.ID] = next
+	var removed []uint64
+	if next.Audio != current.Audio {
+		for _, session := range h.sessions {
+			if session.ChannelID == next.ID {
+				if err := h.advanceVoiceIdentityLocked(session, true, false); err != nil {
+					removed = append(removed, session.ID)
+				}
+			}
+		}
+	}
+	// Retiring an exhausted source publishes its own event. Allocate the
+	// channel event revision afterwards so clients cannot skip this update.
 	h.revision++
+	if next.Audio != current.Audio {
+		for _, session := range h.sessions {
+			if session.ChannelID == next.ID && session.voiceControl != nil {
+				session.voiceControl.profileRevision = uint64(h.revision)
+			}
+		}
+	}
 	h.emitLocked(domain.StateEvent{Kind: domain.ChannelUpdated, Channel: next})
 	if next.MinJoinLevel > current.MinJoinLevel {
-		return h.removeBelowJoinLevelLocked(next.ID, next.MinJoinLevel), nil
+		removed = append(removed, h.removeBelowJoinLevelLocked(next.ID, next.MinJoinLevel)...)
 	}
-	return nil, nil
+	sort.Slice(removed, func(i, j int) bool { return removed[i] < removed[j] })
+	return removed, nil
 }
 
 // CheckChannelDelete returns the channel id if DeleteChannel may remove it:
@@ -175,6 +196,9 @@ func (h *Hub) checkChannelDeleteLocked(id domain.ChannelID) (domain.Channel, err
 			return domain.Channel{}, fmt.Errorf("%w: channel has subchannels", ErrInvalidChannel)
 		}
 	}
+	if h.channelMemberCountLocked(h.serverInfo.DefaultChannelID)+h.channelMemberCountLocked(id) > protocol.MaxVoiceSources {
+		return domain.Channel{}, fmt.Errorf("%w: voice source limit %d", ErrChannelFull, protocol.MaxVoiceSources)
+	}
 	return *cloneChannel(*channel), nil
 }
 
@@ -195,16 +219,25 @@ func (h *Hub) DeleteChannel(id domain.ChannelID) ([]uint64, error) {
 		}
 	}
 	sort.Slice(moved, func(i, j int) bool { return moved[i] < moved[j] })
+	completed := moved[:0]
 	for _, sessionID := range moved {
+		session := h.sessions[sessionID]
+		if err := h.advanceVoiceIdentityLocked(session, true, true); err != nil {
+			continue
+		}
 		h.stopScreenShareByOwnerLocked(sessionID)
-		h.sessions[sessionID].ChannelID = target
+		session.ChannelID = target
 		h.revision++
+		if session.voiceControl != nil {
+			session.voiceControl.profileRevision = uint64(h.revision)
+		}
 		h.emitLocked(domain.StateEvent{Kind: domain.ParticipantMoved, SessionID: sessionID, ChannelID: target})
+		completed = append(completed, sessionID)
 	}
 	delete(h.channels, id)
 	h.revision++
 	h.emitLocked(domain.StateEvent{Kind: domain.ChannelDeleted, ChannelID: id})
-	return moved, nil
+	return completed, nil
 }
 
 // channelDepthLocked counts id and its ancestors; the root (0) has depth 0.

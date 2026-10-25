@@ -29,6 +29,8 @@ func HandlePacket(
 		return err
 	case protocol.PacketHeartbeat:
 		return HandleHeartbeatPacket(conn, hub, cache, packet, addr)
+	case protocol.PacketVoiceStateRequest, protocol.PacketVoiceStateAck:
+		return HandleVoiceStateControl(hub, packet, addr, time.Now())
 	case protocol.PacketDisconnect:
 		return HandleDisconnectPacket(hub, cache, packet, addr)
 	case protocol.PacketJoinChannel:
