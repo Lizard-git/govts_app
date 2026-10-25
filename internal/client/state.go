@@ -11,22 +11,27 @@ import (
 )
 
 type State struct {
-	mu                 sync.RWMutex
-	syncMu             sync.Mutex
-	syncSerial         uint64
-	syncedGeneration   uint64
-	observedRevision   domain.StateRevision
-	resync             chan struct{}
-	subscribers        map[chan struct{}]struct{}
-	notices            chan string
-	notificationSounds chan NotificationSound
-	speaking           map[uint64]time.Time
-	Audio              *AudioControlState
-	measurements       connectionMeasurements
-	chatRevision       uint64
-	voice              *installedVoiceState
-	voicePages         chan voiceStateEnvelope
-	voiceResync        chan struct{}
+	mu                      sync.RWMutex
+	syncMu                  sync.Mutex
+	syncSerial              uint64
+	syncedGeneration        uint64
+	observedRevision        domain.StateRevision
+	resync                  chan struct{}
+	subscribers             map[chan struct{}]struct{}
+	notices                 chan string
+	notificationSounds      chan NotificationSound
+	speaking                map[uint64]time.Time
+	Audio                   *AudioControlState
+	measurements            connectionMeasurements
+	chatRevision            uint64
+	voice                   *installedVoiceState
+	voicePages              chan voiceStateEnvelope
+	voiceResync             chan struct{}
+	voiceCommandGate        chan struct{}
+	ownControlRevision      uint64
+	lastVoiceCommandAck     *protocol.VoiceControlAck
+	voiceCommandInFlight    bool
+	voiceDeferredChannelCue bool
 
 	sessionID        uint64
 	joinLevel        uint16
@@ -73,6 +78,8 @@ func NewState(sessionID uint64, name string) *State {
 		speaking:           make(map[uint64]time.Time),
 		voicePages:         make(chan voiceStateEnvelope, protocol.MaxVoiceStateEntries),
 		voiceResync:        make(chan struct{}, 1),
+		voiceCommandGate:   make(chan struct{}, 1),
+		ownControlRevision: 1,
 	}
 	s.Audio = NewAudioControlState(func() { s.audioChanged() })
 	return s
@@ -157,6 +164,10 @@ func (s *State) PrepareConnection() error {
 func (s *State) InvalidateSession(status ConnectionStatus) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.invalidateSessionLocked(status)
+}
+
+func (s *State) invalidateSessionLocked(status ConnectionStatus) uint64 {
 	s.generation++
 	s.clearVoiceStateLocked()
 	s.status = status

@@ -8,32 +8,32 @@ import (
 )
 
 func TestJoinChannelPayloadRoundTrip(t *testing.T) {
-	request, err := EncodeJoinChannelRequest(42)
+	request, err := EncodeJoinChannelRequest(42, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := DecodeJoinChannelRequest(request)
-	if err != nil || id != 42 {
+	id, expected, err := DecodeJoinChannelRequest(request)
+	if err != nil || id != 42 || expected != 3 {
 		t.Fatalf("request round trip = (%d, %v)", id, err)
 	}
-	ack, err := EncodeJoinChannelAck(42, 7)
+	ack, err := EncodeVoiceControlAck(VoiceControlAck{OwnControlRevision: 8, DomainRevision: 7, ChannelID: 42, SourceEpoch: 2, ReceiverEpoch: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, revision, err := DecodeJoinChannelAck(ack)
-	if err != nil || id != 42 || revision != 7 {
-		t.Fatalf("ack round trip = (%d, %d, %v)", id, revision, err)
+	decoded, err := DecodeVoiceControlAck(ack)
+	if err != nil || decoded.ChannelID != 42 || decoded.DomainRevision != 7 {
+		t.Fatalf("ack round trip = (%+v, %v)", decoded, err)
 	}
 }
 
 func TestJoinChannelDecodersRejectMalformedPayloads(t *testing.T) {
 	for _, payload := range [][]byte{nil, make([]byte, JoinChannelRequestSize-1), make([]byte, JoinChannelRequestSize), make([]byte, JoinChannelRequestSize+1)} {
-		if _, err := DecodeJoinChannelRequest(payload); err == nil {
+		if _, _, err := DecodeJoinChannelRequest(payload); err == nil {
 			t.Fatalf("accepted malformed join request %x", payload)
 		}
 	}
-	for _, payload := range [][]byte{nil, make([]byte, JoinChannelAckSize-1), make([]byte, JoinChannelAckSize), make([]byte, JoinChannelAckSize+1)} {
-		if _, _, err := DecodeJoinChannelAck(payload); err == nil {
+	for _, payload := range [][]byte{nil, make([]byte, VoiceControlAckSize-1), make([]byte, VoiceControlAckSize), make([]byte, VoiceControlAckSize+1)} {
+		if _, err := DecodeVoiceControlAck(payload); err == nil {
 			t.Fatalf("accepted malformed join ack %x", payload)
 		}
 	}
@@ -116,7 +116,7 @@ func TestMaximumChannelFitsSnapshotPayload(t *testing.T) {
 func FuzzDecodeJoinPayloads(f *testing.F) {
 	f.Add(make([]byte, 8))
 	f.Add(make([]byte, 16))
-	f.Fuzz(func(t *testing.T, p []byte) { _, _ = DecodeJoinChannelRequest(p); _, _, _ = DecodeJoinChannelAck(p) })
+	f.Fuzz(func(t *testing.T, p []byte) { _, _, _ = DecodeJoinChannelRequest(p); _, _ = DecodeVoiceControlAck(p) })
 }
 func FuzzDecodeSnapshotRequest(f *testing.F) {
 	f.Add(make([]byte, SnapshotRequestSize))

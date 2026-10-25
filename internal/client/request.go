@@ -19,6 +19,10 @@ const (
 	requestAttempts    = 3
 )
 
+type ServerRequestError struct{ Message string }
+
+func (e *ServerRequestError) Error() string { return "server error: " + e.Message }
+
 type ServerVersionTooOldError struct {
 	Server   appversion.Number
 	Required appversion.Number
@@ -91,7 +95,7 @@ func doRequestAttempts(
 			timer.Stop()
 			if response.Type == protocol.PacketError {
 				log.Printf("control request rejected: type=%d session_id=%d request_id=%d attempt=%d reason=%q", packet.Type, packet.SessionID, requestID, attempt, response.Payload)
-				return ControlResponse{}, fmt.Errorf("server error: %s", string(response.Payload))
+				return ControlResponse{}, &ServerRequestError{Message: string(response.Payload)}
 			}
 			return response, nil
 		case <-timer.C:

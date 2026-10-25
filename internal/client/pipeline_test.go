@@ -703,7 +703,7 @@ func TestJoinChannelSuccess(t *testing.T) {
 			serverErrCh <- err
 			return
 		}
-		payload, err := protocol.EncodeJoinChannelAck(7, 2)
+		payload, err := protocol.EncodeVoiceControlAck(protocol.VoiceControlAck{OwnControlRevision: 2, DomainRevision: 2, ChannelID: 7, SourceEpoch: 2, ReceiverEpoch: 2})
 		if err != nil {
 			serverErrCh <- err
 			return
@@ -784,7 +784,7 @@ func TestJoinChannelRetriesLostAcknowledgement(t *testing.T) {
 			return
 		}
 
-		payload, err := protocol.EncodeJoinChannelAck(7, 2)
+		payload, err := protocol.EncodeVoiceControlAck(protocol.VoiceControlAck{OwnControlRevision: 2, DomainRevision: 2, ChannelID: 7, SourceEpoch: 2, ReceiverEpoch: 2})
 		if err != nil {
 			serverErrCh <- err
 			return
@@ -904,7 +904,7 @@ func TestValidateJoinResponse(t *testing.T) {
 
 func mustJoinAckPayload(t *testing.T, channelID domain.ChannelID) []byte {
 	t.Helper()
-	payload, err := protocol.EncodeJoinChannelAck(channelID, 2)
+	payload, err := protocol.EncodeVoiceControlAck(protocol.VoiceControlAck{OwnControlRevision: 2, DomainRevision: 2, ChannelID: channelID, SourceEpoch: 2, ReceiverEpoch: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

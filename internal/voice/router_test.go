@@ -346,7 +346,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 		t.Fatal(err)
 	}
 	cache := NewRequestCache()
-	joinPayload, err := protocol.EncodeJoinChannelRequest(music.ID)
+	joinPayload, err := protocol.EncodeJoinChannelRequest(music.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	}
 	firstResponse := receiveTestPacket(t, clientPacketConn)
 
-	request.Payload, err = protocol.EncodeJoinChannelRequest(DefaultChannelID)
+	request.Payload, err = protocol.EncodeJoinChannelRequest(DefaultChannelID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,9 +390,9 @@ func TestHandleJoinChannelPacketReturnsCachedResponseForDuplicate(t *testing.T) 
 	if got := updatedSession.ChannelID; got != music.ID {
 		t.Fatalf("session channel = %d, want original channel %d", got, music.ID)
 	}
-	firstID, _, err := protocol.DecodeJoinChannelAck(firstResponse.Payload)
-	if err != nil || firstID != music.ID {
-		t.Fatalf("first response = (%d, %v), want channel %d", firstID, err, music.ID)
+	firstAck, err := protocol.DecodeVoiceControlAck(firstResponse.Payload)
+	if err != nil || firstAck.ChannelID != music.ID {
+		t.Fatalf("first response = (%+v, %v), want channel %d", firstAck, err, music.ID)
 	}
 	if !bytes.Equal(secondResponse.Payload, firstResponse.Payload) {
 		t.Fatal("cached response payload differs")
@@ -427,7 +427,7 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := NewRequestCache()
-	missingPayload, err := protocol.EncodeJoinChannelRequest(999)
+	missingPayload, err := protocol.EncodeJoinChannelRequest(999, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 	}
 
 	request.RequestID++
-	request.Payload, err = protocol.EncodeJoinChannelRequest(full.ID)
+	request.Payload, err = protocol.EncodeJoinChannelRequest(full.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestHandleJoinChannelPacketRejectsUnknownAndFullChannels(t *testing.T) {
 
 	restricted := mustCreateChannel(t, hub, domain.Channel{Name: "restricted", MinJoinLevel: 25})
 	request.RequestID++
-	request.Payload, err = protocol.EncodeJoinChannelRequest(restricted.ID)
+	request.Payload, err = protocol.EncodeJoinChannelRequest(restricted.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,12 +112,12 @@ func HandleJoinChannelPacket(
 		return conn.WritePacket(packet.SessionID, addr, response)
 	}
 
-	channelID, err := protocol.DecodeJoinChannelRequest(packet.Payload)
+	channelID, expected, err := protocol.DecodeJoinChannelRequest(packet.Payload)
 	if err != nil {
 		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("invalid join request: %v", err))
 	}
-	revision, err := hub.JoinChannelWithRevision(packet.SessionID, channelID)
-	if err != nil {
+	result, err := hub.JoinChannelAtVoiceRevision(packet.SessionID, channelID, expected)
+	if err != nil && !errors.Is(err, ErrStaleVoiceControl) {
 		userID := int64(0)
 		if session, ok := hub.Get(packet.SessionID); ok {
 			userID = session.UserID
@@ -125,11 +125,11 @@ func HandleJoinChannelPacket(
 		log.Printf("channel join rejected: user_id=%d session_id=%d channel_id=%d reason=%s", userID, packet.SessionID, channelID, joinRejectionReason(err))
 		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("cannot join channel: %v", err))
 	}
-	session, ok := hub.Get(packet.SessionID)
-	if !ok {
-		return fmt.Errorf("session %d not found", packet.SessionID)
+	status := protocol.VoiceControlOK
+	if errors.Is(err, ErrStaleVoiceControl) {
+		status = protocol.VoiceControlStale
 	}
-	payload, err := protocol.EncodeJoinChannelAck(channelID, revision)
+	payload, err := protocol.EncodeVoiceControlAck(voiceCommandAck(result, status))
 	if err != nil {
 		return fmt.Errorf("encode join acknowledgement: %w", err)
 	}
@@ -140,7 +140,7 @@ func HandleJoinChannelPacket(
 		Payload:   payload,
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
-	return SendToSession(conn, session, ack)
+	return SendToSession(conn, result.Session, ack)
 }
 
 func joinRejectionReason(err error) string {
@@ -166,25 +166,35 @@ func HandleAudioStatePacket(conn *udp.ServerPacketConn, hub *Hub, cache *Request
 	if response, ok := cache.Get(packet.SessionID, packet.RequestID); ok {
 		return conn.WritePacket(packet.SessionID, addr, response)
 	}
-	muted, deafened, err := protocol.DecodeAudioState(packet.Payload)
+	muted, deafened, expected, err := protocol.DecodeAudioState(packet.Payload)
 	if err != nil {
 		return cacheAndSendSessionError(conn, cache, packet, addr, fmt.Sprintf("invalid audio state: %v", err))
 	}
-	if err := hub.SetAudioState(packet.SessionID, muted, deafened); err != nil {
+	result, err := hub.SetAudioStateAtVoiceRevision(packet.SessionID, muted, deafened, expected)
+	if err != nil && !errors.Is(err, ErrStaleVoiceControl) {
 		return cacheAndSendSessionError(conn, cache, packet, addr, err.Error())
+	}
+	status := protocol.VoiceControlOK
+	if errors.Is(err, ErrStaleVoiceControl) {
+		status = protocol.VoiceControlStale
+	}
+	payload, err := protocol.EncodeVoiceControlAck(voiceCommandAck(result, status))
+	if err != nil {
+		return err
 	}
 	ack := protocol.VoicePacket{
 		Type:      protocol.PacketAudioStateAck,
 		SessionID: packet.SessionID,
 		RequestID: packet.RequestID,
-		Payload:   protocol.EncodeAudioState(muted, deafened),
+		Payload:   payload,
 	}
 	cache.Put(packet.SessionID, packet.RequestID, ack)
-	session, ok := hub.Get(packet.SessionID)
-	if !ok {
-		return ErrSessionNotFound
-	}
-	return SendToSession(conn, session, ack)
+	return SendToSession(conn, result.Session, ack)
+}
+
+func voiceCommandAck(result VoiceControlResult, status byte) protocol.VoiceControlAck {
+	s := result.Session
+	return protocol.VoiceControlAck{Status: status, OwnControlRevision: s.OwnControlRevision, VoiceRevision: result.VoiceRevision, DomainRevision: result.DomainRevision, ChannelID: s.ChannelID, SourceEpoch: s.SourceEpoch, ReceiverEpoch: s.ReceiverEpoch, Muted: s.Muted, Deafened: s.Deafened}
 }
 
 func HandlePresencePacket(conn *udp.ServerPacketConn, hub *Hub, cache *RequestCache, packet protocol.VoicePacket, addr *net.UDPAddr) error {

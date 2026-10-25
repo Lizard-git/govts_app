@@ -30,7 +30,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	}
 	defer store.Close()
 	hub := voice.NewHub()
-	version, err := appversion.Parse("0.3.0")
+	version, err := appversion.Parse(appversion.MinimumServerVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer legacyConn.Close()
-	_, err = client.PerformSecureHandshakeAttempts(ctx, legacyConn, legacyCodec, "alice", clientKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 1, "0.2.0")
+	_, err = client.PerformSecureHandshakeAttempts(ctx, legacyConn, legacyCodec, "alice", clientKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 1, "0.3.8")
 	var legacyRejected *client.AuthenticationRejectedError
 	if !errors.As(err, &legacyRejected) || !strings.Contains(legacyRejected.Reason, "upgrade") {
 		t.Fatalf("legacy client error = %v", err)
@@ -108,7 +108,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, name, private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.3.0")
+		result, err := client.PerformSecureHandshakeAttempts(ctx, connection, codec, name, private, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, appversion.MinimumServerVersion)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +123,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	if session, ok := hub.Get(firstID); !ok || session.UserID != account.ID || session.JoinLevel != 25 {
 		t.Fatalf("authenticated session = %+v, found=%t", session, ok)
 	}
-	joinPayload, err := protocol.EncodeJoinChannelRequest(privateRoom.ID)
+	joinPayload, err := protocol.EncodeJoinChannelRequest(privateRoom.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,15 +164,16 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 	if err != nil || response.Type != protocol.PacketError || !strings.Contains(string(response.Payload), "permission denied") {
 		t.Fatalf("denied kick response = %+v, %v", response, err)
 	}
-	defaultPayload, err := protocol.EncodeJoinChannelRequest(voice.DefaultChannelID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, item := range []struct {
 		connection *udp.ClientPacketConn
 		id         uint64
 		request    uint32
 	}{{first, firstID, 102}, {second, secondID, 103}} {
+		current, _ := hub.Get(item.id)
+		defaultPayload, err := protocol.EncodeJoinChannelRequest(voice.DefaultChannelID, current.OwnControlRevision)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := item.connection.SendPacket(protocol.VoicePacket{Type: protocol.PacketJoinChannel, SessionID: item.id, RequestID: item.request, Payload: defaultPayload}); err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +282,7 @@ func TestSecureAuthenticationAndJoinLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer bannedConn.Close()
-	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "bob", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, "0.3.0")
+	_, err = client.PerformSecureHandshakeAttempts(ctx, bannedConn, bannedCodec, "bob", otherKey, filepath.Join(directory, "pins.json"), endpoint.String(), time.Second, 3, appversion.MinimumServerVersion)
 	var rejected *client.AuthenticationRejectedError
 	if !errors.As(err, &rejected) || !strings.Contains(rejected.Reason, "banned") {
 		t.Fatalf("banned reconnect error = %v", err)

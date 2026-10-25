@@ -1,6 +1,9 @@
 package protocol
 
-import "errors"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 const (
 	audioFlagMuted    byte = 1 << 0
@@ -8,15 +11,20 @@ const (
 	audioFlagAway     byte = 1 << 2
 )
 
-func EncodeAudioState(muted, deafened bool) []byte {
-	return []byte{audioStateFlags(muted, deafened)}
+func EncodeAudioState(muted, deafened bool, expected uint64) ([]byte, error) {
+	if expected == 0 {
+		return nil, errors.New("control revision must not be zero")
+	}
+	p := binary.BigEndian.AppendUint64([]byte{VoiceControlVersion}, expected)
+	return append(p, audioStateFlags(muted, deafened)), nil
 }
 
-func DecodeAudioState(payload []byte) (bool, bool, error) {
-	if len(payload) != 1 {
-		return false, false, errors.New("invalid audio state payload")
+func DecodeAudioState(payload []byte) (bool, bool, uint64, error) {
+	if len(payload) != 10 || payload[0] != VoiceControlVersion || binary.BigEndian.Uint64(payload[1:9]) == 0 {
+		return false, false, 0, errors.New("invalid audio state payload")
 	}
-	return audioStateFromFlags(payload[0])
+	muted, deafened, err := audioStateFromFlags(payload[9])
+	return muted, deafened, binary.BigEndian.Uint64(payload[1:9]), err
 }
 
 func audioStateFlags(muted, deafened bool) byte {

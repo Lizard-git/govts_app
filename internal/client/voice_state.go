@@ -30,6 +30,10 @@ type VoicePacketSender interface {
 
 func (s *State) clearVoiceStateLocked() {
 	s.voice = nil
+	s.ownControlRevision = 1
+	s.lastVoiceCommandAck = nil
+	s.voiceCommandInFlight = false
+	s.voiceDeferredChannelCue = false
 	select {
 	case <-s.voiceResync:
 	default:
@@ -106,12 +110,22 @@ func (s *State) voiceProfileLocked(generation uint64, header protocol.VoiceState
 }
 
 var errVoiceProfilePending = errors.New("voice profile is not synchronized")
+var errVoiceStateSuperseded = errors.New("voice state superseded by command response")
 
 // Lock order: Audio.sendMu -> State.mu -> Audio.mu. Encoder configuration is
 // serialized with sends but never runs under State.mu. Local mute/deafen intent
 // is NOT overwritten by possibly older server flags.
 func (s *State) prepareVoiceStateLocked(snapshot *protocol.VoiceStateSnapshot, profile domain.AudioProfile) (*installedVoiceState, error) {
 	header := snapshot.Header
+	if header.OwnControlRevision == 0 {
+		return nil, protocol.ErrInvalidVoiceState
+	}
+	if header.OwnControlRevision < s.ownControlRevision {
+		return nil, errVoiceStateSuperseded
+	}
+	if ack := s.lastVoiceCommandAck; ack != nil && header.OwnControlRevision == ack.OwnControlRevision && !voiceHeaderMatchesAck(header, *ack) {
+		return nil, protocol.ErrInvalidVoiceState
+	}
 	previous := s.voice
 	if previous != nil && header.Revision <= previous.header.Revision {
 		return nil, protocol.ErrInvalidVoiceState
@@ -207,13 +221,13 @@ func (s *State) installVoiceState(generation uint64, snapshot *protocol.VoiceSta
 	captureChanged := previous == nil || previous.header.OwnSourceEpoch != header.OwnSourceEpoch
 	receiverChanged := previous == nil || previous.header.OwnReceiverEpoch != header.OwnReceiverEpoch
 	s.Audio.mu.Lock()
-	defer s.Audio.mu.Unlock()
+	defer s.unlockVoiceAudioLocked()
 	if receiverChanged && s.Audio.player != nil {
 		if err := s.Audio.player.SetDeafened(true); err != nil {
 			return err
 		}
 		if !s.Audio.deafened {
-			if err := s.Audio.player.SetDeafened(false); err != nil {
+			if err := s.Audio.player.SetDeafened(s.Audio.commandPlaybackPaused); err != nil {
 				return err
 			}
 		}
@@ -231,6 +245,10 @@ func (s *State) installVoiceState(generation uint64, snapshot *protocol.VoiceSta
 	}
 	s.Audio.voicePaused = false
 	s.voice = candidate
+	s.ownControlRevision = header.OwnControlRevision
+	if err := s.resumeVoiceCommandsLocked(); err != nil {
+		return err
+	}
 	s.notifyLocked()
 	return nil
 }
@@ -297,7 +315,7 @@ func VoiceStateLoop(ctx context.Context, conn VoicePacketSender, state *State, c
 					state.RequestResync(generation)
 					lastResync = now
 				}
-			} else if errors.Is(err, protocol.ErrInvalidVoiceState) {
+			} else if errors.Is(err, protocol.ErrInvalidVoiceState) || errors.Is(err, errVoiceStateSuperseded) {
 				invalid.Record(err, sessionID)
 				pending = nil
 				assembler.Reset()

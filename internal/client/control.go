@@ -209,44 +209,88 @@ func joinChannelWithTimeout(
 	state *State,
 	channelID domain.ChannelID,
 	timeout time.Duration,
-) error {
+) (runErr error) {
 	generation := state.Generation()
-	payload, err := protocol.EncodeJoinChannelRequest(channelID)
+	if channelID == 0 {
+		return errors.New("channel ID must not be zero")
+	}
+	unlock, err := state.lockVoiceCommand(ctx, generation)
 	if err != nil {
 		return err
 	}
-
-	packet := protocol.VoicePacket{
-		Type:    protocol.PacketJoinChannel,
-		Payload: payload,
-	}
-	response, err := DoRequest(ctx, conn, state, packet, timeout)
-	if err != nil {
-		return fmt.Errorf("join channel %d: %w", channelID, err)
-	}
-	if err := validateJoinResponse(response, channelID); err != nil {
+	defer unlock()
+	changingChannel := state.ChannelID() != channelID
+	if err := state.beginVoiceCommand(generation, changingChannel, changingChannel); err != nil {
 		return err
 	}
-
-	_, revision, _ := protocol.DecodeJoinChannelAck(response.Payload)
-	if !state.ConfirmChannel(generation, channelID, revision) {
-		return errors.New("client session changed during join")
+	uncertain := false
+	defer func() { runErr = state.finishVoiceCommand(generation, uncertain, runErr) }()
+	for attempt := 0; attempt < 3; attempt++ {
+		expected, err := state.voiceCommandRevision(generation)
+		if err != nil {
+			return err
+		}
+		payload, err := protocol.EncodeJoinChannelRequest(channelID, expected)
+		if err != nil {
+			return err
+		}
+		response, err := doRequestAttempts(ctx, conn, state, protocol.VoicePacket{Type: protocol.PacketJoinChannel, Payload: payload}, timeout, requestAttempts, func() error {
+			_, err := state.voiceCommandRevision(generation)
+			if err == nil {
+				uncertain = true
+			}
+			return err
+		})
+		if err != nil {
+			var rejection *ServerRequestError
+			if errors.As(err, &rejection) {
+				uncertain = false
+			}
+			return fmt.Errorf("join channel %d: %w", channelID, err)
+		}
+		if response.Type != protocol.PacketJoinChannelAck {
+			return fmt.Errorf("unexpected join response: type=%d", response.Type)
+		}
+		ack, err := protocol.DecodeVoiceControlAck(response.Payload)
+		if err != nil {
+			return err
+		}
+		if ack.Status == protocol.VoiceControlOK {
+			if err := validateJoinResponse(response, channelID); err != nil {
+				return err
+			}
+		}
+		current, err := state.acceptVoiceCommandAck(generation, expected, ack)
+		if err != nil {
+			return err
+		}
+		uncertain = false
+		if ack.Status == protocol.VoiceControlStale {
+			continue
+		}
+		if current && !state.ConfirmChannel(generation, channelID, ack.DomainRevision) {
+			return ErrConnectionLost
+		}
+		return nil
 	}
-	return nil
+	return ErrVoiceControlStale
 }
 
 func validateJoinResponse(response ControlResponse, requestedChannel domain.ChannelID) error {
 	if response.Type != protocol.PacketJoinChannelAck {
 		return fmt.Errorf("unexpected join response: type=%d", response.Type)
 	}
-	confirmedChannel, _, err := protocol.DecodeJoinChannelAck(response.Payload)
+	ack, err := protocol.DecodeVoiceControlAck(response.Payload)
 	if err != nil {
 		return fmt.Errorf("invalid join response: %w", err)
 	}
-	if confirmedChannel != requestedChannel {
+	if ack.Status != protocol.VoiceControlOK {
+		return ErrVoiceControlStale
+	}
+	if ack.ChannelID != requestedChannel {
 		return fmt.Errorf(
 			"join response channel mismatch: got %d, want %d",
-			confirmedChannel,
+			ack.ChannelID,
 			requestedChannel,
 		)
 	}
