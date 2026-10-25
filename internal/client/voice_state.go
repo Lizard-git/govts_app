@@ -209,7 +209,7 @@ func (s *State) installVoiceState(generation uint64, snapshot *protocol.VoiceSta
 	}
 	s.Audio.mu.Lock()
 	wasPaused := s.Audio.voicePaused
-	configureNeeded := previous == nil || previous.profile != profile || wasPaused
+	configureNeeded := previous == nil || previous.header.OwnSourceEpoch != header.OwnSourceEpoch || previous.profile != profile || wasPaused
 	if configureNeeded {
 		s.Audio.voicePaused = true
 	}

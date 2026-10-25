@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"bytes"
 	"testing"
 
 	pionopus "github.com/pion/opus"
@@ -115,5 +116,41 @@ func TestOpusEncoderConfigureChannelProfile(t *testing.T) {
 	profile.Application = domain.OpusApplicationVoIP
 	if err := encoder.Configure(profile); err != nil {
 		t.Fatalf("configure encoder: %v", err)
+	}
+}
+
+func TestOpusConfigureDiscardsPreviousSourceAudio(t *testing.T) {
+	config := CodecConfig{SampleRate: 48000, Channels: 1, SamplesPerFrame: 960, Bitrate: 24000, Application: domain.OpusApplicationVoIP}
+	encoder, err := NewOpusEncoder(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := make([]int16, 960)
+	for i := range previous {
+		previous[i] = int16((i % 40) * 300)
+	}
+	for range 5 {
+		if _, err := encoder.Encode(previous); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := encoder.Configure(domain.DefaultAudioProfile()); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := NewOpusEncoder(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	silence := make([]int16, 960)
+	got, err := encoder.Encode(silence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := fresh.Encode(silence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("new source retained encoder lookahead or predictor history")
 	}
 }

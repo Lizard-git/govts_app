@@ -281,3 +281,54 @@ func TestSendFailureConsumesDatagramNumberAndContinues(t *testing.T) {
 		t.Fatalf("write attempts: %+v bundle=%+v, %v", codec.attempts, bundle, err)
 	}
 }
+
+func TestOwnSourceEpochRestartsEncoderButPeerAndReceiverDoNot(t *testing.T) {
+	s, p := voiceClientFixture()
+	calls := 0
+	configure := func(domain.AudioProfile) error { calls++; return nil }
+	if err := s.installVoiceState(s.Generation(), p, configure); err != nil {
+		t.Fatal(err)
+	}
+	p.Header.Revision++
+	p.Sources[1].SourceEpoch++
+	if err := s.installVoiceState(s.Generation(), p, configure); err != nil {
+		t.Fatal(err)
+	}
+	p.Header.Revision++
+	p.Header.OwnControlRevision++
+	p.Header.OwnReceiverEpoch++
+	if err := s.installVoiceState(s.Generation(), p, configure); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("peer or receiver epoch restarted own encoder")
+	}
+	p.Header.Revision++
+	p.Header.OwnControlRevision++
+	p.Header.OwnSourceEpoch++
+	p.Sources[0].SourceEpoch++
+	if err := s.installVoiceState(s.Generation(), p, configure); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatal("new own source kept the previous encoder stream")
+	}
+}
+
+func TestSummariesAdvanceAudioHorizonDuringCompleteVoiceOutage(t *testing.T) {
+	s, _, _ := installedMediaFixture(t)
+	for i, last := range []uint32{0x70000000, 0x90000000} {
+		summary := protocol.VoiceSummary{Direction: protocol.VoiceDownstream, Mode: protocol.VoiceMode{DesiredFrames: 2, AllowedFrames: 2}, Intervals: []protocol.VoiceSendInterval{{ID: uint32(i + 1), FirstSequence: last, LastSequence: last, SuccessfulSends: 1}}}
+		payload, err := protocol.EncodeVoiceSummary(summary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AcceptVoiceTelemetry(s.Generation(), protocol.VoicePacket{Type: protocol.PacketVoiceSummary, SessionID: s.SessionID(), Payload: payload}, time.Unix(100+int64(i), 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle := protocol.VoiceBundleV2{DatagramSequence: 0x90000001, SourceEpoch: 1, ReceiverEpoch: 1}
+	if !s.VoiceBundleAllowed(s.Generation(), 8, bundle) {
+		t.Fatal("voice remained behind the signed-sequence horizon after recovery")
+	}
+}

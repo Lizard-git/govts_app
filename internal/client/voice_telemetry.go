@@ -22,8 +22,8 @@ func (s *State) SetVoiceReserve(bytesPerSecond int) {
 	s.voiceFlow.SetBudget(bytesPerSecond)
 }
 func (s *State) AcceptVoiceTelemetry(generation uint64, p protocol.VoicePacket, now time.Time) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.generation != generation || s.sessionID != p.SessionID {
 		return nil
 	}
@@ -32,7 +32,19 @@ func (s *State) AcceptVoiceTelemetry(generation uint64, p protocol.VoicePacket, 
 		if err != nil {
 			return err
 		}
-		return s.voiceFlow.AcceptSummary(v, now)
+		if err := s.voiceFlow.AcceptSummary(v, now); err != nil {
+			return err
+		}
+		// Keep the audio horizon moving during complete voice loss as well.
+		// A valid summary never lowers the installed receiver barrier.
+		if s.voice != nil {
+			for _, interval := range v.Intervals {
+				if interval.SuccessfulSends+interval.LocalSendFailures > 0 && int32(interval.LastSequence-s.voice.datagramFloor) > 65536 {
+					s.voice.datagramFloor = interval.LastSequence - 65536
+				}
+			}
+		}
+		return nil
 	}
 	v, err := protocol.DecodeVoiceReport(p.Payload)
 	if err != nil {

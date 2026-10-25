@@ -74,26 +74,25 @@ func (e *OpusEncoder) Encode(samples []int16) ([]byte, error) {
 	return packet[:n], nil
 }
 
-// Configure updates channel-controlled Opus settings without rebuilding the
-// PCM capture pipeline. It is safe to call while encoding is active.
+// Configure starts a fresh Opus stream with the channel settings, discarding
+// lookahead and prediction history. It is safe alongside encoding.
 func (e *OpusEncoder) Configure(profile domain.AudioProfile) error {
 	if err := domain.ValidateAudioProfile(profile); err != nil {
 		return err
 	}
-	application, err := opusApplication(profile.Application)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	config := e.config
+	config.Bitrate = int(profile.Bitrate)
+	config.Application = profile.Application
+	// A new source identity must not carry lookahead/predictor samples from
+	// the preceding channel or mute period into its first encoded frame.
+	fresh, err := NewOpusEncoder(config)
 	if err != nil {
 		return err
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.encoder.SetBitrate(int(profile.Bitrate)); err != nil {
-		return err
-	}
-	if err := e.encoder.SetApplication(application); err != nil {
-		return err
-	}
-	e.config.Bitrate = int(profile.Bitrate)
-	e.config.Application = profile.Application
+	e.encoder = fresh.encoder
+	e.config = config
 	return nil
 }
 
