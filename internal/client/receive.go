@@ -82,8 +82,9 @@ func ReceiveLoop(
 			}
 			identity := audio.VoiceIdentity{Generation: generation, SourceEpoch: bundle.SourceEpoch, ReceiverEpoch: bundle.ReceiverEpoch}
 			batch := make([]audio.MediaFrame, 0, len(bundle.Frames))
-			for _, f := range bundle.Frames {
-				batch = append(batch, audio.MediaFrame{Voice: identity, SenderID: packet.SessionID, Sequence: f.Sequence, Data: f.Payload, Duration: frameDuration})
+			arrival := time.Now()
+			for i, f := range bundle.Frames {
+				batch = append(batch, audio.MediaFrame{ArrivedAt: arrival, Redundant: i < len(bundle.Frames)-1, Voice: identity, SenderID: packet.SessionID, Sequence: f.Sequence, Data: f.Payload, Duration: frameDuration})
 			}
 			frame := batch[0]
 			if len(batch) > 1 {

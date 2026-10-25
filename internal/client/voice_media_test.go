@@ -93,16 +93,26 @@ func TestVoiceBundleInsertedBeforeGapDecisionAndDecoderReset(t *testing.T) {
 	f := func(seq uint32) audio.MediaFrame {
 		return audio.MediaFrame{Voice: identity, SenderID: 8, Sequence: seq, Data: []byte{byte(seq)}}
 	}
-	b.Push(f(1))
-	frames := b.Push(audio.MediaFrame{Batch: []audio.MediaFrame{f(2), f(3), f(4)}})
-	if len(frames) != 3 {
+	now := time.Now()
+	b.PushAt(f(1), now)
+	b.PushAt(audio.MediaFrame{Batch: []audio.MediaFrame{f(2), f(3), f(4)}}, now.Add(20*time.Millisecond))
+	var frames []audio.MediaFrame
+	for i := 2; i <= 5; i++ {
+		batch := b.TickAt(now.Add(time.Duration(i) * frameDuration))
+		if len(batch) > 1 {
+			t.Fatal("jitter emitted batch")
+		}
+		frames = append(frames, batch...)
+	}
+	if len(frames) != 4 {
 		t.Fatalf("bundle emitted %d frames", len(frames))
 	}
 	for i, frame := range frames {
-		if frame.Missing || frame.Sequence != uint32(i+2) {
+		if frame.Missing || frame.Sequence != uint32(i+1) {
 			t.Fatal("premature PLC", frames)
 		}
 	}
+
 	created := 0
 	d := newStreamDecoders(func() (audio.Decoder, error) {
 		created++

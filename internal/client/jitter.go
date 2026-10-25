@@ -189,9 +189,11 @@ type streamJitterBuffers struct {
 	depth    int
 	bySender map[uint64]jitterStream
 	onGap    func(length uint32)
+	onMetric func(restored, late uint32)
 }
 
 type jitterStream struct {
+	clock    *deadlineJitter
 	identity audio.VoiceIdentity
 	history  *voiceflow.Window
 	buffer   *jitterBuffer
@@ -224,6 +226,11 @@ func (b *streamJitterBuffers) PushAt(
 		stream.history = &voiceflow.Window{}
 		stream.buffer = newJitterBuffer(b.depth)
 		stream.buffer.onGap = b.onGap
+		if frame.Voice.Generation != 0 {
+			stream.clock = newDeadlineJitter()
+			stream.clock.onGap = b.onGap
+			stream.clock.onMetric = b.onMetric
+		}
 	}
 	if frame.Voice.Generation != 0 {
 		wire := make([]protocol.VoiceBundleFrame, 0, len(frames))
@@ -234,9 +241,16 @@ func (b *streamJitterBuffers) PushAt(
 		if err != nil {
 			return nil
 		}
+		originals := frames
 		frames = nil
 		for _, f := range added {
 			copy := frame
+			for _, original := range originals {
+				if original.Sequence == f.Sequence {
+					copy = original
+					break
+				}
+			}
 			copy.Sequence = f.Sequence
 			copy.Data = f.Payload
 			frames = append(frames, copy)
@@ -244,20 +258,34 @@ func (b *streamJitterBuffers) PushAt(
 	}
 	stream.lastSeen = now
 	b.bySender[frame.SenderID] = stream
+	if stream.clock != nil {
+		stream.clock.Push(frames, now)
+		return nil
+	}
 	return stream.buffer.PushBatch(frames)
 }
 
 func (b *streamJitterBuffers) Flush() []audio.MediaFrame {
 	var ready []audio.MediaFrame
 	for _, stream := range b.bySender {
+		if stream.clock != nil {
+			continue
+		}
 		ready = append(ready, stream.buffer.Flush()...)
 	}
 	return ready
 }
 
 func (b *streamJitterBuffers) Tick() []audio.MediaFrame {
+	return b.TickAt(time.Now())
+}
+func (b *streamJitterBuffers) TickAt(now time.Time) []audio.MediaFrame {
 	var ready []audio.MediaFrame
 	for _, stream := range b.bySender {
+		if stream.clock != nil {
+			ready = append(ready, stream.clock.Tick(now)...)
+			continue
+		}
 		ready = append(ready, stream.buffer.Tick()...)
 	}
 	return ready
@@ -323,7 +351,7 @@ func JitterLoop(
 		case now := <-ticker.C:
 			buffers.Prune(state)
 			buffers.RemoveInactive(now, DefaultStreamIdleTimeout)
-			if err := sendOrderedFrames(ctx, orderedCh, buffers.Tick()); err != nil {
+			if err := sendOrderedFrames(ctx, orderedCh, buffers.TickAt(now)); err != nil {
 				return err
 			}
 		case frame, ok := <-mediaCh:
