@@ -83,7 +83,7 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
     const ping = stats?.pingAvailable ? m.connection.pingValue(stats.pingMs.toFixed(0), stats.pingVariationAvailable ? stats.pingVariationMs.toFixed(1) : "") : "—";
     type Mode = {known: boolean; desired: number; allowed: number; actual: number; reason: number; limited: boolean};
     const reason = (value: number) => value === 1 ? m.connection.budget : value === 2 ? m.connection.congestion : "";
-    const mode = (value?: Mode) => !value?.known || status !== "connected" ? "—" : value.reason === 3 ? m.connection.disabled : `${value.desired}${value.limited ? "*" : ""}`;
+    const actualFrames = (value?: Mode) => status === "connected" && value && value.actual >= 1 && value.actual <= 3 ? `${value.actual}` : "—";
     const modeDetails = (value?: Mode) => !value?.known || status !== "connected" ? "—" : `${value.desired}/${value.allowed}/${value.actual || "—"} ${reason(value.reason)}`;
     const protectionHint = `${m.connection.protectionTitle}\n${m.connection.modeDetails}: ↓ ${modeDetails(stats?.voice?.incoming)} / ↑ ${modeDetails(stats?.voice?.outgoing)}. ${m.connection.modeDetailsTitle}`;
     return <div className="connection-stats-anchor">
@@ -98,8 +98,8 @@ export function ConnectionStatsPopup({sessionId, status, channelId, sharing, scr
                 <span title={m.connection.lossIn}>↓ {status === "connected" && stats?.incomingKnown ? `${stats.incomingLoss.toFixed(1)}%` : "—"}</span>
                 {" / "}<span title={m.connection.lossOut}>↑ {status === "connected" && stats?.outgoingKnown ? `${stats.outgoingLoss.toFixed(1)}%` : "—"}</span>
             </strong></div>
-            <div className="connection-stat-row"><span title={protectionHint}>{m.connection.protection}</span><strong title={protectionHint} aria-label={`↓ ${mode(stats?.voice?.incoming)} / ↑ ${mode(stats?.voice?.outgoing)}. ${protectionHint}`}>
-                ↓ {mode(stats?.voice?.incoming)} / ↑ {mode(stats?.voice?.outgoing)}
+            <div className="connection-stat-row"><span title={protectionHint}>{m.connection.protection}</span><strong title={protectionHint} aria-label={`↓ ${actualFrames(stats?.voice?.incoming)} / ↑ ${actualFrames(stats?.voice?.outgoing)}. ${protectionHint}`}>
+                ↓ {actualFrames(stats?.voice?.incoming)} / ↑ {actualFrames(stats?.voice?.outgoing)}
             </strong></div>
             <details className="connection-voice-details"><summary title={m.connection.lossWindow}>{m.connection.details}</summary>
                 <div className="connection-stat-row"><span title={m.connection.recoveredTitle}>{m.connection.recovered}</span><strong>↓ {stats?.incomingKnown ? stats.voice.incoming.restored : "—"} / ↑ {stats?.outgoingKnown ? stats.voice.outgoing.restored : "—"}</strong></div>
