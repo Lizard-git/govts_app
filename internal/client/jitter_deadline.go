@@ -37,7 +37,12 @@ func (d *deadlineJitter) Push(frames []audio.MediaFrame, now time.Time) {
 		arrival = now
 	}
 	activeStep := max(time.Duration(0), min(frameDuration, arrival.Sub(d.lastNew)))
-	restart := !d.initialized || arrival.Sub(d.lastNew) >= 200*time.Millisecond
+	forward := !d.initialized || (int32(newest.Sequence-d.prototype.Sequence) > 0 && int32(newest.Sequence-d.next) >= 0)
+	// Capture gating compresses sequence time, and capture/device clocks can
+	// drift. Once playout is exhausted, a new overdue frame starts a fresh
+	// bounded reserve instead of keeping the entire next talkspurt late.
+	// Older repairs must never move the clock, even after a long silence.
+	restart := !d.initialized || (forward && (arrival.Sub(d.lastNew) >= 200*time.Millisecond || (len(d.pending) == 0 && now.After(d.due(newest.Sequence)))))
 	if restart {
 		activeStep = 0
 		clear(d.pending)

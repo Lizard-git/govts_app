@@ -61,3 +61,25 @@ func TestDeadlineJitterSkipsConsumerBacklogAndBoundsPLC(t *testing.T) {
 		t.Fatal("PLC continues after tail")
 	}
 }
+
+func TestDeadlineJitterResumesAfterShortCapturePause(t *testing.T) {
+	d := newDeadlineJitter()
+	now := time.Unix(100, 0)
+	f := func(n uint32) audio.MediaFrame { return audio.MediaFrame{Sequence: n, Data: []byte{1}} }
+	d.Push([]audio.MediaFrame{f(1)}, now)
+	if out := d.Tick(now.Add(40 * time.Millisecond)); len(out) != 1 {
+		t.Fatal("initial frame was not played")
+	}
+	// VAD suppresses capture without allocating voice frame sequences. A
+	// short pause must not leave all subsequent frames behind the old clock.
+	d.Push([]audio.MediaFrame{f(2)}, now.Add(120*time.Millisecond))
+	if out := d.Tick(now.Add(160 * time.Millisecond)); len(out) != 1 || out[0].Sequence != 2 || out[0].Missing {
+		t.Fatal("speech did not resume after the short pause", out)
+	}
+	anchor := d.anchor
+	// An older repair arriving after a long silence cannot restart playout.
+	d.Push([]audio.MediaFrame{f(1)}, now.Add(400*time.Millisecond))
+	if !d.anchor.Equal(anchor) || len(d.pending) != 0 {
+		t.Fatal("old repair restarted the playout clock")
+	}
+}
