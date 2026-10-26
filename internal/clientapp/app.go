@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -60,6 +61,11 @@ type ConnectOptions struct {
 }
 
 type App struct {
+	fileOnce            sync.Once
+	fileQueue           *FileQueue
+	fileTransportMu     sync.Mutex
+	fileTransport       *http.Transport
+	fileTransportKey    string
 	lifetimeCtx         context.Context
 	cancelLifetime      context.CancelFunc
 	state               *voiceclient.State
@@ -450,7 +456,13 @@ func (a *App) Close(ctx context.Context) error {
 	}
 	a.mu.Unlock()
 	a.stopMonitor()
-	return a.Disconnect(ctx)
+	err := errors.Join(a.Disconnect(ctx), a.Files().Wait(ctx))
+	a.fileTransportMu.Lock()
+	if a.fileTransport != nil {
+		a.fileTransport.CloseIdleConnections()
+	}
+	a.fileTransportMu.Unlock()
+	return err
 }
 
 func (a *App) Wait(ctx context.Context) error {

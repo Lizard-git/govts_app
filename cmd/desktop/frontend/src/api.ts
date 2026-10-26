@@ -1,6 +1,12 @@
 import {Call, Events} from "@wailsio/runtime";
 import {Service} from "../bindings/uniclog.io/sonoryx/internal/ui/wails";
 
+export type FileTask = {id: string; context: string; direction: string; kind: number; targetId: string; name: string; size: number; offset: number; attachmentId: string; state: string; error: string};
+export type FileAttachment = {id: string; name: string; size: number; sha256: string; deleted: boolean};
+export type FileCapabilities = {maxFileBytes: number; chunkBytes: number; maxAttachments: number; uploadsEnabled: boolean; downloadsEnabled: boolean};
+export type FilePolicy = {MaxFileBytes: number; UserQuotaBytes: number; ServerQuotaBytes: number; UserBytesPerSecond: number; ServerBytesPerSecond: number; MaxTransfers: number; UploadTTL: number; Retention: number; MinFreeBytes: number; UploadsEnabled: boolean; DownloadsEnabled: boolean; Revision?: number};
+export type FileAdminView = {config: FilePolicy; files: FileAttachment[]; usage: Record<string, number>; metrics: Record<string, number>; freeBytes: number};
+
 export type {
     AudioDeviceDTO,
     AudioDevicesDTO,
@@ -70,6 +76,21 @@ export const desktopAPI = {
     setServerFavorite: (address: string, favorite: boolean): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.SetServerFavorite", address, favorite),
     reconnectServer: (address: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.ReconnectServer", address),
     chat: (request: ChatRequestDTO) => Service.Chat(request),
+    fileQueue: (context: string): Promise<FileTask[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileQueue", context),
+    fileOriginalImage: (context: string, id: string): Promise<string> & {cancel: () => void | Promise<void>} => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileOriginalImage", context, id),
+    fileAccountRights: (context: string, accountID: string): Promise<{upload: boolean; download: boolean}> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileAccountRights", context, accountID),
+    fileAdmin: (context: string, method: string, cursor = "", input: Record<string, unknown> = {}): Promise<FileAdminView> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileAdmin", context, method, cursor, input),
+    fileCapabilities: (context: string): Promise<FileCapabilities> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileCapabilities", context),
+    filePick: (context: string, kind: string, id: string): Promise<FileTask[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FilePick", context, kind, id),
+    fileControl: (context: string, id: string, action: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileControl", context, id, action),
+    fileAttached: (context: string, ids: string[]): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileAttached", context, ids),
+    fileMetadata: (context: string, ids: string[]): Promise<FileAttachment[]> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileMetadata", context, ids),
+    filePreview: (context: string, id: string): Promise<string> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FilePreview", context, id),
+    fileSave: (context: string, id: string): Promise<FileTask> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileSave", context, id),
+    fileStageCreate: (context: string): Promise<string> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileStageCreate", context),
+    fileStageWrite: (id: string, offset: number, data: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileStageWrite", id, offset, data),
+    fileStageFinish: (context: string, kind: string, target: string, id: string, name: string): Promise<FileTask> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileStageFinish", context, kind, target, id, name),
+    fileStageCancel: (id: string): Promise<void> => Call.ByName("uniclog.io/sonoryx/internal/ui/wails.Service.FileStageCancel", id),
     snapshot: () => Service.Snapshot(),
     connectionStats: () => Service.ConnectionStats(),
     eventsAfter: (sequence: string) => Service.EventsAfter(sequence),

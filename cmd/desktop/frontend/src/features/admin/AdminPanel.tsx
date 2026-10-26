@@ -1,11 +1,12 @@
 import {useCallback, useEffect, useMemo, useState} from "react";
+import {FileAdmin} from "./FileAdmin";
 import {desktopAPI, type AdminAccount, type AdminAuditEntry, type AdminChannelInput, type AdminPermission, type ChannelDTO, type ClientViewDTO} from "../../api";
 import {Select} from "../../components/Select";
 import {errorText} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 import {canBan, canEditAccount, canEditChannelLevel, canTogglePermission, channelEditingServerVersion, channelTree, descendantIDs, levelAllowed, parseLevel, reorderPositions, versionAtLeast} from "./adminRules";
 
-type Section = "accounts" | "channels" | "audit";
+type Section = "accounts" | "channels" | "audit" | "files";
 
 const maxReasonBytes = 128;
 
@@ -19,11 +20,13 @@ export function AdminPanel({view}: {view: ClientViewDTO}) {
                 <button type="button" aria-current={section === "accounts" ? "page" : undefined} onClick={() => setSection("accounts")}>{m.admin.accounts}</button>
                 <button type="button" aria-current={section === "channels" ? "page" : undefined} onClick={() => setSection("channels")}>{m.admin.channels}</button>
                 <button type="button" aria-current={section === "audit" ? "page" : undefined} onClick={() => setSection("audit")}>{m.admin.audit}</button>
+                <button type="button" aria-current={section === "files" ? "page" : undefined} onClick={() => setSection("files")}>{m.files.admin}</button>
             </nav>
             <div className="settings-content">
                 {section === "accounts" && <AccountsSection view={view}/>}
                 {section === "channels" && <ChannelsSection view={view}/>}
                 {section === "audit" && <AuditSection/>}
+                {section === "files" && <FileAdmin context={view.chatContext}/>}
             </div>
         </div>
     </section>;
@@ -153,6 +156,8 @@ function AccountCard({view, account, onChange, onDelete}: {view: ClientViewDTO; 
                                              onChange={(event) => void update(() => desktopAPI.adminSetPermission(account.id, permission.id, event.target.checked))}/><span/></label>
         </div>)}
 
+        <AccountFileRights key={`${view.chatContext}:${account.id}`} context={view.chatContext} accountID={account.id} editable={editable} accountBusy={busy}/>
+
         <form className="admin-inline-form" onSubmit={(event) => {
             event.preventDefault();
             if (parsedLevel !== null && levelValid) void update(() => desktopAPI.adminSetJoinLevel(account.id, parsedLevel));
@@ -191,6 +196,40 @@ function AccountCard({view, account, onChange, onDelete}: {view: ClientViewDTO; 
                     }}>{m.admin.deleteAccount}</button>
         </div>}
     </section>;
+}
+
+function AccountFileRights({context, accountID, editable, accountBusy}: {context: string; accountID: string; editable: boolean; accountBusy: boolean}) {
+    const {m} = useLocale();
+    const [rights, setRights] = useState<{upload: boolean; download: boolean}>();
+    const [loadError, setLoadError] = useState("");
+    const [attempt, setAttempt] = useState(0);
+    const {error, busy, run} = useStatus();
+    useEffect(() => {
+        let disposed = false;
+        setRights(undefined); setLoadError("");
+        void desktopAPI.fileAccountRights(context, accountID).then((value) => {
+            if (!value || typeof value.upload !== "boolean" || typeof value.download !== "boolean") throw new Error("Invalid file rights response");
+            if (!disposed) setRights(value);
+        }).catch((cause) => {if (!disposed) setLoadError(errorText(cause, m));});
+        return () => {disposed = true;};
+    }, [context, accountID, attempt, m]);
+    return <div className="admin-account-file-rights" aria-busy={!rights && !loadError || busy}>
+        <h4>{m.files.admin}</h4>
+        {loadError && <div className="device-error" role="alert">{loadError} <button className="text-button" type="button" onClick={() => setAttempt((value) => value + 1)}>{m.admin.reload}</button></div>}
+        {error && <div className="device-error" role="alert">{error}</div>}
+        {!rights && !loadError && <p className="device-hint">{m.admin.loading}</p>}
+        {rights && (["upload", "download"] as const).map((permission) => <div className="setting-toggle" key={permission}>
+            <strong>{permission === "upload" ? m.files.allowUpload : m.files.allowDownload}</strong>
+            <label className="switch"><input type="checkbox" aria-label={permission === "upload" ? m.files.allowUpload : m.files.allowDownload} checked={rights[permission]} disabled={!editable || busy || accountBusy}
+                onChange={(event) => {
+                    const changed = {...rights, [permission]: event.target.checked};
+                    void run(async () => {
+                        await desktopAPI.fileAdmin(context, "POST", "", {action: "rights", id: accountID, ...changed});
+                        setRights(changed);
+                    });
+                }}/><span/></label>
+        </div>)}
+    </div>;
 }
 
 function ChannelsSection({view}: {view: ClientViewDTO}) {

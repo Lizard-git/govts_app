@@ -1,7 +1,13 @@
-export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server" | "close" | "refresh" | "away" | "here" | "shield";
+export type IconName = "channels" | "settings" | "mic" | "sound" | "screen" | "info" | "disconnect" | "hangup" | "chat" | "server" | "close" | "refresh" | "away" | "here" | "shield" | "attachment" | "file" | "download" | "check" | "pause" | "play";
 
 export function Icon({name}: {name: IconName}) {
     const paths: Record<IconName, React.ReactNode> = {
+        check: <path d="m5 12 4 4L19 6"/>,
+        pause: <path d="M8 5v14M16 5v14"/>,
+        play: <path d="m8 4 12 8-12 8Z"/>,
+        attachment: <path d="m8 13 6.5-6.5a3 3 0 0 1 4.2 4.2L10 19.4a5 5 0 0 1-7-7L12 3.5a2 2 0 0 1 2.8 2.8L6 15.1a1 1 0 0 0 1.4 1.4L16 8"/>,
+        file: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></>,
+        download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/>,
         refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17"/></>,
         server: <><rect x="4" y="3" width="16" height="8" rx="2"/><rect x="4" y="13" width="16" height="8" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></>,
         channels: <><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 4v16M13 9h3M13 13h3"/></>,

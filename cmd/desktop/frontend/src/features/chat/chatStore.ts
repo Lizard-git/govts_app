@@ -2,7 +2,7 @@ import {desktopAPI, type ChatDialogDTO, type ChatMessageDTO, type ChatPageDTO, t
 import {errorCode} from "../../locales";
 
 export type ChatTarget = {kind: "channel" | "direct"; id: string};
-export type PendingMessage = {clientId: string; text: string; sentAtMS: number; state: "sending" | "error"; error?: string};
+export type PendingMessage = {clientId: string; text: string; attachmentIds?: string[]; sentAtMS: number; state: "sending" | "error"; error?: string};
 export type Conversation = {
     messages: ChatMessageDTO[]; pending: PendingMessage[]; draft: string;
     loaded: boolean; loading: boolean; error: string; hasOlder: boolean;
@@ -50,6 +50,34 @@ export class ChatStore {
     private timer: number;
     private restoredDrafts: Record<string, string> = {};
     private onMessageReceived: () => void = () => undefined;
+    readonly confirmedAttachments = new Set<string>();
+    private attachmentsToFinish = new Set<string>();
+    private finishingAttachments = false;
+    private finishRetryAt = 0;
+
+    private confirmAttachments(ids: string[]) {
+        for (const id of ids) if (!this.confirmedAttachments.has(id)) {this.confirmedAttachments.add(id); this.attachmentsToFinish.add(id);}
+        while (this.confirmedAttachments.size > 4096) {
+            const oldest = [...this.confirmedAttachments].find((id) => !this.attachmentsToFinish.has(id));
+            if (!oldest) break;
+            this.confirmedAttachments.delete(oldest);
+        }
+        void this.finishAttachments();
+    }
+    private async finishAttachments() {
+        if (this.disposed || !this.connected || this.finishingAttachments || Date.now() < this.finishRetryAt || !this.attachmentsToFinish.size) return;
+        this.finishingAttachments = true;
+        const ids = [...this.attachmentsToFinish].slice(0, 64);
+        try {
+            const queued = await desktopAPI.fileQueue(this.context);
+            const ready = new Set((queued ?? []).filter((task) => task.direction === "upload" && task.state === "ready").map((task) => task.attachmentId));
+            const existing = ids.filter((id) => ready.has(id));
+            if (existing.length) await desktopAPI.fileAttached(this.context, existing);
+            for (const id of ids) this.attachmentsToFinish.delete(id);
+            this.finishRetryAt = 0;
+        } catch { this.finishRetryAt = Date.now() + 3000; }
+        finally {this.finishingAttachments = false;}
+    }
 
     constructor(context: string, userId: string) {
         this.context = context; this.userId = userId;
@@ -94,6 +122,7 @@ export class ChatStore {
     }
     shouldOpenDialog(dialog: ChatDialogDTO) { return dialog.unread > 0 && compare(dialog.latestId, this.dismissedDialogs.get(dialog.userId) ?? "0") > 0; }
     private async reconcile() {
+        void this.finishAttachments();
         if (!this.connected || this.disposed || this.scheduled || Date.now() < Math.max(this.nextSyncAt, this.pausedUntil)) return;
         this.scheduled = true;
         const epoch = this.epoch;
@@ -167,6 +196,8 @@ export class ChatStore {
     private merge(c: Conversation, page: ChatPageDTO, history = false, older = false) {
         const messages = new Map(c.messages.map((m) => [m.id, m]));
         const confirmed = new Set((page.messages ?? []).filter((m) => m.senderId === this.userId).map((m) => m.clientId));
+        for (const message of page.messages ?? []) if (message.senderId === this.userId && message.attachmentIds?.length) this.confirmAttachments(message.attachmentIds);
+        for (const pending of c.pending) if (confirmed.has(pending.clientId) && pending.attachmentIds?.length) this.confirmAttachments(pending.attachmentIds);
         c.pending = c.pending.filter((p) => !confirmed.has(p.clientId));
         const frozen = c.olderWindow && !older;
         let received = false;
@@ -252,18 +283,19 @@ export class ChatStore {
         return {dialogs, cursor, hasMore};
     }
 
-    async send(target: ChatTarget, text: string, retry?: PendingMessage) {
+    async send(target: ChatTarget, text: string, retry?: PendingMessage, attachmentIds: string[] = []) {
         const c = this.conversation(target);
         if (retry?.state === "sending") return;
         if (!retry && [...this.conversations.values()].reduce((sum, v) => sum + v.pending.length, 0) >= 32) {
             c.error = errorCode("chat-too-many-pending"); this.notify(); return;
         }
-        const pending: PendingMessage = retry ?? {clientId: crypto.randomUUID().replace(/-/g, ""), text, sentAtMS: Date.now(), state: "sending"};
+        const pending: PendingMessage = retry ?? {clientId: crypto.randomUUID().replace(/-/g, ""), text, attachmentIds, sentAtMS: Date.now(), state: "sending"};
         pending.state = "sending"; pending.error = undefined;
         if (!retry) { c.pending.push(pending); c.draft = ""; }
         this.notify();
         try {
-            this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text}));
+            this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text, ...(pending.attachmentIds?.length ? {attachmentIds: pending.attachmentIds} : {})}));
+            if (pending.attachmentIds?.length) this.confirmAttachments(pending.attachmentIds);
             c.error = "";
         }
         catch (e) { if (!this.disposed) { pending.state = "error"; pending.error = chatError(e); } }

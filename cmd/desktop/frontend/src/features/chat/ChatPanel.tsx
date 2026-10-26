@@ -4,6 +4,8 @@ import {errorText} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 import {chatLinkParts, openConfirmedLink} from "./chatLinks";
 import {ChatStore, type ChatTarget} from "./chatStore";
+import {desktopAPI, type FileCapabilities} from "../../api";
+import {AttachmentCard, stageFiles, TransferQueue, useTransfers} from "./files";
 
 function ignoreMiddleClick(event: {button: number; preventDefault: () => void}) {
     if (event.button === 1) event.preventDefault();
@@ -30,6 +32,20 @@ export function ChatPanel({store, target, title, active, connected, online, loca
     store: ChatStore; target: ChatTarget; title: string; active: boolean; connected: boolean; online?: boolean;     localName: string;
 }) {
     const {m, htmlLang} = useLocale();
+    const tasks = useTransfers(store.context, connected, active);
+    const pendingFiles = new Set([...store.confirmedAttachments, ...store.conversation(target).pending.flatMap((p) => p.attachmentIds ?? [])]);
+    const uploads = tasks.filter((t) => t.direction === "upload" && t.kind === (target.kind === "channel" ? 1 : 2) && t.targetId === target.id && t.state !== "done" && t.state !== "cancelled" && !pendingFiles.has(t.attachmentId));
+    const ready = uploads.filter((t) => t.state === "ready");
+    const [caps, setCaps] = useState<FileCapabilities>();
+    const [fileError, setFileError] = useState("");
+    const [staging, setStaging] = useState(false);
+    useEffect(() => {let disposed = false; setCaps(undefined); if (connected && active) void desktopAPI.fileCapabilities(store.context).then((c) => {if (!disposed) setCaps(c);}).catch(() => undefined); return () => {disposed = true;};}, [store.context, connected, active]);
+    const addFiles = async (files: File[]) => {
+        if (!caps?.uploadsEnabled || staging) return;
+        if (uploads.length + files.length > caps.maxAttachments) {setFileError(m.files.limit); return;}
+        setStaging(true); setFileError("");
+        try {await stageFiles(store.context, target, files, caps.maxFileBytes);} catch(e) {setFileError(String(e));} finally {setStaging(false);}
+    };
     const messageDate = (at: number) => new Date(at).toLocaleString(htmlLang, {day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"});
     const [, refresh] = useReducer((n: number) => n + 1, 0);
     const history = useRef<HTMLDivElement>(null);
@@ -84,8 +100,8 @@ export function ChatPanel({store, target, title, active, connected, online, loca
         if (active && connected && visible && atBottom.current) void store.markRead(target);
     }, [lastID, c.loading, active, connected, visible, store, target.id, target.kind]);
     const bytes = new TextEncoder().encode(c.draft).length;
-    const valid = c.draft.trim().length > 0 && bytes <= 1000 && !c.draft.includes("\0");
-    const send = () => { if (connected && valid) void store.send(target, c.draft); };
+    const valid = (c.draft.trim().length > 0 || ready.length > 0) && bytes <= 1000 && !c.draft.includes("\0") && ready.length === uploads.length && ready.length <= 4 && !staging;
+    const send = () => { if (connected && valid) void store.send(target, c.draft, undefined, ready.map((t) => t.attachmentId)); };
     const older = async () => {
         if (c.loading) return;
         const first = c.messages[0]?.id, last = c.messages[c.messages.length - 1]?.id;
@@ -100,7 +116,10 @@ export function ChatPanel({store, target, title, active, connected, online, loca
         }
         refresh();
     };
-    return <section className="chat-panel" aria-label={title}>
+    return <section className="chat-panel" aria-label={title}
+        onDragOver={(e) => {if(caps && connected) e.preventDefault();}}
+        onDrop={(e) => {e.preventDefault(); if (connected) void addFiles([...e.dataTransfer.files]);}}
+        onPaste={(e) => {const files = [...e.clipboardData.files]; if(files.length && caps && connected) {e.preventDefault(); void addFiles(files);}}}>
         {target.kind === "direct" && <header className="chat-heading"><strong>{title}</strong><span>{online ? m.chat.online : m.chat.offline}</span></header>}
         {c.error && <div className="chat-error" role="alert">{errorText(c.error, m)}<button onClick={() => void store.sync(target)} disabled={!connected || c.loading}>{m.chat.retry}</button></div>}
         <div ref={history} className="chat-history" aria-label={m.chat.history} onScroll={() => {
@@ -118,9 +137,11 @@ export function ChatPanel({store, target, title, active, connected, online, loca
             {c.loaded && !c.messages.length && !c.pending.length && <div className="chat-placeholder">{m.chat.empty}</div>}
             {c.messages.map((message) => <article key={message.id} data-message-id={message.id} className={`chat-message ${message.senderId === store.userId ? "own" : ""}`}>
                 <time dateTime={new Date(message.sentAtMs).toISOString()}>{messageDate(message.sentAtMs)}</time>{" "}<strong>{message.senderName}</strong>{": "}<ChatMessageText text={message.text}/>
+                {active && message.attachmentIds?.map((id) => <AttachmentCard key={id} context={store.context} id={id}/>)}
             </article>)}
             {c.pending.map((p) => <article key={p.clientId} className="chat-message own pending">
                 <time dateTime={new Date(p.sentAtMS).toISOString()}>{messageDate(p.sentAtMS)}</time>{" "}<strong>{localName}</strong>{": "}<ChatMessageText text={p.text}/>{" "}
+                {p.attachmentIds?.length ? <span>📎 {p.attachmentIds.length}</span> : null}
                 {p.state === "sending" ? <span className="chat-send-status" role="status" aria-label={m.chat.sending} title={m.chat.sending}>…</span> : <button disabled={!connected} title={errorText(p.error ?? "", m)} aria-label={m.chat.retrySend(errorText(p.error ?? "chat-send-failed", m))} onClick={() => void store.send(target, p.text, p)}>{m.chat.retry}</button>}
             </article>)}
         </div>
@@ -131,12 +152,20 @@ export function ChatPanel({store, target, title, active, connected, online, loca
             atBottom.current = true; setNewMessages(false);
             if (active && connected && visible) void store.markRead(target);
         }}>{m.chat.jump}</button>}
-        <div className="chat-composer">
+        <div className="chat-compose-area">
+        {active && <TransferQueue context={store.context} tasks={tasks.filter((task) => task.direction !== "upload" || !pendingFiles.has(task.attachmentId))} report={setFileError}/>}
+        {staging && <small className="chat-file-staging" role="status">{m.files.preparing}</small>}
+        {fileError && <div className="chat-error" role="alert">{fileError}</div>}
+        <div className={`chat-composer${caps?.uploadsEnabled ? " has-attachments" : ""}`}>
+            {caps?.uploadsEnabled && <button className="chat-attach-button" type="button" aria-label={m.files.attach} title={`${m.files.attach}\n${m.files.originalMetadata}`} disabled={!connected || staging || uploads.length >= caps.maxAttachments} onClick={() => {setFileError(""); void desktopAPI.filePick(store.context, target.kind, target.id).catch((e) => setFileError(String(e)));}}><Icon name="attachment"/></button>}
+            <div className={`chat-input${bytes >= 800 ? " has-counter" : ""}`}>
             <textarea ref={composer} rows={1} maxLength={1000} aria-label={m.chat.message} title={m.chat.composerHint} placeholder={connected ? m.chat.placeholder : m.chat.draftWaiting} value={c.draft}
                 onChange={(event) => store.setDraft(target, event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }}/>
-            <small title={m.chat.bytes}>{bytes}/1000</small>
+            {bytes >= 800 && <small className={bytes > 1000 ? "is-over-limit" : ""} title={m.chat.bytes}>{bytes}/1000</small>}
+            </div>
             <button disabled={!connected || !valid} type="button" onClick={send}>{m.chat.send}</button>
+        </div>
         </div>
     </section>;
 }

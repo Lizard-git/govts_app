@@ -90,7 +90,7 @@ func ControlLoop(
 				state.ApplyEvent(generation, event)
 			case protocol.PacketJoinChannelAck, protocol.PacketStateSnapshotAck, protocol.PacketModerationAck,
 				protocol.PacketHeartbeatAck, protocol.PacketSessionInvalid, protocol.PacketMediaCredentialAck,
-				protocol.PacketAudioStateAck, protocol.PacketChatAck,
+				protocol.PacketAudioStateAck, protocol.PacketChatAck, protocol.PacketFileAccessAck,
 				protocol.PacketPresenceAck, protocol.PacketAttentionAck, protocol.PacketAdminAck:
 				response := ControlResponse{
 					Type:      packet.Type,

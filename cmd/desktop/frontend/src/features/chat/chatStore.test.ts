@@ -2,7 +2,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
 import {desktopAPI, type ChatMessageDTO, type ChatPageDTO, type ChatRequestDTO} from "../../api";
 import {ChatStore, type ChatTarget} from "./chatStore";
 
-vi.mock("../../api", () => ({desktopAPI: {chat: vi.fn()}}));
+vi.mock("../../api", () => ({desktopAPI: {chat: vi.fn(), fileQueue: vi.fn(), fileAttached: vi.fn().mockResolvedValue(undefined)}}));
 const channel: ChatTarget = {kind: "channel", id: "1"};
 const direct: ChatTarget = {kind: "direct", id: "2"};
 const message = (id: number, senderId = "2", clientId = `client-${id}`): ChatMessageDTO => ({
@@ -18,11 +18,50 @@ beforeEach(() => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-02T12:00:00Z"));
     vi.stubGlobal("window", {setInterval: vi.fn(() => 1), clearInterval: vi.fn(), setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout});
     chat.mockReset(); chat.mockResolvedValue(page());
+    vi.mocked(desktopAPI.fileAttached).mockReset().mockResolvedValue(undefined);
+    vi.mocked(desktopAPI.fileQueue).mockReset().mockResolvedValue(["17", "18"].map((id) => ({id, context: "context", direction: "upload", kind: 2, targetId: "2", name: `${id}.png`, size: 1, offset: 1, attachmentId: id, state: "ready", error: ""})));
     store = new ChatStore("context", "1"); store.setConnected(true);
 });
 afterEach(() => { store.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("chat drafts and confirmations", () => {
+    it("finishes attachments when history confirms a send whose acknowledgement was lost", async () => {
+        chat.mockRejectedValueOnce(new Error("lost acknowledgement"));
+        await store.send(direct, "photo", undefined, ["17"]);
+        const pending = store.conversation(direct).pending[0];
+        chat.mockResolvedValueOnce(page({messages: [{...message(1, "1", pending.clientId), attachmentIds: ["17"]}], cursor: "1"}));
+        const sync = store.sync(direct);
+        await vi.advanceTimersByTimeAsync(1000); await sync;
+        expect(store.conversation(direct).pending).toEqual([]);
+        expect(store.confirmedAttachments.has("17")).toBe(true);
+        expect(desktopAPI.fileAttached).toHaveBeenCalledWith("context", ["17"]);
+        expect(chat.mock.calls.filter(([request]) => request.operation === "send")).toHaveLength(1);
+    });
+    it("retries local queue completion without resending the delivered message", async () => {
+        vi.mocked(desktopAPI.fileAttached).mockRejectedValueOnce(new Error("disk full"));
+        chat.mockImplementationOnce(async (request) => page({messages: [{...message(1, "1", request.clientId), attachmentIds: ["17"]}]}));
+        await store.send(direct, "photo", undefined, ["17"]);
+        await vi.advanceTimersByTimeAsync(4000);
+        tick(); await vi.advanceTimersByTimeAsync(1000);
+        expect(store.conversation(direct).pending).toEqual([]);
+        expect(store.conversation(direct).error).toBe("");
+        expect(desktopAPI.fileAttached).toHaveBeenCalledTimes(2);
+        expect(chat.mock.calls.filter(([request]) => request.operation === "send")).toHaveLength(1);
+    });
+    it("keeps attachment IDs and clientId when retrying a lost send acknowledgement", async () => {
+        chat.mockRejectedValueOnce(new Error("lost acknowledgement"));
+        await store.send(direct, "", undefined, ["17", "18"]);
+        const pending = store.conversation(direct).pending[0];
+        expect(pending.attachmentIds).toEqual(["17", "18"]);
+        expect(desktopAPI.fileAttached).not.toHaveBeenCalled();
+        chat.mockResolvedValueOnce(page({messages: [{...message(1, "1", pending.clientId), text: "", attachmentIds: ["17", "18"]}]}));
+        const retry = store.send(direct, pending.text, pending);
+        await vi.advanceTimersByTimeAsync(1000); await retry;
+        expect(chat.mock.calls[1][0].attachmentIds).toEqual(["17", "18"]);
+        expect(chat.mock.calls[1][0].clientId).toBe(chat.mock.calls[0][0].clientId);
+        expect(desktopAPI.fileAttached).toHaveBeenCalledWith("context", ["17", "18"]);
+        expect(store.conversation(direct).pending).toEqual([]);
+    });
     it("limits UTF-8 bytes without cutting emoji and preserves newlines", () => {
         store.setDraft(channel, "я".repeat(600));
         expect(store.conversation(channel).draft).toBe("я".repeat(500));

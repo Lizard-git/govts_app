@@ -576,7 +576,7 @@ function ChannelsPage({view, events, invoke, sharing, screenMedia, onError, onRe
                 <RecentServers view={view} expanded={serversExpanded} onToggle={() => setServersExpanded((value) => !value)} onReconnect={onReconnect} onError={onError} refreshingServers={refreshingServers} onRefreshServers={onRefreshServers}/>
             </section>
             <div className="workspace-divider" {...workspaceResize.separatorProps("browser")}/>
-            <section className={`channel-stage ${view.connectionStatus !== "connected" ? "connection-pending" : ""}`}>{selected && view.connectionStatus === "connected" ? <>
+            <section className={`channel-stage${members.length <= 1 && !hasScreens ? " compact-stage" : ""} ${view.connectionStatus !== "connected" ? "connection-pending" : ""}`}>{selected && view.connectionStatus === "connected" ? <>
                 <header className="channel-stage-heading"><span className="channel-heading-icon"><Icon name="sound"/></span><div><h2 title={selected.name}>{selected.name}</h2><p title={selected.topic || m.channels.voice}>{selected.topic || m.channels.voice}</p></div>
                     <button className="info-toggle" aria-label={m.channels.info} aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}><Icon name="info"/></button>
                 </header>
