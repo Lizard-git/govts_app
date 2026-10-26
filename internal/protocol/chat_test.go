@@ -20,7 +20,7 @@ func TestChatRequestRoundTripAndMalformedPayloads(t *testing.T) {
 			t.Fatalf("encode: %v, size %d", err, len(b))
 		}
 		got, err := DecodeChatRequest(b)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("round trip: %+v, %v", got, err)
 		}
 		for i := range b {
@@ -30,6 +30,38 @@ func TestChatRequestRoundTripAndMalformedPayloads(t *testing.T) {
 		}
 		if _, err := DecodeChatRequest(append(b, 0)); err == nil {
 			t.Fatal("accepted trailing byte")
+		}
+	}
+}
+
+func TestChatAttachmentsMaximumBudgetAndValidation(t *testing.T) {
+	m := domain.ChatMessage{ID: 1, ChannelID: 1, SenderID: 2, SentAtMS: 123, ClientID: [16]byte{1}, SenderName: strings.Repeat("a", 64), Text: strings.Repeat("x", 1000), AttachmentIDs: []int64{1, 2, 3, 4}}
+	p := domain.ChatPage{UserID: 2, Messages: []domain.ChatMessage{m}}
+	b, err := EncodeChatPage(p)
+	if err != nil || len(b) != 1197 {
+		t.Fatalf("max page: %d %v", len(b), err)
+	}
+	got, err := DecodeChatPage(b)
+	if err != nil || !reflect.DeepEqual(got, p) {
+		t.Fatalf("decode: %+v %v", got, err)
+	}
+	r := ChatRequest{Operation: ChatSend, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, ClientID: [16]byte{1}, AttachmentIDs: []int64{1, 2, 3, 4}}
+	b, err = EncodeChatRequest(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeChatRequest(b)
+	if err != nil || !reflect.DeepEqual(r, decoded) {
+		t.Fatalf("empty text with files: %+v %v", decoded, err)
+	}
+	b[0] = 1
+	if _, err = DecodeChatRequest(b); err == nil {
+		t.Fatal("accepted old schema")
+	}
+	for _, ids := range [][]int64{{1, 1}, {0}, {-1}, {1, 2, 3, 4, 5}} {
+		r.AttachmentIDs = ids
+		if _, err = EncodeChatRequest(r); err == nil {
+			t.Fatalf("accepted %v", ids)
 		}
 	}
 }

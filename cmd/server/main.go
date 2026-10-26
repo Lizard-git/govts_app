@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"uniclog.io/sonoryx/internal/appversion"
+	"uniclog.io/sonoryx/internal/filetransfer"
 	"uniclog.io/sonoryx/internal/identity"
 	"uniclog.io/sonoryx/internal/logging"
 	"uniclog.io/sonoryx/internal/media"
@@ -39,6 +41,43 @@ func (c voiceReserveConfig) validate() error {
 }
 
 func main() {
+	if filetransfer.ThumbnailMode() {
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "--snapshot-db" {
+		if err := persist.SnapshotDatabase(context.Background(), os.Args[2], os.Args[3]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "--check-db" {
+		info, err := os.Stat(os.Args[2])
+		if err != nil || !info.Mode().IsRegular() {
+			log.Fatal("migration check requires an existing database copy")
+		}
+		db, err := persist.Open(os.Args[2])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err = db.Close(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	fileConfig := fileServerConfig{Storage: filetransfer.DefaultConfig("data/files")}
+	flag.StringVar(&fileConfig.ReadyFile, "deploy-ready-file", "", "private readiness file for staged deploy")
+	flag.StringVar(&fileConfig.ActivateFile, "deploy-activate-file", "", "private activation file for staged deploy")
+	flag.IntVar(&fileConfig.Port, "file-port", 0, "separate HTTPS file port; 0 disables file transfer")
+	flag.StringVar(&fileConfig.Identity, "file-identity", "sonoryx-files", "file TLS certificate/key path prefix")
+	flag.StringVar(&fileConfig.Storage.Directory, "file-dir", fileConfig.Storage.Directory, "file storage directory")
+	flag.Int64Var(&fileConfig.Storage.MaxFileBytes, "file-max-bytes", fileConfig.Storage.MaxFileBytes, "maximum file size in bytes")
+	flag.Int64Var(&fileConfig.Storage.UserQuotaBytes, "file-user-quota", fileConfig.Storage.UserQuotaBytes, "logical bytes reserved per account")
+	flag.Int64Var(&fileConfig.Storage.ServerQuotaBytes, "file-server-quota", fileConfig.Storage.ServerQuotaBytes, "logical bytes reserved on server")
+	flag.IntVar(&fileConfig.Storage.UserBytesPerSecond, "file-user-rate", fileConfig.Storage.UserBytesPerSecond, "bytes per second per account and direction")
+	flag.IntVar(&fileConfig.Storage.ServerBytesPerSecond, "file-server-rate", fileConfig.Storage.ServerBytesPerSecond, "bytes per second globally per direction")
+	flag.IntVar(&fileConfig.Storage.MaxTransfers, "file-transfers", fileConfig.Storage.MaxTransfers, "maximum simultaneous file HTTP operations")
+	flag.DurationVar(&fileConfig.Storage.UploadTTL, "file-upload-ttl", fileConfig.Storage.UploadTTL, "unfinished upload retention")
+	flag.DurationVar(&fileConfig.Storage.Retention, "file-retention", 0, "attachment retention; 0 keeps until deletion")
 	showVersion := flag.Bool("version", false, "print server version and exit")
 	configPath := flag.String("config", "", "path to server JSON config")
 	databasePath := flag.String("db", "sonoryx.db", "path to persistent SQLite database")
@@ -81,7 +120,7 @@ func main() {
 	if !explicit["media-identity"] {
 		*mediaIdentity = legacyPath(*mediaIdentity, "govts-media", ".key")
 	}
-	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *mediaAdaptive, *voiceRedundancy, *publicStatus, *maxSessions, voiceReserveConfig{Uplink: *voiceUplink, RecipientKiB: *voiceRecipientReserve, GlobalKiB: *voiceGlobalReserve, ControlRecipientKiB: *voiceControlRecipient, ControlGlobalKiB: *voiceControlGlobal})
+	err = run(*configPath, *databasePath, *voiceIdentity, *port, *mediaPort, *mediaMinPort, *mediaMaxPort, *mediaAdvertisedIP, *mediaIdentity, *mediaAdaptive, *voiceRedundancy, *publicStatus, *maxSessions, voiceReserveConfig{Uplink: *voiceUplink, RecipientKiB: *voiceRecipientReserve, GlobalKiB: *voiceGlobalReserve, ControlRecipientKiB: *voiceControlRecipient, ControlGlobalKiB: *voiceControlGlobal}, fileConfig)
 	if err != nil {
 		log.Printf("server stopped with error: %v", err)
 	}
@@ -106,7 +145,7 @@ func legacyPath(current, legacy, suffix string) string {
 	return legacy
 }
 
-func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, mediaAdaptive, voiceRedundancy, publicStatus bool, maxSessions int, voiceReserves voiceReserveConfig) error {
+func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, mediaMinPort, mediaMaxPort int, mediaAdvertisedIP, mediaIdentity string, mediaAdaptive, voiceRedundancy, publicStatus bool, maxSessions int, voiceReserves voiceReserveConfig, fileConfigs ...fileServerConfig) error {
 	if err := voiceReserves.validate(); err != nil {
 		return err
 	}
@@ -154,6 +193,17 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 
 	hub.SetPublicStatus(publicStatus)
 	hub.SetMaxSessions(maxSessions)
+	policyGate := &sync.Mutex{}
+	activation := make(chan struct{})
+	stopFiles := func() error { return nil }
+	if len(fileConfigs) > 0 {
+		fileConfigs[0].Activation = activation
+		stopFiles, err = startFileServer(ctx, cancel, store, hub, fileConfigs[0], policyGate)
+		if err != nil {
+			return fmt.Errorf("files: %w", err)
+		}
+		defer func() { cancel(); _ = stopFiles() }()
+	}
 	if mediaPort != 0 && (mediaPort < 1 || mediaPort > 65535) {
 		return errors.New("invalid media signaling port")
 	}
@@ -167,7 +217,6 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 	if err != nil {
 		return err
 	}
-	policyGate := &sync.Mutex{}
 	authenticator.SetPolicyGate(policyGate)
 	rawConn, err := udp.ListenUDP(port)
 	if err != nil {
@@ -203,7 +252,14 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		if mediaAdvertisedIP == "" {
 			log.Printf("media warning: advertised IP is empty; public-IP deployments must set -media-advertised-ip")
 		}
-		go func() { mediaErrCh <- mediaServer.ListenAndServeTLS(identity.CertPath, identity.KeyPath); cancel() }()
+		mediaListener, err := net.Listen("tcp", mediaServer.Addr)
+		if err != nil {
+			return fmt.Errorf("listen media: %w", err)
+		}
+		go func() {
+			mediaErrCh <- mediaServer.ServeTLS(mediaListener, identity.CertPath, identity.KeyPath)
+			cancel()
+		}()
 	} else {
 		close(mediaErrCh)
 	}
@@ -228,6 +284,12 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 			secureCodec,
 		)
 	}()
+	if len(fileConfigs) > 0 {
+		if err := waitDeployActivation(ctx, store, fileConfigs[0].ReadyFile, fileConfigs[0].ActivateFile); err != nil {
+			return err
+		}
+	}
+	close(activation)
 	console := server.NewConsole(hub, os.Stdin, os.Stdout, server.ConsoleInfo{
 		StartedAt:     startedAt,
 		ListenAddress: rawConn.LocalAddr().String(),
@@ -290,5 +352,5 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 			mediaErr = nil
 		}
 	}
-	return errors.Join(serveErr, cleanupErr, dispatchErr, mediaErr)
+	return errors.Join(serveErr, cleanupErr, dispatchErr, mediaErr, stopFiles())
 }

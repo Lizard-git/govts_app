@@ -104,6 +104,41 @@ func (a *Administration) Accounts(ctx context.Context, actor AdminActor, afterID
 	return a.store.AccountsPage(ctx, afterID, adminPageRows)
 }
 
+// SetFileRights uses the same hierarchy and external policy gate as other account mutations.
+func (a *Administration) SetFileRights(ctx context.Context, actor AdminActor, id int64, upload, download bool) error {
+	if !actor.allowed() {
+		return ErrPermissionDenied
+	}
+	target, err := a.account(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err = a.checkTarget(actor, target); err != nil {
+		return err
+	}
+	return a.store.SetFileRights(ctx, actor.auditName(), id, upload, download)
+}
+
+func (a *Administration) DeleteAttachment(ctx context.Context, actor AdminActor, id int64) error {
+	if !actor.allowed() {
+		return ErrPermissionDenied
+	}
+	attachment, err := a.store.FileAttachment(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !actor.Local && attachment.UserID != actor.UserID {
+		target, err := a.account(ctx, attachment.UserID)
+		if err != nil {
+			return err
+		}
+		if err = a.checkTarget(actor, target); err != nil {
+			return err
+		}
+	}
+	return a.store.DeleteFile(ctx, actor.auditName(), id)
+}
+
 func (a *Administration) Audit(ctx context.Context, actor AdminActor, beforeID int64) ([]persist.AuditEntry, error) {
 	if !actor.allowed() {
 		return nil, ErrPermissionDenied

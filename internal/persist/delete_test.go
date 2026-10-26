@@ -60,7 +60,7 @@ func TestVersionFiveMigrationAddsDeletedFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range []string{`ALTER TABLE users DROP COLUMN deleted`, `PRAGMA user_version=5`} {
+	for _, statement := range []string{`DROP TABLE chat_message_files`, `DROP TABLE file_attachments`, `DROP TABLE file_uploads`, `DROP TABLE file_policy`, `DROP TABLE file_rights`, `ALTER TABLE users DROP COLUMN deleted`, `PRAGMA user_version=5`} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestVersionFiveMigrationAddsDeletedFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if version := countRows(t, store, `PRAGMA user_version`); version != 6 {
+	if version := countRows(t, store, `PRAGMA user_version`); version != 8 {
 		t.Fatalf("schema version = %d", version)
 	}
 	if migrated, err := store.Account(ctx, account.ID); err != nil || migrated.DisplayName != "alice" {

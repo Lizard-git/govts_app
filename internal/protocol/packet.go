@@ -68,6 +68,8 @@ const (
 	PacketVoiceStateAck
 	PacketVoiceStateRequest
 
+	PacketFileAccessRequest
+	PacketFileAccessAck
 	PacketEnd
 )
 

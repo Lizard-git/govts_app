@@ -51,6 +51,8 @@ const (
 type sessionIDGenerator func() (uint64, error)
 
 type Hub struct {
+	filePort                                      uint16
+	fileFingerprint                               string
 	voiceStateRecipientRate, voiceStateGlobalRate int
 	voiceStateDeferrals                           uint64
 	voiceReserve                                  int

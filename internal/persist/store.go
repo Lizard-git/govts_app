@@ -89,6 +89,7 @@ func (s *Store) initialize() error {
 		`PRAGMA foreign_keys = ON`,
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
+		`PRAGMA synchronous = FULL`,
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("configure SQLite: %w", err)
@@ -103,7 +104,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 6 {
+	if version < 0 || version > 8 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -223,6 +224,24 @@ func (s *Store) initialize() error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migrate account deletion: %w", err)
+			}
+		}
+	}
+	if version < 7 {
+		if err := migrateFiles(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if version < 8 {
+		for _, statement := range []string{
+			`ALTER TABLE file_uploads ADD COLUMN terminal_at INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE file_uploads ADD COLUMN error TEXT NOT NULL DEFAULT ''`,
+			`UPDATE file_uploads SET terminal_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE state IN('cancelled','expired','failed')`,
+			`CREATE INDEX file_uploads_terminal ON file_uploads(terminal_at) WHERE terminal_at>0`,
+			`PRAGMA user_version=8`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate file lifecycle: %w", err)
 			}
 		}
 	}

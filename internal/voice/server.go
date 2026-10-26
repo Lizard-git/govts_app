@@ -43,6 +43,8 @@ func HandlePacket(
 		return HandleStateSnapshotPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketMediaCredentialRequest:
 		return HandleMediaCredentialPacket(conn, hub, cache, packet, addr)
+	case protocol.PacketFileAccessRequest:
+		return HandleFileAccessPacket(conn, hub, cache, packet, addr)
 	case protocol.PacketAudioState:
 		return HandleAudioStatePacket(conn, hub, cache, packet, addr)
 	case protocol.PacketPresence:

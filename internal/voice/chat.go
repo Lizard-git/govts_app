@@ -168,7 +168,7 @@ func (w *chatWorker) handle(parent context.Context, job chatJob) {
 		switch r.Operation {
 		case protocol.ChatSend:
 			var m domain.ChatMessage
-			m, err = w.auth.store.SaveChat(ctx, actor.UserID, actor.Name, r.Target, r.ClientID, r.Text)
+			m, err = w.auth.store.SaveChatFiles(ctx, actor.UserID, actor.Name, r.Target, r.ClientID, r.Text, r.AttachmentIDs)
 			page = domain.ChatPage{UserID: actor.UserID, LatestID: m.ID, Cursor: m.ID, Messages: []domain.ChatMessage{m}}
 		case protocol.ChatHistory:
 			page, err = w.auth.store.ChatHistory(ctx, actor.UserID, r.Target, r.Cursor, r.Forward)
