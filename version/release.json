@@ -1,5 +1,5 @@
 {
-  "clientVersion": "0.8.2",
-  "serverVersion": "4.2.0",
-  "minServerVersion": "4.2.0"
+  "clientVersion": "0.8.3",
+  "serverVersion": "0.4.3",
+  "minServerVersion": "0.4.2"
 }
