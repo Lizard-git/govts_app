@@ -130,11 +130,11 @@ export class ChatStore {
         try {
             await this.flushReads();
             if (epoch !== this.epoch || !this.connected) return;
-            await Promise.all([...this.watched.values()].map(({target}) => this.sync(target)));
+            await Promise.all([...this.watched.values()].map(({target}) => this.sync(target, false, true)));
             if (epoch !== this.epoch || !this.connected) return;
             await Promise.all([...this.watched.values()].map(({target}) => this.syncChanges(target)));
             if (epoch !== this.epoch || !this.connected) return;
-            await this.refreshDialogs();
+            await this.refreshDialogs(false, true);
         } finally { this.scheduled = false; }
     }
     subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -219,7 +219,7 @@ export class ChatStore {
         if (history) c.unread = page.unread;
     }
 
-    async sync(target: ChatTarget, older = false) {
+    async sync(target: ChatTarget, older = false, background = false) {
         if (target.id === "0" || this.disposed || !this.connected) return;
         const key = keyOf(target);
         if (this.busy.has(key)) return;
@@ -252,23 +252,33 @@ export class ChatStore {
                 if (page.hasMore) this.invalidate();
             }
             c.error = "";
-        } catch (e) { if (!this.disposed && epoch === this.epoch) c.error = chatError(e); }
+        } catch (e) {
+            if (!this.disposed && epoch === this.epoch) {
+                if (!background || !c.loaded) c.error = chatError(e);
+                else this.invalidate();
+            }
+        }
         finally { c.loading = false; this.busy.delete(key); this.notify(); }
     }
 
     private async syncChanges(target: ChatTarget) {
         const c = this.conversation(target);
         if (!c.loaded || target.id === "0") return;
+        const epoch = this.epoch;
         try {
             const changes = await this.request("changes", target, {cursor: c.changeCursor});
             this.merge(c, changes, false, false, true);
             c.changeCursor = maxID(c.changeCursor, changes.cursor);
             if (changes.hasMore) this.invalidate();
             this.notify();
-        } catch (e) {if (!this.disposed) {c.error = chatError(e); this.notify();}}
+        } catch {
+            // Keep the loaded history and retry; this is a background read,
+            // not a failed user action. Old-session errors must stay silent.
+            if (!this.disposed && this.connected && epoch === this.epoch) this.invalidate();
+        }
     }
 
-    async refreshDialogs(more = false) {
+    async refreshDialogs(more = false, background = false) {
         if (this.listing || this.disposed || !this.connected) return;
         this.listing = true;
         const epoch = this.epoch;
@@ -282,7 +292,12 @@ export class ChatStore {
             if (page.hasMore) this.invalidate();
             this.dialogs = [...result.values()].sort((a, b) => compare(b.latestId, a.latestId)).slice(0, 256);
             this.dialogError = "";
-        } catch (e) { if (!this.disposed && epoch === this.epoch) this.dialogError = chatError(e); }
+        } catch (e) {
+            if (!this.disposed && this.connected && epoch === this.epoch) {
+                if (!background) this.dialogError = chatError(e);
+                else this.invalidate();
+            }
+        }
         finally { this.listing = false; this.notify(); }
     }
 
@@ -359,10 +374,10 @@ export class ChatStore {
                 await this.request("read", target, {cursor: id});
                 c.readId = maxID(c.readId, id);
                 this.notify();
-            } catch (e) {
+            } catch {
                 if (!this.disposed && this.connected && epoch === this.epoch && this.watched.has(key)) {
                     this.readQueue.set(key, {target, id: maxID(id, this.readQueue.get(key)?.id ?? "0")});
-                    c.error = chatError(e); this.notify();
+                    this.invalidate();
                 }
             } finally { this.reading.delete(key); }
         }

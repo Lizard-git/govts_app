@@ -29,14 +29,16 @@ it("keeps readable files visible when another attachment is unavailable", async 
     expect(results[1].status).toBe("rejected");
 });
 
-it("refreshes cached metadata after expiry and observes deletion", async () => {
+it("keeps cached metadata without timed refreshes and permits an explicit retry", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     metadata.mockResolvedValueOnce([file("1")]).mockResolvedValueOnce([{...file("1"), deleted: true}]);
     expect((await attachmentMetadata("expiry-context", "1", false)).deleted).toBe(false);
     now.mockReturnValue(30_999);
     expect((await attachmentMetadata("expiry-context", "1", false)).deleted).toBe(false);
     expect(metadata).toHaveBeenCalledTimes(1);
-    now.mockReturnValue(31_000);
-    expect((await attachmentMetadata("expiry-context", "1", false)).deleted).toBe(true);
+    now.mockReturnValue(3_600_000);
+    expect((await attachmentMetadata("expiry-context", "1", false)).deleted).toBe(false);
+    expect(metadata).toHaveBeenCalledTimes(1);
+    expect((await attachmentMetadata("expiry-context", "1", true)).deleted).toBe(true);
     expect(metadata).toHaveBeenCalledTimes(2);
 });

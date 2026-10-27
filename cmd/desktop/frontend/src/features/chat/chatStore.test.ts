@@ -172,6 +172,21 @@ describe("session lifecycle", () => {
 });
 
 describe("request scheduler", () => {
+    it("keeps loaded messages and attachments without errors when background polling fails", async () => {
+        const c = store.conversation(channel);
+        c.loaded = true; c.cursor = "1";
+        c.messages = [{...message(1), attachmentIds: ["17"]}];
+        store.watch(channel);
+        chat.mockImplementation(async (request) => {
+            if (request.operation !== "dialogs") throw new Error("request timed out");
+            return page();
+        });
+        tick(); await vi.advanceTimersByTimeAsync(2000);
+        expect(c.error).toBe("");
+        expect(c.messages).toHaveLength(1);
+        expect(c.messages[0].attachmentIds).toEqual(["17"]);
+        expect(chat.mock.calls.map(([request]) => request.operation)).toEqual(["history", "changes", "dialogs"]);
+    });
     it("captures the change watermark before history and catches deletions concurrent with opening", async () => {
         store.watch(channel);
         chat.mockImplementation(async (request) => {

@@ -163,7 +163,7 @@ export function ChatPanel({store, target, title, active, connected, online, loca
                 <div className="chat-message-body">
                     <div className="chat-message-meta"><strong className="chat-message-author">{message.senderName}</strong><time dateTime={new Date(message.sentAtMs).toISOString()}>{messageDate(message.sentAtMs)}</time>{message.deleted && <span className="chat-message-deleted">{m.chat.deleted}</span>}</div>
                     {!message.deleted && message.text && <div className="chat-message-text"><ChatMessageText text={message.text}/></div>}
-                    {active && !message.deleted && message.attachmentIds?.map((id) => <AttachmentCard key={id} context={store.context} id={id} revision={message.revision}/>)}
+                    {active && !message.deleted && message.attachmentIds?.map((id) => <AttachmentCard key={id} context={store.context} id={id}/>)}
                 </div>
                 {!message.deleted && <button className="chat-message-menu-button" type="button" title={m.chat.actions} aria-label={m.chat.actions} aria-haspopup="menu" aria-expanded={menu?.id === message.id} aria-controls={menu?.id === message.id ? "chat-message-actions" : undefined} onClick={(event) => {
                     menuOrigin.current = event.currentTarget;
