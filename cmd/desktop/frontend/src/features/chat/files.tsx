@@ -49,9 +49,8 @@ function AttachmentName({name}: {name: string}) {
         <span ref={measure} className="file-name-measure" aria-hidden="true"/>
     </strong>;
 }
-const metadataTTL = 30_000;
 export const fileBusy = (error: unknown) => /HTTP 429|\b(?:busy|preview_busy|verification_busy)\b/.test(String(error));
-const metadataCache = new Map<string, {promise: Promise<FileAttachment>; expires: number}>();
+const metadataCache = new Map<string, Promise<FileAttachment>>();
 let metadataContext = "";
 const metadataBatches = new Map<string, Map<string, {resolve: (file: FileAttachment) => void; reject: (error: unknown) => void}>>();
 async function flushMetadata(context: string) {
@@ -71,14 +70,14 @@ async function flushMetadata(context: string) {
 export function attachmentMetadata(context: string, id: string, retry: boolean): Promise<FileAttachment> {
     if (metadataContext !== context) {metadataCache.clear(); metadataContext = context;}
     if (retry && !metadataBatches.get(context)?.has(id)) metadataCache.delete(id);
-    const cached = metadataCache.get(id); if (cached && cached.expires > Date.now()) return cached.promise;
+    const cached = metadataCache.get(id); if (cached) return cached;
     const promise = new Promise<FileAttachment>((resolve, reject) => {
         let batch = metadataBatches.get(context);
         if (!batch) {batch = new Map(); metadataBatches.set(context, batch); queueMicrotask(() => void flushMetadata(context));}
         batch.set(id, {resolve, reject});
     });
     if (metadataCache.size >= 512) metadataCache.delete(metadataCache.keys().next().value!);
-    metadataCache.set(id, {promise, expires: Date.now() + metadataTTL});
+    metadataCache.set(id, promise);
     return promise;
 }
 export function useTransfers(context: string, connected: boolean, active: boolean) {
@@ -151,7 +150,7 @@ export async function stageFiles(context: string, target: ChatTarget, files: Fil
     }
 }
 
-export function AttachmentCard({context, id, revision = "0"}: {context: string; id: string; revision?: string}) {
+export function AttachmentCard({context, id}: {context: string; id: string}) {
     const {m} = useLocale();
     const [file, setFile] = useState<FileAttachment>();
     const [error, setError] = useState("");
@@ -164,26 +163,16 @@ export function AttachmentCard({context, id, revision = "0"}: {context: string; 
     const [attempt, setAttempt] = useState(0);
     const save = () => {setError(""); void desktopAPI.fileSave(context, id).catch((e) => setError(fileBusy(e) ? m.files.busy : m.files.requestFailed));};
     useEffect(() => {
-        let disposed = false, busy = false, loaded = false;
+        let disposed = false;
         setFile(undefined); setPreview(""); setError("");
-        const refresh = async (retry: boolean) => {
-            if (busy) return;
-            busy = true;
-            try {
-                const next = await attachmentMetadata(context, id, retry);
-                if (!disposed) {
-                    loaded = true;
-                    setFile(next);
-                    setError("");
-                    if (next.deleted) {setExpanded(false); setPreview("");}
-                }
-            } catch (e) {if (!disposed && !(loaded && fileBusy(e))) setError(fileBusy(e) ? m.files.busy : m.files.requestFailed);}
-            finally {busy = false;}
-        };
-        void refresh(attempt > 0 || revision !== "0");
-        const timer = window.setInterval(() => void refresh(false), metadataTTL);
-        return () => {disposed = true; window.clearInterval(timer);};
-    }, [context, id, revision, attempt, m.files.busy, m.files.requestFailed]);
+        void attachmentMetadata(context, id, attempt > 0).then((next) => {
+            if (!disposed) {
+                setFile(next);
+                if (next.deleted) {setExpanded(false); setPreview("");}
+            }
+        }).catch((e) => {if (!disposed) setError(fileBusy(e) ? m.files.busy : m.files.requestFailed);});
+        return () => {disposed = true;};
+    }, [context, id, attempt, m.files.busy, m.files.requestFailed]);
     const image = !!file && !file.deleted && /\.(png|jpe?g|webp)$/i.test(file.name);
     useEffect(() => {
         setVisible(false);
