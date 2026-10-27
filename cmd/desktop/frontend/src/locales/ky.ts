@@ -460,7 +460,7 @@ export const ky = {
         checking: "Жаңыртуулар текшерилүүдө…",
         current: "Акыркы версия орнотулган.",
         downloading: "Жаңыртуу жүктөлүп, текшерилүүдө…",
-        megabytes: (written: string, total: string) => `${written} / ${total} МБ`,
+        megabytes: (written: string, total: string) => `${written} / ${total} МиБ`,
         ready: "Жаңыртуу жүктөлдү жана текшерилди. Орнотуу Sonoryxти кайра иштетет жана учурдагы сүйлөшүү менен көрсөтүүнү бүтүрөт.",
         restarting: "Кайра иштетүү…",
         failed: "Жаңыртууну бүтүрүү мүмкүн болгон жок.",
