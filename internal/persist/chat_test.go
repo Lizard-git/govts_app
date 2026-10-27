@@ -124,7 +124,7 @@ func TestChatChannelHistorySurvivesReopen(t *testing.T) {
 	}
 	defer s.Close()
 	p, err := s.ChatHistory(ctx, alice.ID, domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, 0, false)
-	if err != nil || len(p.Messages) != 1 || p.Messages[0] != m || p.Unread != 0 {
+	if err != nil || len(p.Messages) != 1 || !reflect.DeepEqual(p.Messages[0], m) || p.Unread != 0 {
 		t.Fatalf("channel history %+v, %v", p, err)
 	}
 }

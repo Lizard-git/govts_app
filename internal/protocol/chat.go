@@ -6,7 +6,7 @@ import (
 	"uniclog.io/sonoryx/internal/domain"
 )
 
-const ChatSchemaVersion = 1
+const ChatSchemaVersion = 3
 
 type ChatOperation uint8
 
@@ -15,15 +15,19 @@ const (
 	ChatHistory
 	ChatDialogs
 	ChatRead
+	ChatChanges
+	ChatDelete
+	ChatDeleteFile
 )
 
 type ChatRequest struct {
-	Operation ChatOperation
-	Target    domain.ChatTarget
-	Cursor    int64
-	Forward   bool
-	ClientID  [16]byte
-	Text      string
+	AttachmentIDs []int64
+	Operation     ChatOperation
+	Target        domain.ChatTarget
+	Cursor        int64
+	Forward       bool
+	ClientID      [16]byte
+	Text          string
 }
 
 func EncodeChatRequest(r ChatRequest) ([]byte, error) {
@@ -37,12 +41,20 @@ func EncodeChatRequest(r ChatRequest) ([]byte, error) {
 	b = binary.BigEndian.AppendUint64(b, uint64(r.Target.ID))
 	b = binary.BigEndian.AppendUint64(b, uint64(r.Cursor))
 	b = append(b, r.ClientID[:]...)
-	return appendString(b, r.Text, domain.MaxChatTextBytes)
+	b, err := appendString(b, r.Text, domain.MaxChatTextBytes)
+	if err != nil {
+		return nil, err
+	}
+	b = appendAttachmentIDs(b, r.AttachmentIDs)
+	if len(b) > MaxPayloadSize {
+		return nil, ErrPayloadTooLarge
+	}
+	return b, nil
 }
 
 func DecodeChatRequest(b []byte) (ChatRequest, error) {
 	var r ChatRequest
-	if len(b) < 38 || len(b) > MaxPayloadSize || b[0] != ChatSchemaVersion || b[3] > 1 {
+	if len(b) < 39 || len(b) > MaxPayloadSize || b[0] != ChatSchemaVersion || b[3] > 1 {
 		return r, errors.New("invalid chat request")
 	}
 	r.Operation, r.Target.Kind, r.Forward = ChatOperation(b[1]), domain.ChatKind(b[2]), b[3] == 1
@@ -50,6 +62,9 @@ func DecodeChatRequest(b []byte) (ChatRequest, error) {
 	copy(r.ClientID[:], b[20:36])
 	var err error
 	r.Text, b, err = takeString(b[36:], domain.MaxChatTextBytes)
+	if err == nil {
+		r.AttachmentIDs, b, err = takeAttachmentIDs(b)
+	}
 	if err != nil || len(b) != 0 {
 		return r, errors.New("invalid chat text")
 	}
@@ -57,7 +72,7 @@ func DecodeChatRequest(b []byte) (ChatRequest, error) {
 }
 
 func (r ChatRequest) Validate() error {
-	if r.Operation < ChatSend || r.Operation > ChatRead || r.Cursor < 0 {
+	if r.Operation < ChatSend || r.Operation > ChatDeleteFile || r.Cursor < 0 {
 		return errors.New("invalid chat operation")
 	}
 	if r.Operation != ChatDialogs {
@@ -71,9 +86,25 @@ func (r ChatRequest) Validate() error {
 		if r.ClientID == ([16]byte{}) || r.Cursor != 0 || r.Forward {
 			return errors.New("invalid message identity")
 		}
-		return domain.ValidateChatText(r.Text)
+		return domain.ValidateChatContent(r.Text, r.AttachmentIDs)
 	}
-	if r.Text != "" || r.ClientID != ([16]byte{}) || (r.Forward && r.Operation != ChatHistory) {
+	if r.Operation == ChatDelete || r.Operation == ChatDeleteFile {
+		if r.Cursor <= 0 || r.Text != "" || r.ClientID != ([16]byte{}) || r.Forward {
+			return errors.New("invalid deletion request")
+		}
+		if r.Operation == ChatDeleteFile {
+			if len(r.AttachmentIDs) != 1 || r.AttachmentIDs[0] <= 0 {
+				return errors.New("invalid deletion attachment")
+			}
+		} else if len(r.AttachmentIDs) != 0 {
+			return errors.New("unexpected deletion attachments")
+		}
+		return nil
+	}
+	if r.Operation == ChatChanges && r.Forward && r.Cursor != 0 {
+		return errors.New("invalid change watermark request")
+	}
+	if r.Text != "" || len(r.AttachmentIDs) > 0 || r.ClientID != ([16]byte{}) || (r.Forward && r.Operation != ChatHistory && r.Operation != ChatChanges) {
 		return errors.New("unexpected chat data")
 	}
 	return nil
@@ -83,8 +114,13 @@ func appendChatMessage(b []byte, m domain.ChatMessage) ([]byte, error) {
 	if m.ID <= 0 || m.SenderID <= 0 || m.SentAtMS <= 0 || m.ClientID == ([16]byte{}) || m.ChannelID < 0 || m.RecipientID < 0 || m.RecipientID == m.SenderID || (m.ChannelID == 0) == (m.RecipientID == 0) {
 		return nil, errors.New("invalid chat message")
 	}
-	if err := domain.ValidateChatText(m.Text); err != nil {
-		return nil, err
+	if m.Revision < 0 || (m.Deleted && (m.Text != "" || len(m.AttachmentIDs) != 0)) {
+		return nil, errors.New("invalid deleted message")
+	}
+	if !m.Deleted {
+		if err := domain.ValidateChatContent(m.Text, m.AttachmentIDs); err != nil {
+			return nil, err
+		}
 	}
 	for _, id := range []int64{m.ID, m.ChannelID, m.SenderID, m.RecipientID, m.SentAtMS} {
 		b = binary.BigEndian.AppendUint64(b, uint64(id))
@@ -94,7 +130,19 @@ func appendChatMessage(b []byte, m domain.ChatMessage) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return appendString(b, m.Text, domain.MaxChatTextBytes)
+	flags := uint16(len(m.Text))
+	if m.Deleted {
+		flags |= 0x8000
+	}
+	if m.Revision > 0 {
+		flags |= 0x4000
+	}
+	b = binary.BigEndian.AppendUint16(b, flags)
+	b = append(b, m.Text...)
+	if m.Revision > 0 {
+		b = binary.BigEndian.AppendUint64(b, uint64(m.Revision))
+	}
+	return b, nil
 }
 
 func EncodeChatPage(p domain.ChatPage) ([]byte, error) {
@@ -115,6 +163,7 @@ func EncodeChatPage(p domain.ChatPage) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		b = appendAttachmentIDs(b, m.AttachmentIDs)
 	}
 	for _, d := range p.Dialogs {
 		if d.UserID <= 0 || d.LatestID < 0 || d.ReadID < 0 {
@@ -157,9 +206,31 @@ func DecodeChatPage(b []byte) (domain.ChatPage, error) {
 		if err != nil {
 			return p, err
 		}
-		m.Text, b, err = takeString(b, domain.MaxChatTextBytes)
-		if err != nil {
-			return p, err
+		if len(b) < 2 {
+			return p, errors.New("short chat text")
+		}
+		flags := binary.BigEndian.Uint16(b[:2])
+		length := int(flags & 0x3fff)
+		b = b[2:]
+		if length > domain.MaxChatTextBytes || len(b) < length {
+			return p, errors.New("invalid chat text")
+		}
+		m.Text, m.Deleted, b = string(b[:length]), flags&0x8000 != 0, b[length:]
+		if flags&0x4000 != 0 {
+			if len(b) < 8 {
+				return p, errors.New("short chat revision")
+			}
+			m.Revision = int64(binary.BigEndian.Uint64(b[:8]))
+			b = b[8:]
+			if m.Revision <= 0 {
+				return p, errors.New("invalid chat revision")
+			}
+		}
+		{
+			m.AttachmentIDs, b, err = takeAttachmentIDs(b)
+			if err != nil {
+				return p, err
+			}
 		}
 		p.Messages = append(p.Messages, m)
 	}
@@ -181,4 +252,32 @@ func DecodeChatPage(b []byte) (domain.ChatPage, error) {
 	// Reuse encoder validation on every received field.
 	_, err := EncodeChatPage(p)
 	return p, err
+}
+
+func appendAttachmentIDs(b []byte, ids []int64) []byte {
+	b = append(b, byte(len(ids)))
+	for _, id := range ids {
+		b = binary.BigEndian.AppendUint64(b, uint64(id))
+	}
+	return b
+}
+
+func takeAttachmentIDs(b []byte) ([]int64, []byte, error) {
+	if len(b) < 1 || int(b[0]) > domain.MaxChatAttachments || len(b) < 1+int(b[0])*8 {
+		return nil, nil, errors.New("invalid attachment IDs")
+	}
+	n := int(b[0])
+	b = b[1:]
+	if n == 0 {
+		return nil, b, nil
+	}
+	ids := make([]int64, n)
+	for i := range ids {
+		ids[i] = int64(binary.BigEndian.Uint64(b[:8]))
+		b = b[8:]
+	}
+	if err := domain.ValidateChatContent("", ids); n > 0 && err != nil {
+		return nil, nil, err
+	}
+	return ids, b, nil
 }

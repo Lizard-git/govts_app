@@ -11,25 +11,29 @@ import (
 )
 
 type ChatRequestDTO struct {
-	Context   string `json:"context"`
-	Operation string `json:"operation"`
-	Kind      string `json:"kind"`
-	TargetID  string `json:"targetId"`
-	Cursor    string `json:"cursor"`
-	Forward   bool   `json:"forward"`
-	ClientID  string `json:"clientId"`
-	Text      string `json:"text"`
+	AttachmentIDs []string `json:"attachmentIds,omitempty"`
+	Context       string   `json:"context"`
+	Operation     string   `json:"operation"`
+	Kind          string   `json:"kind"`
+	TargetID      string   `json:"targetId"`
+	Cursor        string   `json:"cursor"`
+	Forward       bool     `json:"forward"`
+	ClientID      string   `json:"clientId"`
+	Text          string   `json:"text"`
 }
 
 type ChatMessageDTO struct {
-	ID          string `json:"id"`
-	SenderID    string `json:"senderId"`
-	RecipientID string `json:"recipientId"`
-	ChannelID   string `json:"channelId"`
-	ClientID    string `json:"clientId"`
-	SenderName  string `json:"senderName"`
-	Text        string `json:"text"`
-	SentAtMS    int64  `json:"sentAtMs"`
+	Deleted       bool     `json:"deleted"`
+	Revision      string   `json:"revision"`
+	AttachmentIDs []string `json:"attachmentIds,omitempty"`
+	ID            string   `json:"id"`
+	SenderID      string   `json:"senderId"`
+	RecipientID   string   `json:"recipientId"`
+	ChannelID     string   `json:"channelId"`
+	ClientID      string   `json:"clientId"`
+	SenderName    string   `json:"senderName"`
+	Text          string   `json:"text"`
+	SentAtMS      int64    `json:"sentAtMs"`
 }
 
 type ChatDialogDTO struct {
@@ -53,6 +57,13 @@ type ChatPageDTO struct {
 
 func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 	r := protocol.ChatRequest{Text: request.Text, Forward: request.Forward}
+	for _, value := range request.AttachmentIDs {
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			return ChatPageDTO{}, errors.New("некорректное вложение")
+		}
+		r.AttachmentIDs = append(r.AttachmentIDs, id)
+	}
 	switch request.Operation {
 	case "send":
 		r.Operation = protocol.ChatSend
@@ -62,6 +73,12 @@ func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 		r.Operation = protocol.ChatDialogs
 	case "read":
 		r.Operation = protocol.ChatRead
+	case "changes":
+		r.Operation = protocol.ChatChanges
+	case "delete":
+		r.Operation = protocol.ChatDelete
+	case "delete-file":
+		r.Operation = protocol.ChatDeleteFile
 	default:
 		return ChatPageDTO{}, errors.New("неизвестная операция чата")
 	}
@@ -103,7 +120,10 @@ func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 	dto := ChatPageDTO{UserID: strconv.FormatInt(p.UserID, 10), LatestID: strconv.FormatInt(p.LatestID, 10), ReadID: strconv.FormatInt(p.ReadID, 10), Cursor: strconv.FormatInt(p.Cursor, 10), HasMore: p.HasMore, Messages: make([]ChatMessageDTO, 0, len(p.Messages)), Dialogs: make([]ChatDialogDTO, 0, len(p.Dialogs))}
 	dto.Unread = p.Unread
 	for _, m := range p.Messages {
-		dto.Messages = append(dto.Messages, ChatMessageDTO{ID: strconv.FormatInt(m.ID, 10), SenderID: strconv.FormatInt(m.SenderID, 10), RecipientID: strconv.FormatInt(m.RecipientID, 10), ChannelID: strconv.FormatInt(m.ChannelID, 10), ClientID: hex.EncodeToString(m.ClientID[:]), SenderName: m.SenderName, Text: m.Text, SentAtMS: m.SentAtMS})
+		dto.Messages = append(dto.Messages, ChatMessageDTO{Deleted: m.Deleted, Revision: strconv.FormatInt(m.Revision, 10), ID: strconv.FormatInt(m.ID, 10), SenderID: strconv.FormatInt(m.SenderID, 10), RecipientID: strconv.FormatInt(m.RecipientID, 10), ChannelID: strconv.FormatInt(m.ChannelID, 10), ClientID: hex.EncodeToString(m.ClientID[:]), SenderName: m.SenderName, Text: m.Text, SentAtMS: m.SentAtMS})
+		for _, id := range m.AttachmentIDs {
+			dto.Messages[len(dto.Messages)-1].AttachmentIDs = append(dto.Messages[len(dto.Messages)-1].AttachmentIDs, strconv.FormatInt(id, 10))
+		}
 	}
 	for _, d := range p.Dialogs {
 		dto.Dialogs = append(dto.Dialogs, ChatDialogDTO{UserID: strconv.FormatInt(d.UserID, 10), DisplayName: d.DisplayName, LatestID: strconv.FormatInt(d.LatestID, 10), ReadID: strconv.FormatInt(d.ReadID, 10), Unread: d.Unread})

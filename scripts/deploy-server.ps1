@@ -9,6 +9,9 @@ param(
     [ValidatePattern('^$|^/[A-Za-z0-9._/-]+$')]
     [string]$ConfigPath = '',
 
+    [ValidatePattern('^$|^/[A-Za-z0-9._/-]+$')]
+    [string]$DatabasePath = '',
+
     [ValidatePattern('^[0-9A-Fa-f:.]+$')]
     [string]$PublicIp = '193.187.92.89',
 
@@ -17,6 +20,10 @@ param(
 
     [ValidateRange(1, 65535)]
     [int]$MediaPort = 9002,
+
+    # File sharing is enabled by default; use -FilePort 0 to disable it.
+    [ValidateRange(0, 65535)]
+    [int]$FilePort = 9001,
 
     [ValidateRange(1, 65535)]
     [int]$MediaMinPort = 20000,
@@ -55,9 +62,15 @@ $remoteScript = "$RemoteDir/redeploy-server.sh"
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = "$RemoteDir/server.json"
 }
+if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
+    $DatabasePath = "$RemoteDir/sonoryx.db"
+}
 
 if ($VoicePort -eq $MediaPort) {
     throw 'VoicePort and MediaPort must be different'
+}
+if ($FilePort -ne 0 -and $FilePort -eq $MediaPort) {
+    throw 'FilePort and MediaPort must be different TCP ports'
 }
 if ($MediaMinPort -gt $MediaMaxPort) {
     throw 'MediaMinPort must not exceed MediaMaxPort'
@@ -96,7 +109,7 @@ $voiceRedundancyValue = if ($VoiceRedundancy) { '1' } else { '0' }
 $voiceUplinkRedundancyValue = if ($VoiceUplinkRedundancy) { '1' } else { '0' }
 $publicStatusValue = if ($PublicStatus) { '1' } else { '0' }
 $mediaAdaptiveValue = if ($MediaAdaptive) { '1' } else { '0' }
-$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' VOICE_UPLINK_REDUNDANCY='$voiceUplinkRedundancyValue' PUBLIC_STATUS='$publicStatusValue' MEDIA_ADAPTIVE='$mediaAdaptiveValue' '$remoteScript' '$remoteBinary'"
+$remoteCommand = "chmod 0755 '$remoteScriptUpload' && mv -f '$remoteScriptUpload' '$remoteScript' && APP_DIR='$RemoteDir' CONFIG='$ConfigPath' DB_PATH='$DatabasePath' PUBLIC_IP='$PublicIp' VOICE_PORT='$VoicePort' MEDIA_PORT='$MediaPort' FILE_PORT='$FilePort' MEDIA_MIN_PORT='$MediaMinPort' MEDIA_MAX_PORT='$MediaMaxPort' TMUX_SESSION='$TmuxSession' VOICE_REDUNDANCY='$voiceRedundancyValue' VOICE_UPLINK_REDUNDANCY='$voiceUplinkRedundancyValue' PUBLIC_STATUS='$publicStatusValue' MEDIA_ADAPTIVE='$mediaAdaptiveValue' '$remoteScript' '$remoteBinary'"
 Write-Host "Remote command ($Target): $remoteCommand"
 & ssh -- $Target $remoteCommand
 if ($LASTEXITCODE -ne 0) {

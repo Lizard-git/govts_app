@@ -168,10 +168,24 @@ func (w *chatWorker) handle(parent context.Context, job chatJob) {
 		switch r.Operation {
 		case protocol.ChatSend:
 			var m domain.ChatMessage
-			m, err = w.auth.store.SaveChat(ctx, actor.UserID, actor.Name, r.Target, r.ClientID, r.Text)
+			m, err = w.auth.store.SaveChatFiles(ctx, actor.UserID, actor.Name, r.Target, r.ClientID, r.Text, r.AttachmentIDs)
 			page = domain.ChatPage{UserID: actor.UserID, LatestID: m.ID, Cursor: m.ID, Messages: []domain.ChatMessage{m}}
 		case protocol.ChatHistory:
 			page, err = w.auth.store.ChatHistory(ctx, actor.UserID, r.Target, r.Cursor, r.Forward)
+		case protocol.ChatChanges:
+			if r.Forward {
+				page, err = w.auth.store.ChatChangeWatermark(ctx, actor.UserID, r.Target)
+			} else {
+				page, err = w.auth.store.ChatChanges(ctx, actor.UserID, r.Target, r.Cursor)
+			}
+		case protocol.ChatDelete, protocol.ChatDeleteFile:
+			var fileID int64
+			if r.Operation == protocol.ChatDeleteFile {
+				fileID = r.AttachmentIDs[0]
+			}
+			var message domain.ChatMessage
+			message, err = w.auth.store.DeleteChat(ctx, actor.UserID, r.Target, r.Cursor, fileID)
+			page = domain.ChatPage{UserID: actor.UserID, Messages: []domain.ChatMessage{message}}
 		case protocol.ChatDialogs:
 			page, err = w.auth.store.ChatDialogs(ctx, actor.UserID, r.Cursor)
 		case protocol.ChatRead:
@@ -207,7 +221,7 @@ func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, p
 	// Revalidate reads before exposing history. Writes were authorized on
 	// acceptance and committed by the store: a later channel change cannot
 	// turn a successful commit into a rejection or suppress its notifications.
-	if job.request.Operation == protocol.ChatHistory || job.request.Operation == protocol.ChatDialogs {
+	if job.request.Operation == protocol.ChatHistory || job.request.Operation == protocol.ChatDialogs || job.request.Operation == protocol.ChatChanges {
 		if _, e := w.check(job); e != nil {
 			err = e
 		}
@@ -221,13 +235,13 @@ func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, p
 	if err := w.conn.WritePacket(actor.ID, job.addr, ack); err != nil {
 		log.Printf("chat ack failed: session_id=%d error=%v", actor.ID, err)
 	}
-	if job.request.Operation != protocol.ChatSend && job.request.Operation != protocol.ChatRead {
+	if job.request.Operation != protocol.ChatSend && job.request.Operation != protocol.ChatRead && job.request.Operation != protocol.ChatDelete && job.request.Operation != protocol.ChatDeleteFile {
 		return
 	}
 	// Notifications are hints; periodic cursor reconciliation recovers packet loss.
 	for _, recipient := range w.hub.Inspect().Sessions {
 		eligible := recipient.UserID == actor.UserID
-		if job.request.Operation == protocol.ChatSend {
+		if job.request.Operation != protocol.ChatRead {
 			if job.request.Target.Kind == domain.ChatChannel {
 				eligible = recipient.ChannelID == domain.ChannelID(job.request.Target.ID)
 			} else {
@@ -243,6 +257,9 @@ func (w *chatWorker) complete(ctx context.Context, job chatJob, actor Session, p
 func fitChatPage(p *domain.ChatPage, r protocol.ChatRequest) ([]byte, error) {
 	// Preserve the nearest messages: ascending for catch-up, descending for older pages.
 	for {
+		if r.Operation == protocol.ChatChanges && len(p.Messages) > 0 {
+			p.Cursor = p.Messages[len(p.Messages)-1].Revision
+		}
 		if r.Operation == protocol.ChatHistory && len(p.Messages) > 0 {
 			p.Cursor = p.Messages[len(p.Messages)-1].ID
 		}

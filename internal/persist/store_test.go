@@ -17,6 +17,7 @@ func TestMigrateVersionOneAndPreserveAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`CREATE TABLE channels(id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE users (id INTEGER PRIMARY KEY, public_key BLOB NOT NULL UNIQUE CHECK(length(public_key)=32), display_name TEXT NOT NULL, join_level INTEGER NOT NULL DEFAULT 0 CHECK(join_level BETWEEN 0 AND 65535), permissions INTEGER NOT NULL DEFAULT 0 CHECK(permissions BETWEEN 0 AND 7), banned INTEGER NOT NULL DEFAULT 0 CHECK(banned IN (0,1)), created_at TEXT NOT NULL)`,
 		`CREATE TABLE server_settings (id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL)`,
 		`CREATE TABLE audit (id INTEGER PRIMARY KEY, happened_at TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target_user_id INTEGER, detail TEXT NOT NULL DEFAULT '')`,
@@ -109,6 +110,12 @@ func TestVersionTwoMigrationSelectsUnrestrictedDefault(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE channels SET min_join_level=25,max_users=10 WHERE id=1`,
 		`ALTER TABLE server_settings DROP COLUMN default_channel_id`,
+		`DROP TABLE chat_changes`,
+		`DROP TABLE chat_message_files`,
+		`DROP TABLE file_attachments`,
+		`DROP TABLE file_uploads`,
+		`DROP TABLE file_policy`,
+		`DROP TABLE file_rights`,
 		`DROP TABLE chat_reads`,
 		`DROP TABLE chat_messages`,
 		`DROP TABLE chat_dialogs`,
@@ -159,6 +166,12 @@ func TestVersionTwoMigrationPreservesRestrictedChannels(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE channels SET min_join_level=25,max_users=10 WHERE id=1`,
 		`ALTER TABLE server_settings DROP COLUMN default_channel_id`,
+		`DROP TABLE chat_changes`,
+		`DROP TABLE chat_message_files`,
+		`DROP TABLE file_attachments`,
+		`DROP TABLE file_uploads`,
+		`DROP TABLE file_policy`,
+		`DROP TABLE file_rights`,
 		`DROP TABLE chat_reads`,
 		`DROP TABLE chat_messages`,
 		`DROP TABLE chat_dialogs`,

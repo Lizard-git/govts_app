@@ -7,6 +7,25 @@ import (
 
 const MaxChatTextBytes = 1000
 
+const MaxChatAttachments = 4
+
+func ValidateChatContent(text string, ids []int64) error {
+	if len(ids) > MaxChatAttachments {
+		return ChatRejection("слишком много вложений")
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			return ChatRejection("некорректные вложения")
+		}
+		seen[id] = true
+	}
+	if len(ids) > 0 && strings.TrimSpace(text) == "" && utf8.ValidString(text) && len(text) <= MaxChatTextBytes && !strings.ContainsRune(text, 0) {
+		return nil
+	}
+	return ValidateChatText(text)
+}
+
 type ChatKind uint8
 
 const (
@@ -47,14 +66,17 @@ func ValidateChatText(text string) error {
 }
 
 type ChatMessage struct {
-	ID          int64
-	ChannelID   int64
-	SenderID    int64
-	RecipientID int64
-	ClientID    [16]byte
-	SentAtMS    int64
-	SenderName  string
-	Text        string
+	Deleted       bool
+	Revision      int64
+	AttachmentIDs []int64
+	ID            int64
+	ChannelID     int64
+	SenderID      int64
+	RecipientID   int64
+	ClientID      [16]byte
+	SentAtMS      int64
+	SenderName    string
+	Text          string
 }
 
 type ChatDialog struct {

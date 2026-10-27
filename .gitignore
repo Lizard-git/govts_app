@@ -31,6 +31,9 @@ node_modules/
 # Locally generated default media identity
 /sonoryx-media.crt
 /sonoryx-media.key
+/sonoryx-files.crt
+/sonoryx-files.key
+/data/files/
 
 # Local server state
 /sonoryx.db

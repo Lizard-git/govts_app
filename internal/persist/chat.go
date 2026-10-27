@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"uniclog.io/sonoryx/internal/domain"
@@ -32,14 +35,15 @@ func migrateChat(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-const chatColumns = `id,COALESCE(channel_id,0),sender_id,COALESCE(recipient_id,0),client_id,sender_name,text,sent_at_ms`
+const chatColumns = `id,COALESCE(channel_id,0),sender_id,COALESCE(recipient_id,0),client_id,sender_name,text,sent_at_ms,(SELECT COALESCE(group_concat(attachment_id,','),'') FROM (SELECT attachment_id FROM chat_message_files WHERE message_id=chat_messages.id AND hidden=0 ORDER BY position)),deleted,COALESCE((SELECT seq FROM chat_changes WHERE message_id=chat_messages.id),0)`
 
 type chatScanner interface{ Scan(...any) error }
 
 func scanChat(row chatScanner) (domain.ChatMessage, error) {
 	var m domain.ChatMessage
 	var clientID []byte
-	err := row.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.RecipientID, &clientID, &m.SenderName, &m.Text, &m.SentAtMS)
+	var attachments string
+	err := row.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.RecipientID, &clientID, &m.SenderName, &m.Text, &m.SentAtMS, &attachments, &m.Deleted, &m.Revision)
 	if err != nil {
 		return m, err
 	}
@@ -47,6 +51,15 @@ func scanChat(row chatScanner) (domain.ChatMessage, error) {
 		return m, errors.New("invalid stored message identity")
 	}
 	copy(m.ClientID[:], clientID)
+	if attachments != "" && !m.Deleted {
+		for _, str := range strings.Split(attachments, ",") {
+			id, e := strconv.ParseInt(str, 10, 64)
+			if e != nil {
+				return m, e
+			}
+			m.AttachmentIDs = append(m.AttachmentIDs, id)
+		}
+	}
 	return m, nil
 }
 
@@ -58,10 +71,14 @@ func chatWhere(user int64, target domain.ChatTarget) (string, []any) {
 }
 
 func (s *Store) SaveChat(ctx context.Context, user int64, name string, target domain.ChatTarget, clientID [16]byte, text string) (domain.ChatMessage, error) {
+	return s.SaveChatFiles(ctx, user, name, target, clientID, text, nil)
+}
+
+func (s *Store) SaveChatFiles(ctx context.Context, user int64, name string, target domain.ChatTarget, clientID [16]byte, text string, attachments []int64) (domain.ChatMessage, error) {
 	if err := target.Validate(); err != nil {
 		return domain.ChatMessage{}, err
 	}
-	if err := domain.ValidateChatText(text); err != nil {
+	if err := domain.ValidateChatContent(text, attachments); err != nil {
 		return domain.ChatMessage{}, err
 	}
 	if user <= 0 || clientID == ([16]byte{}) {
@@ -78,13 +95,22 @@ func (s *Store) SaveChat(ctx context.Context, user int64, name string, target do
 	}
 	m, err := scanChat(tx.QueryRowContext(ctx, `SELECT `+chatColumns+` FROM chat_messages WHERE sender_id=? AND client_id=?`, user, clientID[:]))
 	if err == nil {
-		if m.Text != text || (target.Kind == domain.ChatChannel && (m.ChannelID != target.ID || m.RecipientID != 0)) || (target.Kind == domain.ChatDirect && (m.RecipientID != target.ID || m.ChannelID != 0)) {
+		if (m.Revision == 0 && (!slices.Equal(m.AttachmentIDs, attachments) || m.Text != text)) || (target.Kind == domain.ChatChannel && (m.ChannelID != target.ID || m.RecipientID != 0)) || (target.Kind == domain.ChatDirect && (m.RecipientID != target.ID || m.ChannelID != 0)) {
 			return m, domain.ChatRejection("идентификатор уже использован для другого сообщения")
 		}
 		return m, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return m, err
+	}
+	if len(attachments) > 0 {
+		var allowed bool
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT upload FROM file_rights WHERE user_id=?),1) AND COALESCE((SELECT json_extract(data,'$.UploadsEnabled') FROM file_policy WHERE id=1),1)`, user).Scan(&allowed); err != nil {
+			return m, err
+		}
+		if !allowed {
+			return m, domain.ChatRejection("загрузка файлов запрещена")
+		}
 	}
 	var channel, recipient any
 	if target.Kind == domain.ChatChannel {
@@ -114,7 +140,21 @@ func (s *Store) SaveChat(ctx context.Context, user int64, name string, target do
 	if err != nil {
 		return m, err
 	}
+	for position, attachmentID := range attachments {
+		var uploadID string
+		err = tx.QueryRowContext(ctx, `SELECT a.upload_id FROM file_attachments a JOIN file_uploads u ON u.id=a.upload_id WHERE a.id=? AND a.user_id=? AND a.kind=? AND a.target_id=? AND a.deleted=0 AND u.state='ready'`, attachmentID, user, target.Kind, target.ID).Scan(&uploadID)
+		if err != nil {
+			return m, domain.ChatRejection("вложение недоступно")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO chat_message_files(message_id,attachment_id,position) VALUES(?,?,?)`, id, attachmentID, position); err != nil {
+			return m, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE file_uploads SET state='attached' WHERE id=?`, uploadID); err != nil {
+			return m, err
+		}
+	}
 	m = domain.ChatMessage{ID: id, SenderID: user, ClientID: clientID, SenderName: name, Text: text, SentAtMS: at}
+	m.AttachmentIDs = append([]int64(nil), attachments...)
 	if target.Kind == domain.ChatChannel {
 		m.ChannelID = target.ID
 	} else {
@@ -135,7 +175,7 @@ func (s *Store) ChatHistory(ctx context.Context, user int64, target domain.ChatT
 	}
 	unreadArgs := append(append([]any(nil), args...), user, p.ReadID, p.LatestID)
 	var unread int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_messages WHERE `+where+` AND sender_id!=? AND id>? AND id<=?`, unreadArgs...).Scan(&unread); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_messages WHERE `+where+` AND sender_id!=? AND deleted=0 AND id>? AND id<=?`, unreadArgs...).Scan(&unread); err != nil {
 		return p, err
 	}
 	if unread > int64(^uint32(0)) {
@@ -184,7 +224,7 @@ func (s *Store) ChatDialogs(ctx context.Context, user, cursor int64) (domain.Cha
 	p := domain.ChatPage{UserID: user, Cursor: cursor}
 	rows, err := s.db.QueryContext(ctx, `WITH peers AS (SELECT CASE WHEN user_low=? THEN user_high ELSE user_low END AS peer FROM chat_dialogs WHERE user_low=? OR user_high=?)
 	 SELECT u.id,u.display_name,COALESCE((SELECT MAX(id) FROM chat_messages WHERE (sender_id=? AND recipient_id=u.id) OR (sender_id=u.id AND recipient_id=?)),0),COALESCE(r.message_id,0),
-	 (SELECT COUNT(*) FROM chat_messages WHERE sender_id=u.id AND recipient_id=? AND id>COALESCE(r.message_id,0))
+	 (SELECT COUNT(*) FROM chat_messages WHERE sender_id=u.id AND recipient_id=? AND deleted=0 AND id>COALESCE(r.message_id,0))
 	 FROM peers JOIN users u ON u.id=peers.peer LEFT JOIN chat_reads r ON r.user_id=? AND r.kind=2 AND r.target_id=u.id WHERE u.id>? ORDER BY u.id LIMIT 17`, user, user, user, user, user, user, user, cursor)
 	if err != nil {
 		return p, err

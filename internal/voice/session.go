@@ -32,13 +32,17 @@ type Session struct {
 	// attentionStep is the next lock rung. attentionUntil is when the
 	// current lock ends; the zero time means there is no lock.
 	// attentionAt is the last reserved wake or the last lock update.
-	attentionUsed   int
-	attentionStep   int
-	attentionUntil  time.Time
-	attentionAt     time.Time
-	Addr            *net.UDPAddr
-	LastSeen        time.Time
-	MediaCredential [32]byte
+	attentionUsed                int
+	attentionStep                int
+	attentionUntil               time.Time
+	attentionAt                  time.Time
+	Addr                         *net.UDPAddr
+	LastSeen                     time.Time
+	MediaCredential              [32]byte
+	FileCredential               [32]byte
+	FileCredentialExpiry         time.Time
+	PreviousFileCredential       [32]byte
+	PreviousFileCredentialExpiry time.Time
 	// VoiceBundles reports that the client accepts PacketVoiceBundle.
 	VoiceBundles  bool
 	voiceSeen     map[uint32]struct{}

@@ -2,11 +2,11 @@ import {desktopAPI, type ChatDialogDTO, type ChatMessageDTO, type ChatPageDTO, t
 import {errorCode} from "../../locales";
 
 export type ChatTarget = {kind: "channel" | "direct"; id: string};
-export type PendingMessage = {clientId: string; text: string; sentAtMS: number; state: "sending" | "error"; error?: string};
+export type PendingMessage = {clientId: string; text: string; attachmentIds?: string[]; sentAtMS: number; state: "sending" | "error"; error?: string};
 export type Conversation = {
     messages: ChatMessageDTO[]; pending: PendingMessage[]; draft: string;
     loaded: boolean; loading: boolean; error: string; hasOlder: boolean;
-    cursor: string; readId: string; unread: number; olderWindow: boolean; newMessages: boolean;
+    cursor: string; changeCursor: string; readId: string; unread: number; olderWindow: boolean; newMessages: boolean;
 };
 const keyOf = (t: ChatTarget) => `${t.kind}:${t.id}`;
 const compare = (a: string, b: string) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
@@ -50,6 +50,34 @@ export class ChatStore {
     private timer: number;
     private restoredDrafts: Record<string, string> = {};
     private onMessageReceived: () => void = () => undefined;
+    readonly confirmedAttachments = new Set<string>();
+    private attachmentsToFinish = new Set<string>();
+    private finishingAttachments = false;
+    private finishRetryAt = 0;
+
+    private confirmAttachments(ids: string[]) {
+        for (const id of ids) if (!this.confirmedAttachments.has(id)) {this.confirmedAttachments.add(id); this.attachmentsToFinish.add(id);}
+        while (this.confirmedAttachments.size > 4096) {
+            const oldest = [...this.confirmedAttachments].find((id) => !this.attachmentsToFinish.has(id));
+            if (!oldest) break;
+            this.confirmedAttachments.delete(oldest);
+        }
+        void this.finishAttachments();
+    }
+    private async finishAttachments() {
+        if (this.disposed || !this.connected || this.finishingAttachments || Date.now() < this.finishRetryAt || !this.attachmentsToFinish.size) return;
+        this.finishingAttachments = true;
+        const ids = [...this.attachmentsToFinish].slice(0, 64);
+        try {
+            const queued = await desktopAPI.fileQueue(this.context);
+            const ready = new Set((queued ?? []).filter((task) => task.direction === "upload" && task.state === "ready").map((task) => task.attachmentId));
+            const existing = ids.filter((id) => ready.has(id));
+            if (existing.length) await desktopAPI.fileAttached(this.context, existing);
+            for (const id of ids) this.attachmentsToFinish.delete(id);
+            this.finishRetryAt = 0;
+        } catch { this.finishRetryAt = Date.now() + 3000; }
+        finally {this.finishingAttachments = false;}
+    }
 
     constructor(context: string, userId: string) {
         this.context = context; this.userId = userId;
@@ -94,6 +122,7 @@ export class ChatStore {
     }
     shouldOpenDialog(dialog: ChatDialogDTO) { return dialog.unread > 0 && compare(dialog.latestId, this.dismissedDialogs.get(dialog.userId) ?? "0") > 0; }
     private async reconcile() {
+        void this.finishAttachments();
         if (!this.connected || this.disposed || this.scheduled || Date.now() < Math.max(this.nextSyncAt, this.pausedUntil)) return;
         this.scheduled = true;
         const epoch = this.epoch;
@@ -102,6 +131,8 @@ export class ChatStore {
             await this.flushReads();
             if (epoch !== this.epoch || !this.connected) return;
             await Promise.all([...this.watched.values()].map(({target}) => this.sync(target)));
+            if (epoch !== this.epoch || !this.connected) return;
+            await Promise.all([...this.watched.values()].map(({target}) => this.syncChanges(target)));
             if (epoch !== this.epoch || !this.connected) return;
             await this.refreshDialogs();
         } finally { this.scheduled = false; }
@@ -118,7 +149,7 @@ export class ChatStore {
                 if (evict) this.conversations.delete(evict[0]);
                 else break; // Only pinned drafts, sends and in-flight requests remain.
             }
-            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
+            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", changeCursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
             this.conversations.set(key, c);
             c.draft = this.restoredDrafts[key] ?? "";
             delete this.restoredDrafts[key];
@@ -164,13 +195,17 @@ export class ChatStore {
         this.requestTail = result.catch(() => undefined);
         return result;
     }
-    private merge(c: Conversation, page: ChatPageDTO, history = false, older = false) {
+    private merge(c: Conversation, page: ChatPageDTO, history = false, older = false, changes = false) {
         const messages = new Map(c.messages.map((m) => [m.id, m]));
         const confirmed = new Set((page.messages ?? []).filter((m) => m.senderId === this.userId).map((m) => m.clientId));
+        for (const message of page.messages ?? []) if (message.senderId === this.userId && message.attachmentIds?.length) this.confirmAttachments(message.attachmentIds);
+        for (const pending of c.pending) if (confirmed.has(pending.clientId) && pending.attachmentIds?.length) this.confirmAttachments(pending.attachmentIds);
         c.pending = c.pending.filter((p) => !confirmed.has(p.clientId));
         const frozen = c.olderWindow && !older;
         let received = false;
         for (const m of page.messages ?? []) {
+            const existing = messages.get(m.id);
+            if ((changes && !existing) || (existing && compare(existing.revision ?? "0", m.revision ?? "0") > 0)) continue;
             const fresh = !messages.has(m.id);
             if (fresh && c.loaded && !older && m.senderId !== this.userId && compare(m.id, c.cursor) > 0) received = true;
             if (!frozen || messages.has(m.id)) messages.set(m.id, m);
@@ -193,6 +228,12 @@ export class ChatStore {
         this.busy.add(key); c.loading = true; this.notify();
         try {
             if (!c.loaded || older) {
+                if (!c.loaded) {
+                    // Capture changes before the history snapshot, so first open neither
+                    // replays the entire deletion log nor misses a concurrent deletion.
+                    const watermark = await this.request("changes", target, {forward: true});
+                    c.changeCursor = watermark.cursor;
+                }
                 let cursor = older ? c.messages[0]?.id ?? "0" : "0";
                 for (let i = 0; i < (older ? 2 : 1); i++) {
                     if (epoch !== this.epoch) break;
@@ -213,6 +254,18 @@ export class ChatStore {
             c.error = "";
         } catch (e) { if (!this.disposed && epoch === this.epoch) c.error = chatError(e); }
         finally { c.loading = false; this.busy.delete(key); this.notify(); }
+    }
+
+    private async syncChanges(target: ChatTarget) {
+        const c = this.conversation(target);
+        if (!c.loaded || target.id === "0") return;
+        try {
+            const changes = await this.request("changes", target, {cursor: c.changeCursor});
+            this.merge(c, changes, false, false, true);
+            c.changeCursor = maxID(c.changeCursor, changes.cursor);
+            if (changes.hasMore) this.invalidate();
+            this.notify();
+        } catch (e) {if (!this.disposed) {c.error = chatError(e); this.notify();}}
     }
 
     async refreshDialogs(more = false) {
@@ -252,23 +305,36 @@ export class ChatStore {
         return {dialogs, cursor, hasMore};
     }
 
-    async send(target: ChatTarget, text: string, retry?: PendingMessage) {
+    async send(target: ChatTarget, text: string, retry?: PendingMessage, attachmentIds: string[] = []) {
         const c = this.conversation(target);
         if (retry?.state === "sending") return;
         if (!retry && [...this.conversations.values()].reduce((sum, v) => sum + v.pending.length, 0) >= 32) {
             c.error = errorCode("chat-too-many-pending"); this.notify(); return;
         }
-        const pending: PendingMessage = retry ?? {clientId: crypto.randomUUID().replace(/-/g, ""), text, sentAtMS: Date.now(), state: "sending"};
+        const pending: PendingMessage = retry ?? {clientId: crypto.randomUUID().replace(/-/g, ""), text, attachmentIds, sentAtMS: Date.now(), state: "sending"};
         pending.state = "sending"; pending.error = undefined;
         if (!retry) { c.pending.push(pending); c.draft = ""; }
         this.notify();
         try {
-            this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text}));
+            this.merge(c, await this.request("send", target, {clientId: pending.clientId, text: pending.text, ...(pending.attachmentIds?.length ? {attachmentIds: pending.attachmentIds} : {})}));
+            if (pending.attachmentIds?.length) this.confirmAttachments(pending.attachmentIds);
             c.error = "";
         }
         catch (e) { if (!this.disposed) { pending.state = "error"; pending.error = chatError(e); } }
         finally { this.notify(); }
         this.invalidate();
+    }
+
+    async remove(target: ChatTarget, id: string, attachmentId?: string) {
+        const c = this.conversation(target);
+        const message = c.messages.find((entry) => entry.id === id);
+        if (!message || message.senderId !== this.userId || message.deleted) return;
+        try {
+            const page = await this.request(attachmentId ? "delete-file" : "delete", target, {cursor: id, ...(attachmentId ? {attachmentIds: [attachmentId]} : {})});
+            this.merge(c, page);
+            c.error = "";
+        } catch (e) {if (!this.disposed) c.error = chatError(e);}
+        finally {this.notify(); this.invalidate();}
     }
 
     async markRead(target: ChatTarget) {

@@ -13,6 +13,10 @@ func TestChatRequestRoundTripAndMalformedPayloads(t *testing.T) {
 		{Operation: ChatHistory, Target: domain.ChatTarget{Kind: domain.ChatDirect, ID: 2}, Cursor: 9, Forward: true},
 		{Operation: ChatRead, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, Cursor: 9},
 		{Operation: ChatDialogs, Cursor: 2},
+		{Operation: ChatChanges, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, Cursor: 42},
+		{Operation: ChatChanges, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, Forward: true},
+		{Operation: ChatDelete, Target: domain.ChatTarget{Kind: domain.ChatDirect, ID: 2}, Cursor: 7},
+		{Operation: ChatDeleteFile, Target: domain.ChatTarget{Kind: domain.ChatDirect, ID: 2}, Cursor: 7, AttachmentIDs: []int64{10}},
 	}
 	for _, want := range requests {
 		b, err := EncodeChatRequest(want)
@@ -20,7 +24,7 @@ func TestChatRequestRoundTripAndMalformedPayloads(t *testing.T) {
 			t.Fatalf("encode: %v, size %d", err, len(b))
 		}
 		got, err := DecodeChatRequest(b)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("round trip: %+v, %v", got, err)
 		}
 		for i := range b {
@@ -30,6 +34,38 @@ func TestChatRequestRoundTripAndMalformedPayloads(t *testing.T) {
 		}
 		if _, err := DecodeChatRequest(append(b, 0)); err == nil {
 			t.Fatal("accepted trailing byte")
+		}
+	}
+}
+
+func TestChatAttachmentsMaximumBudgetAndValidation(t *testing.T) {
+	m := domain.ChatMessage{ID: 1, ChannelID: 1, SenderID: 2, SentAtMS: 123, ClientID: [16]byte{1}, SenderName: strings.Repeat("a", 64), Text: strings.Repeat("x", 1000), AttachmentIDs: []int64{1, 2, 3, 4}}
+	p := domain.ChatPage{UserID: 2, Messages: []domain.ChatMessage{m}}
+	b, err := EncodeChatPage(p)
+	if err != nil || len(b) != 1197 {
+		t.Fatalf("max page: %d %v", len(b), err)
+	}
+	got, err := DecodeChatPage(b)
+	if err != nil || !reflect.DeepEqual(got, p) {
+		t.Fatalf("decode: %+v %v", got, err)
+	}
+	r := ChatRequest{Operation: ChatSend, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, ClientID: [16]byte{1}, AttachmentIDs: []int64{1, 2, 3, 4}}
+	b, err = EncodeChatRequest(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeChatRequest(b)
+	if err != nil || !reflect.DeepEqual(r, decoded) {
+		t.Fatalf("empty text with files: %+v %v", decoded, err)
+	}
+	b[0] = 1
+	if _, err = DecodeChatRequest(b); err == nil {
+		t.Fatal("accepted old schema")
+	}
+	for _, ids := range [][]int64{{1, 1}, {0}, {-1}, {1, 2, 3, 4, 5}} {
+		r.AttachmentIDs = ids
+		if _, err = EncodeChatRequest(r); err == nil {
+			t.Fatalf("accepted %v", ids)
 		}
 	}
 }
@@ -63,5 +99,40 @@ func TestChatPageRoundTripAndBudget(t *testing.T) {
 	got, err = DecodeChatPage(b)
 	if err != nil || !reflect.DeepEqual(got, p) {
 		t.Fatalf("dialog round trip: %+v, %v", got, err)
+	}
+}
+
+func TestChatDeletionFlagsRevisionsAndBudget(t *testing.T) {
+	base := domain.ChatMessage{ID: 1, ChannelID: 1, SenderID: 2, SentAtMS: 123, ClientID: [16]byte{1}, SenderName: strings.Repeat("a", 64), Revision: 1 << 62}
+	for _, deleted := range []bool{false, true} {
+		m := base
+		m.Deleted = deleted
+		if !deleted {
+			m.Text = strings.Repeat("x", 1000)
+			m.AttachmentIDs = []int64{2, 3, 4}
+		}
+		p := domain.ChatPage{UserID: 2, Messages: []domain.ChatMessage{m}}
+		b, err := EncodeChatPage(p)
+		if err != nil || len(b) > MaxPayloadSize {
+			t.Fatalf("changed message does not fit: %d %v", len(b), err)
+		}
+		got, err := DecodeChatPage(b)
+		if err != nil || !reflect.DeepEqual(got, p) {
+			t.Fatalf("changed message round trip: %+v %v", got, err)
+		}
+		for i := range b {
+			if _, err := DecodeChatPage(b[:i]); err == nil {
+				t.Fatalf("accepted truncated change at %d", i)
+			}
+		}
+	}
+	for _, r := range []ChatRequest{
+		{Operation: ChatDelete, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}},
+		{Operation: ChatDeleteFile, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, Cursor: 1},
+		{Operation: ChatDeleteFile, Target: domain.ChatTarget{Kind: domain.ChatChannel, ID: 1}, Cursor: 1, AttachmentIDs: []int64{1, 2}},
+	} {
+		if _, err := EncodeChatRequest(r); err == nil {
+			t.Fatal("accepted invalid deletion", r)
+		}
 	}
 }
