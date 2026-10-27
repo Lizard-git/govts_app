@@ -132,6 +132,9 @@ func (s *Store) DeleteFile(ctx context.Context, actor string, id int64) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO audit(happened_at,actor,action,detail) VALUES(?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, "delete-file", fmt.Sprint(id)); err != nil {
 		return err
 	}
+	if err = syncDeletedChatFiles(ctx, tx, id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (s *Store) FileUsage(ctx context.Context) (map[string]int64, error) {
@@ -296,6 +299,9 @@ func (s *Store) ExpireFiles(ctx context.Context, ttl, retention time.Duration) e
 		return err
 	}
 	cutoff := now - (24 * time.Hour).Milliseconds()
+	if err = syncDeletedChatFiles(ctx, tx, 0); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM file_attachments WHERE id IN(SELECT a.id FROM file_attachments a JOIN file_uploads u ON u.id=a.upload_id WHERE u.state IN('cancelled','expired','failed') AND u.terminal_at>0 AND u.terminal_at<? AND NOT EXISTS(SELECT 1 FROM chat_message_files m WHERE m.attachment_id=a.id) LIMIT 200)`, cutoff); err != nil {
 		return err
 	}
