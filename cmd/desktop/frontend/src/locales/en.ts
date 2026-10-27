@@ -460,7 +460,7 @@ export const en = {
         checking: "Checking for updates…",
         current: "You have the latest version.",
         downloading: "Downloading and verifying the update…",
-        megabytes: (written: string, total: string) => `${written} / ${total} MB`,
+        megabytes: (written: string, total: string) => `${written} / ${total} MiB`,
         ready: "The update is downloaded and verified. Installing will restart Sonoryx and end the current call and screen share.",
         restarting: "Restarting…",
         failed: "The update could not be finished.",

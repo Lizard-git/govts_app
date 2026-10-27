@@ -461,7 +461,7 @@ export const ru = {
         checking: "Проверка обновлений…",
         current: "Установлена последняя версия.",
         downloading: "Загрузка и проверка обновления…",
-        megabytes: (written: string, total: string) => `${written} / ${total} МБ`,
+        megabytes: (written: string, total: string) => `${written} / ${total} МиБ`,
         ready: "Обновление загружено и проверено. Установка перезапустит Sonoryx и завершит текущий разговор и демонстрацию.",
         restarting: "Перезапуск…",
         failed: "Не удалось завершить обновление.",

@@ -23,11 +23,12 @@ import (
 const repository = "uniclog/govts_app"
 
 type provider struct {
-	key    ed25519.PublicKey
-	client *http.Client
-	busy   func() bool
-	etag   string
-	cached *updater.Release
+	key      ed25519.PublicKey
+	client   *http.Client
+	busy     func() bool
+	etag     string
+	cached   *updater.Release
+	progress func(int64, int64)
 }
 
 func (p *provider) Name() string { return "sonoryx-github-signed" }
@@ -156,25 +157,29 @@ func (p *provider) Download(ctx context.Context, r *updater.Release, dst io.Writ
 		return p.downloadPacked(ctx, r, packed, dst, progress)
 	}
 	address, _ := r.Metadata["url"].(string)
+	p.reportProgress(0, r.Artifact.Size)
 	body, err := p.open(ctx, address, r.Artifact.Size)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = body.Close() }()
-	return copyArtifact(dst, &throttledReader{ctx: ctx, r: body, busy: p.busy}, r.Artifact.Size, progress)
+	reader := &downloadReader{r: &throttledReader{ctx: ctx, r: body, busy: p.busy}, total: r.Artifact.Size, progress: p.reportProgress}
+	return copyArtifact(dst, reader, r.Artifact.Size, progress)
 }
 
 // downloadPacked streams the compressed executable through the zstd decoder.
 // The updater hashes what reaches dst, so the executable signature is still
 // checked; the archive digest additionally rejects a substituted archive.
 func (p *provider) downloadPacked(ctx context.Context, r *updater.Release, packed packedAsset, dst io.Writer, progress func(int64, int64)) error {
+	p.reportProgress(0, packed.size)
 	body, err := p.open(ctx, packed.url, packed.size)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = body.Close() }()
 	hash := sha256.New()
-	limited := &io.LimitedReader{R: io.TeeReader(&throttledReader{ctx: ctx, r: body, busy: p.busy}, hash), N: packed.size + 1}
+	reader := &downloadReader{r: &throttledReader{ctx: ctx, r: body, busy: p.busy}, total: packed.size, progress: p.reportProgress}
+	limited := &io.LimitedReader{R: io.TeeReader(reader, hash), N: packed.size + 1}
 	decoder, err := zstd.NewReader(limited, zstd.WithDecoderMaxWindow(updatemanifest.PackedWindow), zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return err
@@ -193,6 +198,29 @@ func (p *provider) downloadPacked(ctx context.Context, r *updater.Release, packe
 		return errors.New("сжатое обновление не совпадает с подписью")
 	}
 	return nil
+}
+
+func (p *provider) reportProgress(written, total int64) {
+	if p.progress != nil {
+		p.progress(written, total)
+	}
+}
+
+// downloadReader counts HTTP response bytes before decompression. Wails' own
+// progress counts executable writes, which cannot represent compressed traffic.
+type downloadReader struct {
+	r              io.Reader
+	written, total int64
+	progress       func(int64, int64)
+}
+
+func (r *downloadReader) Read(b []byte) (int, error) {
+	n, err := r.r.Read(b)
+	if n > 0 {
+		r.written += int64(n)
+		r.progress(min(r.written, r.total), r.total)
+	}
+	return n, err
 }
 
 // open requests address and checks the response against the signed size.

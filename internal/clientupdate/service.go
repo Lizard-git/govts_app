@@ -32,16 +32,15 @@ type Snapshot struct {
 }
 
 type Service struct {
-	mu       sync.Mutex
-	view     Snapshot
-	u        *updater.Updater
-	profile  string
-	busy     func() bool
-	cancel   context.CancelFunc
-	root     context.Context
-	stop     context.CancelFunc
-	unlisten func()
-	startup  sync.Once
+	mu      sync.Mutex
+	view    Snapshot
+	u       *updater.Updater
+	profile string
+	busy    func() bool
+	cancel  context.CancelFunc
+	root    context.Context
+	stop    context.CancelFunc
+	startup sync.Once
 }
 
 func New(profile string, busy func() bool) *Service {
@@ -66,18 +65,19 @@ func Initialize(s *Service, app *application.App, version, publicKey string) err
 	if result, err := os.ReadFile(filepath.Join(s.profile, "update-recovery-result.txt")); err == nil {
 		s.view.Error = string(result)
 	}
-	if err := s.u.Init(updater.Config{CurrentVersion: version, Providers: []updater.Provider{&provider{key: key, client: client, busy: s.busy}}, PublicKey: key, Window: updater.WindowNone}); err != nil {
+	if err := s.u.Init(updater.Config{CurrentVersion: version, Providers: []updater.Provider{&provider{key: key, client: client, busy: s.busy, progress: s.downloadProgress}}, PublicKey: key, Window: updater.WindowNone}); err != nil {
 		return err
 	}
-	s.unlisten = app.Event.On(updater.EventDownloadProgress, func(e *application.CustomEvent) {
-		if p, ok := e.Data.(updater.Progress); ok {
-			s.mu.Lock()
-			s.view.Written, s.view.Total = p.Written, p.Total
-			s.mu.Unlock()
-		}
-	})
 	go s.loop()
 	return nil
+}
+
+func (s *Service) downloadProgress(written, total int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.view.Status == "downloading" {
+		s.view.Written, s.view.Total = written, total
+	}
 }
 
 // The loop only discovers releases; downloading is always user-initiated.
@@ -195,7 +195,7 @@ func (s *Service) Download() error {
 		return err
 	}
 	s.mu.Lock()
-	s.view.Written = 0
+	s.view.Written, s.view.Total = 0, 0
 	s.mu.Unlock()
 	err = s.u.DownloadAndInstall(ctx)
 	s.finish("ready", err)
@@ -252,9 +252,6 @@ func Stop(s *Service) {
 		s.stop()
 	}
 	s.Cancel()
-	if s.unlisten != nil {
-		s.unlisten()
-	}
 	// A staged download belongs to the swap helper only during Restart.
 	// Otherwise closing the client must not leave another EXE in Temp.
 	if s.u != nil && s.Snapshot().Status != "restarting" {
