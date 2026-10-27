@@ -104,7 +104,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 8 {
+	if version < 0 || version > 9 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -242,6 +242,18 @@ func (s *Store) initialize() error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migrate file lifecycle: %w", err)
+			}
+		}
+	}
+	if version < 9 {
+		for _, statement := range []string{
+			`ALTER TABLE chat_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE chat_message_files ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
+			`CREATE TABLE chat_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,message_id INTEGER NOT NULL UNIQUE REFERENCES chat_messages(id) ON DELETE CASCADE)`,
+			`PRAGMA user_version=9`,
+		} {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate chat deletion: %w", err)
 			}
 		}
 	}

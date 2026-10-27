@@ -23,6 +23,8 @@ type ChatRequestDTO struct {
 }
 
 type ChatMessageDTO struct {
+	Deleted       bool     `json:"deleted"`
+	Revision      string   `json:"revision"`
 	AttachmentIDs []string `json:"attachmentIds,omitempty"`
 	ID            string   `json:"id"`
 	SenderID      string   `json:"senderId"`
@@ -71,6 +73,12 @@ func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 		r.Operation = protocol.ChatDialogs
 	case "read":
 		r.Operation = protocol.ChatRead
+	case "changes":
+		r.Operation = protocol.ChatChanges
+	case "delete":
+		r.Operation = protocol.ChatDelete
+	case "delete-file":
+		r.Operation = protocol.ChatDeleteFile
 	default:
 		return ChatPageDTO{}, errors.New("неизвестная операция чата")
 	}
@@ -112,7 +120,7 @@ func (s *Service) Chat(request ChatRequestDTO) (ChatPageDTO, error) {
 	dto := ChatPageDTO{UserID: strconv.FormatInt(p.UserID, 10), LatestID: strconv.FormatInt(p.LatestID, 10), ReadID: strconv.FormatInt(p.ReadID, 10), Cursor: strconv.FormatInt(p.Cursor, 10), HasMore: p.HasMore, Messages: make([]ChatMessageDTO, 0, len(p.Messages)), Dialogs: make([]ChatDialogDTO, 0, len(p.Dialogs))}
 	dto.Unread = p.Unread
 	for _, m := range p.Messages {
-		dto.Messages = append(dto.Messages, ChatMessageDTO{ID: strconv.FormatInt(m.ID, 10), SenderID: strconv.FormatInt(m.SenderID, 10), RecipientID: strconv.FormatInt(m.RecipientID, 10), ChannelID: strconv.FormatInt(m.ChannelID, 10), ClientID: hex.EncodeToString(m.ClientID[:]), SenderName: m.SenderName, Text: m.Text, SentAtMS: m.SentAtMS})
+		dto.Messages = append(dto.Messages, ChatMessageDTO{Deleted: m.Deleted, Revision: strconv.FormatInt(m.Revision, 10), ID: strconv.FormatInt(m.ID, 10), SenderID: strconv.FormatInt(m.SenderID, 10), RecipientID: strconv.FormatInt(m.RecipientID, 10), ChannelID: strconv.FormatInt(m.ChannelID, 10), ClientID: hex.EncodeToString(m.ClientID[:]), SenderName: m.SenderName, Text: m.Text, SentAtMS: m.SentAtMS})
 		for _, id := range m.AttachmentIDs {
 			dto.Messages[len(dto.Messages)-1].AttachmentIDs = append(dto.Messages[len(dto.Messages)-1].AttachmentIDs, strconv.FormatInt(id, 10))
 		}

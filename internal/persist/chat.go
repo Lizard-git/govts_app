@@ -35,7 +35,7 @@ func migrateChat(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-const chatColumns = `id,COALESCE(channel_id,0),sender_id,COALESCE(recipient_id,0),client_id,sender_name,text,sent_at_ms,(SELECT COALESCE(group_concat(attachment_id,','),'') FROM (SELECT attachment_id FROM chat_message_files WHERE message_id=chat_messages.id ORDER BY position))`
+const chatColumns = `id,COALESCE(channel_id,0),sender_id,COALESCE(recipient_id,0),client_id,sender_name,text,sent_at_ms,(SELECT COALESCE(group_concat(attachment_id,','),'') FROM (SELECT attachment_id FROM chat_message_files WHERE message_id=chat_messages.id AND hidden=0 ORDER BY position)),deleted,COALESCE((SELECT seq FROM chat_changes WHERE message_id=chat_messages.id),0)`
 
 type chatScanner interface{ Scan(...any) error }
 
@@ -43,7 +43,7 @@ func scanChat(row chatScanner) (domain.ChatMessage, error) {
 	var m domain.ChatMessage
 	var clientID []byte
 	var attachments string
-	err := row.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.RecipientID, &clientID, &m.SenderName, &m.Text, &m.SentAtMS, &attachments)
+	err := row.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.RecipientID, &clientID, &m.SenderName, &m.Text, &m.SentAtMS, &attachments, &m.Deleted, &m.Revision)
 	if err != nil {
 		return m, err
 	}
@@ -51,7 +51,7 @@ func scanChat(row chatScanner) (domain.ChatMessage, error) {
 		return m, errors.New("invalid stored message identity")
 	}
 	copy(m.ClientID[:], clientID)
-	if attachments != "" {
+	if attachments != "" && !m.Deleted {
 		for _, str := range strings.Split(attachments, ",") {
 			id, e := strconv.ParseInt(str, 10, 64)
 			if e != nil {
@@ -95,7 +95,7 @@ func (s *Store) SaveChatFiles(ctx context.Context, user int64, name string, targ
 	}
 	m, err := scanChat(tx.QueryRowContext(ctx, `SELECT `+chatColumns+` FROM chat_messages WHERE sender_id=? AND client_id=?`, user, clientID[:]))
 	if err == nil {
-		if !slices.Equal(m.AttachmentIDs, attachments) || m.Text != text || (target.Kind == domain.ChatChannel && (m.ChannelID != target.ID || m.RecipientID != 0)) || (target.Kind == domain.ChatDirect && (m.RecipientID != target.ID || m.ChannelID != 0)) {
+		if (m.Revision == 0 && (!slices.Equal(m.AttachmentIDs, attachments) || m.Text != text)) || (target.Kind == domain.ChatChannel && (m.ChannelID != target.ID || m.RecipientID != 0)) || (target.Kind == domain.ChatDirect && (m.RecipientID != target.ID || m.ChannelID != 0)) {
 			return m, domain.ChatRejection("идентификатор уже использован для другого сообщения")
 		}
 		return m, tx.Commit()
@@ -175,7 +175,7 @@ func (s *Store) ChatHistory(ctx context.Context, user int64, target domain.ChatT
 	}
 	unreadArgs := append(append([]any(nil), args...), user, p.ReadID, p.LatestID)
 	var unread int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_messages WHERE `+where+` AND sender_id!=? AND id>? AND id<=?`, unreadArgs...).Scan(&unread); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_messages WHERE `+where+` AND sender_id!=? AND deleted=0 AND id>? AND id<=?`, unreadArgs...).Scan(&unread); err != nil {
 		return p, err
 	}
 	if unread > int64(^uint32(0)) {
@@ -224,7 +224,7 @@ func (s *Store) ChatDialogs(ctx context.Context, user, cursor int64) (domain.Cha
 	p := domain.ChatPage{UserID: user, Cursor: cursor}
 	rows, err := s.db.QueryContext(ctx, `WITH peers AS (SELECT CASE WHEN user_low=? THEN user_high ELSE user_low END AS peer FROM chat_dialogs WHERE user_low=? OR user_high=?)
 	 SELECT u.id,u.display_name,COALESCE((SELECT MAX(id) FROM chat_messages WHERE (sender_id=? AND recipient_id=u.id) OR (sender_id=u.id AND recipient_id=?)),0),COALESCE(r.message_id,0),
-	 (SELECT COUNT(*) FROM chat_messages WHERE sender_id=u.id AND recipient_id=? AND id>COALESCE(r.message_id,0))
+	 (SELECT COUNT(*) FROM chat_messages WHERE sender_id=u.id AND recipient_id=? AND deleted=0 AND id>COALESCE(r.message_id,0))
 	 FROM peers JOIN users u ON u.id=peers.peer LEFT JOIN chat_reads r ON r.user_id=? AND r.kind=2 AND r.target_id=u.id WHERE u.id>? ORDER BY u.id LIMIT 17`, user, user, user, user, user, user, user, cursor)
 	if err != nil {
 		return p, err

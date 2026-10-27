@@ -66,6 +66,8 @@ func ValidateChatText(text string) error {
 }
 
 type ChatMessage struct {
+	Deleted       bool
+	Revision      int64
 	AttachmentIDs []int64
 	ID            int64
 	ChannelID     int64

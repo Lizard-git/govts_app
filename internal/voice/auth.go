@@ -57,7 +57,7 @@ const (
 
 // AuthInit.Sequence carries the requested protocol/server compatibility level,
 // not the desktop executable's independently incremented release version.
-const minimumSecureClientVersion appversion.Number = 4<<24 | 1<<16 // 4.1.0: file transfer and chat v2
+const minimumSecureClientVersion appversion.Number = 4<<24 | 2<<16 // 4.2.0: chat v3 with author deletion
 
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.
