@@ -13,6 +13,7 @@ export const fileSize = (bytes: number) => {
     return `${unit === 0 ? bytes : (bytes / 1024 ** unit).toFixed(1)} ${units[unit]}`;
 };
 const metadataTTL = 30_000;
+export const fileBusy = (error: unknown) => /HTTP 429|\b(?:busy|preview_busy|verification_busy)\b/.test(String(error));
 const metadataCache = new Map<string, {promise: Promise<FileAttachment>; expires: number}>();
 let metadataContext = "";
 const metadataBatches = new Map<string, Map<string, {resolve: (file: FileAttachment) => void; reject: (error: unknown) => void}>>();
@@ -57,7 +58,7 @@ export function useTransfers(context: string, connected: boolean, active: boolea
 
 export function TransferQueue({context, tasks, report}: {context: string; tasks: FileTask[]; report: (error: string) => void}) {
     const {m} = useLocale();
-    const control = async (id: string, action: string) => {try {await desktopAPI.fileControl(context, id, action);} catch(e) {report(String(e));}};
+    const control = async (id: string, action: string) => {try {await desktopAPI.fileControl(context, id, action);} catch(e) {report(fileBusy(e) ? m.files.busy : m.files.requestFailed);}};
     const visibleTasks = tasks.filter((task) => task.state !== "done" && task.state !== "cancelled");
     if (!visibleTasks.length) return null;
     return <div className="file-queue" aria-label={m.files.queue}>
@@ -124,9 +125,9 @@ export function AttachmentCard({context, id}: {context: string; id: string}) {
     const card = useRef<HTMLDivElement>(null);
     const [expanded, setExpanded] = useState(false);
     const [attempt, setAttempt] = useState(0);
-    const save = () => {setError(""); void desktopAPI.fileSave(context, id).catch((e) => {setError(String(e)); setAttempt((value) => value + 1);});};
+    const save = () => {setError(""); void desktopAPI.fileSave(context, id).catch((e) => setError(fileBusy(e) ? m.files.busy : m.files.requestFailed));};
     useEffect(() => {
-        let disposed = false, busy = false;
+        let disposed = false, busy = false, loaded = false;
         setFile(undefined); setPreview(""); setError("");
         const refresh = async (retry: boolean) => {
             if (busy) return;
@@ -134,16 +135,18 @@ export function AttachmentCard({context, id}: {context: string; id: string}) {
             try {
                 const next = await attachmentMetadata(context, id, retry);
                 if (!disposed) {
+                    loaded = true;
                     setFile(next);
+                    setError("");
                     if (next.deleted) {setExpanded(false); setPreview("");}
                 }
-            } catch (e) {if (!disposed) setError(String(e));}
+            } catch (e) {if (!disposed && !(loaded && fileBusy(e))) setError(fileBusy(e) ? m.files.busy : m.files.requestFailed);}
             finally {busy = false;}
         };
         void refresh(attempt > 0);
         const timer = window.setInterval(() => void refresh(false), metadataTTL);
         return () => {disposed = true; window.clearInterval(timer);};
-    }, [context, id, attempt]);
+    }, [context, id, attempt, m.files.busy, m.files.requestFailed]);
     const image = !!file && !file.deleted && /\.(png|jpe?g|webp)$/i.test(file.name);
     useEffect(() => {
         setVisible(false);

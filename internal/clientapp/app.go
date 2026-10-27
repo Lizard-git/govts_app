@@ -66,6 +66,7 @@ type App struct {
 	fileTransportMu     sync.Mutex
 	fileTransport       *http.Transport
 	fileTransportKey    string
+	fileRequestSlots    chan struct{}
 	lifetimeCtx         context.Context
 	cancelLifetime      context.CancelFunc
 	state               *voiceclient.State

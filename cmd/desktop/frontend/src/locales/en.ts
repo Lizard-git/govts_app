@@ -118,6 +118,7 @@ export const en = {
         qualityLimit: "Quality limitation",
     },
     files: {
+        busy: "The server is busy. Try again in a few seconds.", requestFailed: "The file operation failed. Please try again.",
         previewLoading: "Loading thumbnail…", previewUnavailable: "Thumbnail unavailable",
         limits: "Limits and retention", attachments: "Attachments", noAttachments: "No attachments yet",
         admin: "File sharing", maxMiB: "File size, MiB", userGiB: "Account quota, GiB", serverGiB: "Server quota, GiB", freeGiB: "Disk reserve, GiB",

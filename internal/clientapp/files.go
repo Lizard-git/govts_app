@@ -524,6 +524,37 @@ func (a *App) fileRequest(ctx context.Context, expected, method, path string, bo
 			return nil, func() {}, err
 		}
 	}
+	for attempt := 0; ; attempt++ {
+		response, close, err := a.fileRequestAuthenticated(ctx, expected, method, path, body, headers)
+		var status *fileHTTPError
+		if !errors.As(err, &status) || status.status != http.StatusTooManyRequests || attempt >= 4 || (body != nil && !replayable) {
+			return response, close, err
+		}
+		timer := time.NewTimer(time.Duration(1<<attempt) * 300 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, func() {}, ctx.Err()
+		case <-timer.C:
+		}
+		if replayable {
+			if _, err = seeker.Seek(start, io.SeekStart); err != nil {
+				return nil, func() {}, err
+			}
+		}
+	}
+}
+
+func (a *App) fileRequestAuthenticated(ctx context.Context, expected, method, path string, body io.Reader, headers map[string]string) (*http.Response, func(), error) {
+	var start int64
+	seeker, replayable := body.(io.Seeker)
+	if replayable {
+		var err error
+		start, err = seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return nil, func() {}, err
+		}
+	}
 	response, close, err := a.fileRequestOnce(ctx, expected, method, path, body, headers)
 	var httpErr *fileHTTPError
 	if !errors.As(err, &httpErr) || httpErr.status != 401 || ctx.Err() != nil {
@@ -557,13 +588,29 @@ func (a *App) fileRequestOnce(ctx context.Context, expected, method, path string
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	stop := context.AfterFunc(connection.connContext, cancel)
+	// Metadata, previews and transfers share a budget below the server's per-account limit.
+	a.fileTransportMu.Lock()
+	if a.fileRequestSlots == nil {
+		a.fileRequestSlots = make(chan struct{}, 2)
+	}
+	slots := a.fileRequestSlots
+	a.fileTransportMu.Unlock()
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		stop()
+		cancel()
+		return nil, func() {}, ctx.Err()
+	}
 	client, base, credential, closeClient, err := a.fileClient(ctx, expected)
 	if err != nil {
+		<-slots
 		stop()
 		cancel()
 		return nil, func() {}, err
 	}
-	cleanup := func() { closeClient(); stop(); cancel() }
+	var release sync.Once
+	cleanup := func() { release.Do(func() { closeClient(); stop(); cancel(); <-slots }) }
 	request, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
 		cleanup()
