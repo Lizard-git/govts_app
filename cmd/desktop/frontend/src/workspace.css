@@ -124,16 +124,8 @@
 .participant-row { min-height: 28px; font-size: 0.625rem; }
 .participant-row .avatar { width: 20px; height: 20px; border: 1px solid var(--accent); color: var(--text); background: var(--card-strong); font-weight: 400; }
 .participant-row.speaking { color: var(--accent); }
-.channel-stage { display: grid; grid-template-rows: 65px 150px minmax(0, 1fr) 72px; min-width: 0; min-height: 0; padding: 0 16px 16px; overflow: hidden; }
-.channel-stage.compact-stage:not(.connection-pending) { grid-template-rows: 65px 64px minmax(0, 1fr) 72px; }
-.compact-stage .participants-strip { align-items: center; justify-content: flex-start; padding: 12px 16px; }
-.compact-stage .stage-participant { width: auto; max-width: 100%; flex: 0 1 auto; flex-direction: row; align-items: center; gap: 10px; }
-.compact-stage .stage-avatar { flex: 0 0 32px; width: 32px; height: 32px; font-size: .875rem; }
-.compact-stage .stage-label { min-width: 0; }
-.compact-stage .stage-name { display: block; font-size: .75rem; text-align: left; }
-.compact-stage .stage-voice:empty { display: none; }
-.compact-stage .stage-empty { margin: 0; }
-.compact-stage .stage-scene { opacity: .3; }
+.channel-stage { display: grid; grid-template-rows: 65px 112px minmax(0, 1fr) 72px; min-width: 0; min-height: 0; padding: 0 16px 16px; overflow: hidden; }
+.channel-stage.has-screen-stage { grid-template-rows: 65px 128px minmax(0, 1fr) 72px; }
 .channel-stage-heading { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 0; margin: 8px 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
 .channel-heading-icon { display: grid; width: 32px; height: 32px; flex-shrink: 0; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: var(--accent-blue); background: var(--card-strong); }
 .channel-stage-heading > div { min-width: 0; flex: 1; }
@@ -180,11 +172,11 @@
 .stage-stars { inset: 0; }
 .stage-stars i { border-radius: 50%; background: var(--text); transform: translate(-50%, -50%); }
 .stage-star-bright { box-shadow: 0 0 1.6cqh color-mix(in srgb, var(--text) 70%, transparent); }
-.participants-strip { position: relative; display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: center; gap: 20px; width: max-content; min-width: 100%; height: 100%; padding: 28px 18px; }
+.participants-strip { position: relative; display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: center; gap: 18px; width: max-content; min-width: 100%; height: 100%; padding: 14px 18px; }
 .stage-participant { z-index: 1; display: flex; width: 80px; flex: 0 0 80px; flex-direction: column; align-items: center; gap: 7px; }
 .stage-participant-group { display: flex; flex: 0 0 auto; align-items: flex-start; gap: 14px; }
 .stage-screen { z-index: 1; display: flex; flex: 0 0 110px; width: 110px; flex-direction: column; align-items: center; gap: 7px; }
-.stage-screen-icon { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--accent-blue); border-radius: 50%; color: var(--accent-blue); background: var(--card-strong); }
+.stage-screen-icon { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid var(--accent-blue); border-radius: 50%; color: var(--accent-blue); background: var(--card-strong); }
 .stage-screen-icon svg { width: 25px; height: 25px; }
 .stage-screen-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 0.625rem; }
 .stage-screen button { padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--card-strong); font-size: 0.625rem; cursor: pointer; }
@@ -202,7 +194,7 @@
 .updates-panel small { display: block; margin: 0 0 12px; color: var(--muted); font-size: 0.75rem; }
 .update-dialog { width: min(560px, calc(100vw - 32px)); }
 .update-dialog .settings-card { margin: 0 0 14px; }
-.stage-avatar { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid var(--muted); border-radius: 50%; color: var(--text); background: var(--card-strong); font-size: 1.125rem; }
+.stage-avatar { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid var(--muted); border-radius: 50%; color: var(--text); background: var(--card-strong); font-size: 1rem; }
 .stage-participant.speaking .stage-avatar { border: 2px solid var(--accent); box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 15%, transparent); }
 .stage-participant.muted .stage-avatar { border-color: var(--danger); }
 .stage-name { width: 100%; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 0.625rem; }
@@ -244,7 +236,7 @@
 .screen-self-preview { display: block; width: 100%; aspect-ratio: 16 / 9; min-height: 115px; object-fit: contain; background: #000; }
 .channel-stage .screen-card > div strong { color: var(--text); font-weight: 500; }
 .screen-card small, .screen-empty, .screen-profile > span { color: var(--muted); }
-.channel-audio-dock { grid-row: 4; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
+.channel-audio-dock { grid-row: -2; display: flex; align-items: center; justify-content: center; min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
 .channel-stage > .empty-state { grid-row: 1 / 4; align-self: center; }
 .channel-stage.connection-pending { grid-template-rows: minmax(0, 1fr); }
 .connection-progress-wrap { grid-row: 1 / 4; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(140px, 1fr) minmax(100px, 180px); padding-top: 16px; }
