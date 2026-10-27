@@ -6,7 +6,7 @@ export type PendingMessage = {clientId: string; text: string; attachmentIds?: st
 export type Conversation = {
     messages: ChatMessageDTO[]; pending: PendingMessage[]; draft: string;
     loaded: boolean; loading: boolean; error: string; hasOlder: boolean;
-    cursor: string; readId: string; unread: number; olderWindow: boolean; newMessages: boolean;
+    cursor: string; changeCursor: string; readId: string; unread: number; olderWindow: boolean; newMessages: boolean;
 };
 const keyOf = (t: ChatTarget) => `${t.kind}:${t.id}`;
 const compare = (a: string, b: string) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
@@ -132,6 +132,8 @@ export class ChatStore {
             if (epoch !== this.epoch || !this.connected) return;
             await Promise.all([...this.watched.values()].map(({target}) => this.sync(target)));
             if (epoch !== this.epoch || !this.connected) return;
+            await Promise.all([...this.watched.values()].map(({target}) => this.syncChanges(target)));
+            if (epoch !== this.epoch || !this.connected) return;
             await this.refreshDialogs();
         } finally { this.scheduled = false; }
     }
@@ -147,7 +149,7 @@ export class ChatStore {
                 if (evict) this.conversations.delete(evict[0]);
                 else break; // Only pinned drafts, sends and in-flight requests remain.
             }
-            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
+            c = {messages: [], pending: [], draft: "", loaded: false, loading: false, error: "", hasOlder: false, cursor: "0", changeCursor: "0", readId: "0", unread: 0, olderWindow: false, newMessages: false};
             this.conversations.set(key, c);
             c.draft = this.restoredDrafts[key] ?? "";
             delete this.restoredDrafts[key];
@@ -193,7 +195,7 @@ export class ChatStore {
         this.requestTail = result.catch(() => undefined);
         return result;
     }
-    private merge(c: Conversation, page: ChatPageDTO, history = false, older = false) {
+    private merge(c: Conversation, page: ChatPageDTO, history = false, older = false, changes = false) {
         const messages = new Map(c.messages.map((m) => [m.id, m]));
         const confirmed = new Set((page.messages ?? []).filter((m) => m.senderId === this.userId).map((m) => m.clientId));
         for (const message of page.messages ?? []) if (message.senderId === this.userId && message.attachmentIds?.length) this.confirmAttachments(message.attachmentIds);
@@ -202,6 +204,8 @@ export class ChatStore {
         const frozen = c.olderWindow && !older;
         let received = false;
         for (const m of page.messages ?? []) {
+            const existing = messages.get(m.id);
+            if ((changes && !existing) || (existing && compare(existing.revision ?? "0", m.revision ?? "0") > 0)) continue;
             const fresh = !messages.has(m.id);
             if (fresh && c.loaded && !older && m.senderId !== this.userId && compare(m.id, c.cursor) > 0) received = true;
             if (!frozen || messages.has(m.id)) messages.set(m.id, m);
@@ -224,6 +228,12 @@ export class ChatStore {
         this.busy.add(key); c.loading = true; this.notify();
         try {
             if (!c.loaded || older) {
+                if (!c.loaded) {
+                    // Capture changes before the history snapshot, so first open neither
+                    // replays the entire deletion log nor misses a concurrent deletion.
+                    const watermark = await this.request("changes", target, {forward: true});
+                    c.changeCursor = watermark.cursor;
+                }
                 let cursor = older ? c.messages[0]?.id ?? "0" : "0";
                 for (let i = 0; i < (older ? 2 : 1); i++) {
                     if (epoch !== this.epoch) break;
@@ -244,6 +254,18 @@ export class ChatStore {
             c.error = "";
         } catch (e) { if (!this.disposed && epoch === this.epoch) c.error = chatError(e); }
         finally { c.loading = false; this.busy.delete(key); this.notify(); }
+    }
+
+    private async syncChanges(target: ChatTarget) {
+        const c = this.conversation(target);
+        if (!c.loaded || target.id === "0") return;
+        try {
+            const changes = await this.request("changes", target, {cursor: c.changeCursor});
+            this.merge(c, changes, false, false, true);
+            c.changeCursor = maxID(c.changeCursor, changes.cursor);
+            if (changes.hasMore) this.invalidate();
+            this.notify();
+        } catch (e) {if (!this.disposed) {c.error = chatError(e); this.notify();}}
     }
 
     async refreshDialogs(more = false) {
@@ -301,6 +323,18 @@ export class ChatStore {
         catch (e) { if (!this.disposed) { pending.state = "error"; pending.error = chatError(e); } }
         finally { this.notify(); }
         this.invalidate();
+    }
+
+    async remove(target: ChatTarget, id: string, attachmentId?: string) {
+        const c = this.conversation(target);
+        const message = c.messages.find((entry) => entry.id === id);
+        if (!message || message.senderId !== this.userId || message.deleted) return;
+        try {
+            const page = await this.request(attachmentId ? "delete-file" : "delete", target, {cursor: id, ...(attachmentId ? {attachmentIds: [attachmentId]} : {})});
+            this.merge(c, page);
+            c.error = "";
+        } catch (e) {if (!this.disposed) c.error = chatError(e);}
+        finally {this.notify(); this.invalidate();}
     }
 
     async markRead(target: ChatTarget) {

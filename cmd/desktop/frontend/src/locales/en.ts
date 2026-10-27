@@ -121,7 +121,7 @@ export const en = {
         busy: "The server is busy. Try again in a few seconds.", requestFailed: "The file operation failed. Please try again.",
         previewLoading: "Loading thumbnail…", previewUnavailable: "Thumbnail unavailable",
         limits: "Limits and retention", attachments: "Attachments", noAttachments: "No attachments yet",
-        admin: "File sharing", maxMiB: "File size, MiB", userGiB: "Account quota, GiB", serverGiB: "Server quota, GiB", freeGiB: "Disk reserve, GiB",
+        admin: "Files", maxMiB: "File size, MiB", userGiB: "Account quota, GiB", serverGiB: "Server quota, GiB", freeGiB: "Disk reserve, GiB",
         userKiB: "Account rate, KiB/s", serverKiB: "Server rate, KiB/s", parallel: "Concurrent operations", ttlHours: "Unfinished upload retention, hours", retentionDays: "Attachment retention, days (0 — unlimited)",
         allowUpload: "Allow uploads", allowDownload: "Allow downloads", used: "Used", free: "Free", active: "Operations",
         delete: "Delete", confirmDelete: "Delete this attachment from the server?",
@@ -135,6 +135,7 @@ export const en = {
         states: {verifying: "Verifying", queued: "Queued", running: "Transferring", ready: "Ready to send", paused: "Paused", error: "Error"},
     },
     chat: {
+        actions: "Message actions", copyText: "Copy text", copyFailed: "Could not copy text", deleteMessage: "Delete", deleted: "Message deleted",
         online: "Online",
         offline: "Offline",
         retry: "Retry",

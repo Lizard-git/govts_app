@@ -6,7 +6,7 @@ vi.mock("../../api", () => ({desktopAPI: {chat: vi.fn(), fileQueue: vi.fn(), fil
 const channel: ChatTarget = {kind: "channel", id: "1"};
 const direct: ChatTarget = {kind: "direct", id: "2"};
 const message = (id: number, senderId = "2", clientId = `client-${id}`): ChatMessageDTO => ({
-    id: String(id), senderId, recipientId: "1", channelId: "0", clientId, senderName: "bob", text: `message ${id}`, sentAtMs: id,
+    deleted: false, revision: "0", id: String(id), senderId, recipientId: "1", channelId: "0", clientId, senderName: "bob", text: `message ${id}`, sentAtMs: id,
 });
 const page = (extra: Partial<ChatPageDTO> = {}): ChatPageDTO => ({userId: "1", latestId: "0", readId: "0", cursor: "0", unread: 0, hasMore: false, messages: [], dialogs: [], ...extra});
 let store: ChatStore;
@@ -25,13 +25,36 @@ beforeEach(() => {
 afterEach(() => { store.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("chat drafts and confirmations", () => {
+    it("deletes only own messages and merges the server tombstone", async () => {
+        const c = store.conversation(direct);
+        c.messages = [message(1, "1"), message(2, "2")];
+        await store.remove(direct, "2");
+        expect(chat).not.toHaveBeenCalled();
+        chat.mockResolvedValueOnce(page({messages: [{...message(1, "1"), text: "", deleted: true, revision: "5"}]}));
+        await store.remove(direct, "1");
+        expect(chat.mock.calls[0][0]).toMatchObject({operation: "delete", cursor: "1", kind: "direct", targetId: "2"});
+        expect(c.messages[0].deleted).toBe(true);
+        expect(c.messages[0].text).toBe("");
+        await store.remove(direct, "1");
+        expect(chat).toHaveBeenCalledTimes(1);
+    });
+    it("deletes a selected attachment without removing the message text", async () => {
+        const c = store.conversation(direct);
+        c.messages = [{...message(1, "1"), attachmentIds: ["17", "18"]}];
+        chat.mockResolvedValueOnce(page({messages: [{...message(1, "1"), attachmentIds: ["18"], revision: "6"}]}));
+        await store.remove(direct, "1", "17");
+        expect(chat.mock.calls[0][0]).toMatchObject({operation: "delete-file", cursor: "1", attachmentIds: ["17"]});
+        expect(c.messages[0].attachmentIds).toEqual(["18"]);
+        expect(c.messages[0].text).toBe("message 1");
+    });
     it("finishes attachments when history confirms a send whose acknowledgement was lost", async () => {
         chat.mockRejectedValueOnce(new Error("lost acknowledgement"));
         await store.send(direct, "photo", undefined, ["17"]);
         const pending = store.conversation(direct).pending[0];
+        chat.mockResolvedValueOnce(page()); // Change watermark precedes the initial history.
         chat.mockResolvedValueOnce(page({messages: [{...message(1, "1", pending.clientId), attachmentIds: ["17"]}], cursor: "1"}));
         const sync = store.sync(direct);
-        await vi.advanceTimersByTimeAsync(1000); await sync;
+        await vi.advanceTimersByTimeAsync(2000); await sync;
         expect(store.conversation(direct).pending).toEqual([]);
         expect(store.confirmedAttachments.has("17")).toBe(true);
         expect(desktopAPI.fileAttached).toHaveBeenCalledWith("context", ["17"]);
@@ -96,8 +119,9 @@ describe("history windows", () => {
         const sync = store.sync(direct); await vi.advanceTimersByTimeAsync(1000); await sync;
         expect(c.cursor).toBe("1001"); expect(c.newMessages).toBe(true);
         expect(c.messages[c.messages.length - 1]?.id).toBe("996");
+        chat.mockResolvedValueOnce(page());
         chat.mockResolvedValueOnce(page({messages: [message(1002), message(1001)], cursor: "1001", latestId: "1002"}));
-        const latest = store.latest(direct); await vi.advanceTimersByTimeAsync(1000); await latest;
+        const latest = store.latest(direct); await vi.advanceTimersByTimeAsync(2000); await latest;
         expect(c.messages.map((m) => m.id)).toEqual(["1001", "1002"]);
         expect(c.olderWindow).toBe(false); expect(c.newMessages).toBe(false);
     });
@@ -115,12 +139,12 @@ describe("history windows", () => {
 
 describe("session lifecycle", () => {
     it("cancels a queued send before reconnect and preserves its original text and clientId", async () => {
-        await store.sync(channel);
+        const initial = store.sync(channel); await vi.advanceTimersByTimeAsync(1000); await initial;
         const send = store.send(direct, "keep me");
         await vi.advanceTimersByTimeAsync(0);
         store.setConnected(false); store.setConnected(true);
         await vi.advanceTimersByTimeAsync(1000); await send;
-        expect(chat).toHaveBeenCalledTimes(1);
+        expect(chat).toHaveBeenCalledTimes(2);
         expect(store.conversation(direct).pending[0]).toMatchObject({text: "keep me", state: "error"});
     });
     it("ignores an in-flight history response from the previous session", async () => {
@@ -148,14 +172,46 @@ describe("session lifecycle", () => {
 });
 
 describe("request scheduler", () => {
+    it("captures the change watermark before history and catches deletions concurrent with opening", async () => {
+        store.watch(channel);
+        chat.mockImplementation(async (request) => {
+            if (request.operation === "changes" && request.forward) return page({cursor: "5000"});
+            if (request.operation === "history") return page({cursor: "99", latestId: "99", messages: [message(99)]});
+            if (request.operation === "changes") return page({cursor: "5001", messages: [{...message(99), text: "", deleted: true, revision: "5001"}]});
+            return page();
+        });
+        tick(); await vi.advanceTimersByTimeAsync(3000);
+        const requests = chat.mock.calls.map(([request]) => request);
+        expect(requests[0]).toMatchObject({operation: "changes", forward: true, cursor: "0"});
+        expect(requests[1].operation).toBe("history");
+        expect(requests[2]).toMatchObject({operation: "changes", forward: false, cursor: "5000"});
+        const c = store.conversation(channel);
+        expect(c.messages[0].deleted).toBe(true);
+        expect(c.changeCursor).toBe("5001");
+    });
+    it("recovers deletion of an old message without adding unseen messages or accepting stale history", async () => {
+        const c = store.conversation(channel);
+        c.loaded = true; c.cursor = "100"; c.messages = [message(1)];
+        store.watch(channel);
+        chat.mockImplementation(async (request) => request.operation === "changes"
+            ? page({cursor: "9", messages: [{...message(1), deleted: true, text: "", revision: "9"}, {...message(99), deleted: true, text: "", revision: "8"}]})
+            : page({cursor: "100", latestId: "100"}));
+        tick(); await vi.advanceTimersByTimeAsync(2000);
+        expect(c.changeCursor).toBe("9"); expect(c.cursor).toBe("100");
+        expect(c.messages.map((entry) => entry.id)).toEqual(["1"]);
+        expect(c.messages[0].deleted).toBe(true);
+        chat.mockResolvedValueOnce(page({messages: [message(1)], cursor: "100"}));
+        const sync = store.sync(channel); await vi.advanceTimersByTimeAsync(1000); await sync;
+        expect(c.messages[0].deleted).toBe(true);
+    });
     it("coalesces notifications and duplicate watchers into one sync pass", async () => {
         store.watch(channel); store.watch(channel);
         for (let i = 0; i < 100; i++) store.invalidate();
-        tick(); await vi.advanceTimersByTimeAsync(1000);
-        expect(chat.mock.calls.map(([r]) => r.operation)).toEqual(["history", "dialogs"]);
+        tick(); await vi.advanceTimersByTimeAsync(3000);
+        expect(chat.mock.calls.map(([r]) => r.operation)).toEqual(["changes", "history", "changes", "dialogs"]);
         for (let i = 0; i < 100; i++) store.invalidate();
         tick(); await vi.advanceTimersByTimeAsync(0);
-        expect(chat).toHaveBeenCalledTimes(2);
+        expect(chat).toHaveBeenCalledTimes(4);
     });
     it("coalesces read markers to the greatest visible ID", async () => {
         store.watch(channel);
@@ -171,10 +227,11 @@ describe("request scheduler", () => {
         await store.refreshDialogs(); expect(chat).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(59999); await store.sync(channel);
         expect(chat).toHaveBeenCalledTimes(1);
-        await vi.advanceTimersByTimeAsync(1); await store.sync(channel);
-        expect(chat).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        const resumed = store.sync(channel); await vi.advanceTimersByTimeAsync(1000); await resumed;
+        expect(chat).toHaveBeenCalledTimes(3);
         const dialogs = store.refreshDialogs(); await vi.advanceTimersByTimeAsync(999);
-        expect(chat).toHaveBeenCalledTimes(2);
-        await vi.advanceTimersByTimeAsync(1); await dialogs; expect(chat).toHaveBeenCalledTimes(3);
+        expect(chat).toHaveBeenCalledTimes(3);
+        await vi.advanceTimersByTimeAsync(1); await dialogs; expect(chat).toHaveBeenCalledTimes(4);
     });
 });

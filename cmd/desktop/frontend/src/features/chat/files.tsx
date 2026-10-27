@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useLayoutEffect, useRef, useState} from "react";
 import {PhotoViewer} from "./PhotoViewer";
 import {desktopAPI, type FileAttachment, type FileTask} from "../../api";
 import {useLocale} from "../../locales/Locale";
@@ -12,6 +12,43 @@ export const fileSize = (bytes: number) => {
     const unit = bytes < 1024 ? 0 : Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
     return `${unit === 0 ? bytes : (bytes / 1024 ** unit).toFixed(1)} ${units[unit]}`;
 };
+
+function AttachmentName({name}: {name: string}) {
+    const root = useRef<HTMLElement>(null);
+    const measure = useRef<HTMLSpanElement>(null);
+    const [display, setDisplay] = useState(name);
+    useLayoutEffect(() => {
+        let live = true;
+        const fit = () => {
+            const node = measure.current;
+            if (!node || !root.current?.clientWidth) return;
+            const height = parseFloat(getComputedStyle(node).lineHeight) * 2 + .5;
+            const fits = (text: string) => {node.textContent = text; return node.getBoundingClientRect().height <= height;};
+            if (fits(name)) {setDisplay(name); return;}
+            const chars = Array.from(name);
+            const shortened = (keep: number) => {
+                const tail = Math.max(1, Math.ceil(keep * .45));
+                return chars.slice(0, keep - tail).join("") + "…" + chars.slice(-tail).join("");
+            };
+            let low = 1, high = chars.length - 1, best = shortened(1);
+            while (low <= high) {
+                const middle = Math.floor((low + high) / 2), text = shortened(middle);
+                if (fits(text)) {best = text; low = middle + 1;} else high = middle - 1;
+            }
+            setDisplay(best);
+        };
+        fit();
+        const observer = new ResizeObserver(fit);
+        if (root.current) observer.observe(root.current);
+        void document.fonts.ready.then(() => {if (live) fit();});
+        return () => {live = false; observer.disconnect();};
+    }, [name]);
+    return <strong ref={root} className="file-card-name" title={name} aria-label={name}>
+        <span className="file-name-intrinsic" aria-hidden="true">{name}</span>
+        <span className="file-name-text" aria-hidden="true">{display}</span>
+        <span ref={measure} className="file-name-measure" aria-hidden="true"/>
+    </strong>;
+}
 const metadataTTL = 30_000;
 export const fileBusy = (error: unknown) => /HTTP 429|\b(?:busy|preview_busy|verification_busy)\b/.test(String(error));
 const metadataCache = new Map<string, {promise: Promise<FileAttachment>; expires: number}>();
@@ -114,7 +151,7 @@ export async function stageFiles(context: string, target: ChatTarget, files: Fil
     }
 }
 
-export function AttachmentCard({context, id}: {context: string; id: string}) {
+export function AttachmentCard({context, id, revision = "0"}: {context: string; id: string; revision?: string}) {
     const {m} = useLocale();
     const [file, setFile] = useState<FileAttachment>();
     const [error, setError] = useState("");
@@ -143,10 +180,10 @@ export function AttachmentCard({context, id}: {context: string; id: string}) {
             } catch (e) {if (!disposed && !(loaded && fileBusy(e))) setError(fileBusy(e) ? m.files.busy : m.files.requestFailed);}
             finally {busy = false;}
         };
-        void refresh(attempt > 0);
+        void refresh(attempt > 0 || revision !== "0");
         const timer = window.setInterval(() => void refresh(false), metadataTTL);
         return () => {disposed = true; window.clearInterval(timer);};
-    }, [context, id, attempt, m.files.busy, m.files.requestFailed]);
+    }, [context, id, revision, attempt, m.files.busy, m.files.requestFailed]);
     const image = !!file && !file.deleted && /\.(png|jpe?g|webp)$/i.test(file.name);
     useEffect(() => {
         setVisible(false);
@@ -181,12 +218,12 @@ export function AttachmentCard({context, id}: {context: string; id: string}) {
             <button className="file-image-download" type="button" title={m.files.save} aria-label={`${m.files.save}: ${file.name}`} onClick={save}><Icon name="download"/></button>
         </div>}
         {!image && <div className="file-card-summary"><Icon name="file"/>
-            <div className="file-card-info"><strong title={file?.name}>{file?.name || `#${id}`}</strong>
+            <div className="file-card-info"><AttachmentName name={file?.name || `#${id}`}/>
                 {file && <small>{fileSize(file.size)}</small>}
             </div>
         </div>}
         {file?.deleted && <span className="file-status-badge">{m.files.deleted}</span>}
-        {file && !file.deleted && !image && <div className="file-card-actions"><button className="file-action-button" type="button" onClick={save}><Icon name="download"/>{m.files.save}</button></div>}
+        {file && !file.deleted && !image && <button className="file-download-button" type="button" title={m.files.save} aria-label={`${m.files.save}: ${file.name}`} onClick={save}><Icon name="download"/></button>}
         {error && <div className="file-card-error"><small role="alert">{error}</small><button className="file-action-button" type="button" onClick={() => setAttempt((v) => v + 1)}>{m.chat.retry}</button></div>}
         {expanded && preview && <PhotoViewer context={context} id={id} thumbnail={preview} name={file?.name ?? m.files.preview} onClose={() => setExpanded(false)}/>}
     </div>;
