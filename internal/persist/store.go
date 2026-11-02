@@ -104,7 +104,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 9 {
+	if version < 0 || version > 10 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
