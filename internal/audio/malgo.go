@@ -11,9 +11,10 @@ import (
 )
 
 type MalgoRecorder struct {
-	config  CodecConfig
-	context *malgo.AllocatedContext
-	device  *malgo.Device
+	config    CodecConfig
+	context   *malgo.AllocatedContext
+	device    *malgo.Device
+	exclusive bool
 
 	dataCh  chan []byte
 	pending []byte
@@ -45,16 +46,23 @@ func NewMalgoRecorderForDevice(config CodecConfig, deviceID string) (*MalgoRecor
 		},
 	}
 
-	context, device, err := openMalgoStream(malgo.Capture, config, deviceID, callbacks)
+	context, device, exclusive, err := openMalgoStream(malgo.Capture, config, deviceID, callbacks)
 	if err != nil {
 		return nil, err
 	}
 	return &MalgoRecorder{
-		config:  config,
-		context: context,
-		device:  device,
-		dataCh:  dataCh,
+		config:    config,
+		context:   context,
+		device:    device,
+		exclusive: exclusive,
+		dataCh:    dataCh,
 	}, nil
+}
+
+// Exclusive reports whether the recorder holds its endpoint in WASAPI
+// exclusive mode, which blocks any other stream on the same device.
+func (r *MalgoRecorder) Exclusive() bool {
+	return r.exclusive
 }
 
 func (r *MalgoRecorder) Read(samples []int16) (int, error) {

@@ -39,7 +39,7 @@ func NewMalgoPlayer(config CodecConfig, deviceID string) (*MalgoPlayer, error) {
 		buffer.read(output)
 		lastCallback.Store(time.Now().UnixNano())
 	}}
-	context, device, err := openMalgoStream(malgo.Playback, config, deviceID, callbacks)
+	context, device, _, err := openMalgoStream(malgo.Playback, config, deviceID, callbacks)
 	if err != nil {
 		return nil, err
 	}

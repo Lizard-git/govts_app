@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"errors"
 	"io"
 	"log"
 	"sync"
@@ -10,6 +11,12 @@ import (
 type captureDevice interface {
 	Read(samples []int16) (int, error)
 	Close() error
+}
+
+// exclusiveCapture is implemented by devices that may hold their endpoint in
+// exclusive mode. No second stream can open that endpoint meanwhile.
+type exclusiveCapture interface {
+	Exclusive() bool
 }
 
 type SwitchableRecorder struct {
@@ -115,7 +122,10 @@ func (r *SwitchableRecorder) Switch(deviceID string) error {
 
 	next, err := open(config, deviceID)
 	if err != nil {
-		return err
+		next, err = r.openAfterReleasingExclusive(config, deviceID, open, err)
+		if err != nil {
+			return err
+		}
 	}
 	r.mu.Lock()
 	if r.closed {
@@ -137,6 +147,53 @@ func (r *SwitchableRecorder) Switch(deviceID string) error {
 		handler(true)
 	}
 	return nil
+}
+
+// openAfterReleasingExclusive handles a switch that failed while the current
+// device holds an endpoint exclusively, for example the default microphone and
+// the same microphone picked by id. The current device is closed, the new one
+// is opened again, and on failure the previous device is restored.
+func (r *SwitchableRecorder) openAfterReleasingExclusive(config CodecConfig, deviceID string, open func(CodecConfig, string) (captureDevice, error), openErr error) (captureDevice, error) {
+	r.mu.Lock()
+	previous := r.recorder
+	held, ok := previous.(exclusiveCapture)
+	if r.closed || !ok || !held.Exclusive() {
+		r.mu.Unlock()
+		return nil, openErr
+	}
+	previousID := r.deviceID
+	r.recorder = nil
+	r.generation++
+	handler := r.onAvailability
+	r.mu.Unlock()
+	_ = previous.Close()
+
+	next, err := open(config, deviceID)
+	if err == nil {
+		return next, nil
+	}
+	log.Printf("capture switch after releasing exclusive device failed: device=%q error=%v", deviceID, err)
+	switchErr := errors.Join(openErr, err)
+
+	restored, restoreErr := open(config, previousID)
+	if restoreErr != nil {
+		log.Printf("capture device restore failed: device=%q error=%v", previousID, restoreErr)
+		if handler != nil {
+			handler(false)
+		}
+		return nil, errors.Join(switchErr, restoreErr)
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		_ = restored.Close()
+		return nil, io.ErrClosedPipe
+	}
+	r.recorder = restored
+	r.generation++
+	r.cond.Broadcast()
+	r.mu.Unlock()
+	return nil, switchErr
 }
 
 func (r *SwitchableRecorder) Close() error {
