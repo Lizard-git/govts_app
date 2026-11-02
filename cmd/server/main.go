@@ -177,6 +177,12 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		source = server.JSONBootstrapSource{Path: configPath}
 		configSource = configPath
 	}
+	// Admission policy is read on every start, independently of the channel
+	// bootstrap stored in SQLite.
+	definition, err := source.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load server admission config: %w", err)
+	}
 	store, err := persist.Open(databasePath)
 	if err != nil {
 		return fmt.Errorf("open server database: %w", err)
@@ -220,6 +226,9 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		return err
 	}
 	authenticator.SetPolicyGate(policyGate)
+	if err := authenticator.SetPassword(definition.Password); err != nil {
+		return fmt.Errorf("configure server password: %w", err)
+	}
 	rawConn, err := udp.ListenUDP(port)
 	if err != nil {
 		return fmt.Errorf("listen UDP: %w", err)

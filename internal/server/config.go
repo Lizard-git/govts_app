@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"uniclog.io/sonoryx/internal/auth"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/voice"
 )
@@ -33,6 +34,7 @@ type ChannelDefinition struct {
 }
 
 type ServerDefinition struct {
+	Password string
 	Info     domain.ServerInfo
 	Channels []ChannelDefinition
 }
@@ -62,7 +64,8 @@ type ServerConfig struct {
 }
 
 type ServerSpec struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Password string `json:"password,omitempty"`
 }
 
 type ChannelSpec struct {
@@ -138,7 +141,10 @@ func (source JSONBootstrapSource) Load(ctx context.Context) (ServerDefinition, e
 		return ServerDefinition{}, fmt.Errorf("decode server config %q: channels must contain at least one channel", source.Path)
 	}
 
-	return ServerDefinition{Info: domain.ServerInfo{Name: config.Server.Name}, Channels: definitionsFromSpecs(config.Channels)}, nil
+	if err := auth.ValidatePassword(config.Server.Password); err != nil {
+		return ServerDefinition{}, fmt.Errorf("decode server config %q: %w (maximum %d UTF-8 bytes)", source.Path, err, auth.MaxPasswordBytes)
+	}
+	return ServerDefinition{Password: config.Server.Password, Info: domain.ServerInfo{Name: config.Server.Name}, Channels: definitionsFromSpecs(config.Channels)}, nil
 }
 
 func BootstrapHub(ctx context.Context, source BootstrapSource) (*voice.Hub, error) {

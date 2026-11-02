@@ -1,6 +1,7 @@
 {
   "server": {
-    "name": "Il Bar sul Bord del Mondo"
+    "name": "Il Bar sul Bord del Mondo",
+    "password": ""
   },
   "channels": [
     {

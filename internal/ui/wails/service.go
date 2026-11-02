@@ -33,6 +33,7 @@ func (e *validationError) Error() string { return e.Field + ": " + e.Message }
 type ConnectRequest struct {
 	Name             string `json:"name"`
 	Server           string `json:"server"`
+	Password         string `json:"password,omitempty"`
 	MinServerVersion string `json:"minServerVersion,omitempty"`
 	SkipHistory      bool   `json:"skipHistory,omitempty"`
 }
@@ -131,6 +132,7 @@ func (s *Service) connect(request ConnectRequest) error {
 	if err := s.client.Connect(clientapp.ConnectOptions{
 		Name:             request.Name,
 		Server:           request.Server,
+		Password:         request.Password,
 		MinServerVersion: strings.TrimSpace(request.MinServerVersion),
 	}); err != nil {
 		return err
