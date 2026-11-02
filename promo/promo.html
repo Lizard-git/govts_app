@@ -474,7 +474,7 @@ WebRTC DTLS-SRTP, VP8 / H.264 / VP9 / AV1 + необязательный зву�
 <tr><td>Подписки на экран</td><td>2 на поток, 8 на сессию, ≤ 256 PeerConnection (не больше UDP-портов), иначе HTTP 429</td><td>media/manager.go, media/webrtc.go</td></tr>
 <tr><td>Администрирование</td><td>30 новых AdminRequest за 10 с на сессию; страница ≤ 32 строк из SQLite и ≤ 1200 B</td><td>voice/admin_packet.go, voice/admin.go</td></tr>
 <tr><td>Каналы</td><td>≤ 4096 (лимит snapshot клиента), глубина ≤ 8, имя ≤ 64 B, тема ≤ 128 B, описание ≤ 512 B, битрейт 6–472 кбит/с</td><td>voice/channel_admin.go, domain/channel.go</td></tr>
-<tr><td>SQLite</td><td>1 соединение, WAL, busy_timeout 5 с; схема <code>user_version = 10</code> (вложения, uploads, файловые политики и права, terminal_at/error для lifecycle, chat_messages.deleted, chat_message_files.hidden и chat_changes для удаления, chat_reactions для реакций; миграция сохраняет историю чата)</td><td>persist/store.go</td></tr>
+<tr><td>SQLite</td><td>1 соединение, WAL, busy_timeout 5 с; схема <code>user_version = 10</code> (вложения, uploads, файловые политики и права, terminal_at/error для lifecycle, chat_messages.deleted, chat_message_files.hidden и chat_changes для удаления, chat_reactions для реакций; миграция сохраняет историю чата). При открытии принимаются версии 0–10: старые мигрируют до 10, версия 10 открывается повторно без миграции; более новые версии отклоняются.</td><td>persist/store.go, persist/chat_reaction.go</td></tr>
 </table>
 
 </section>
