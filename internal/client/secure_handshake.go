@@ -32,9 +32,16 @@ func (e *AuthenticationRejectedError) Error() string {
 	return "server rejected authentication: " + e.Reason
 }
 
-func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketConn, codec *protocol.SecureDatagramCodec, name string, private ed25519.PrivateKey, pinPath, endpoint string, timeout time.Duration, attempts int, minimumVersion string) (SecureHandshakeResult, error) {
+func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketConn, codec *protocol.SecureDatagramCodec, name string, private ed25519.PrivateKey, pinPath, endpoint string, timeout time.Duration, attempts int, minimumVersion string, passwords ...string) (SecureHandshakeResult, error) {
 	if conn == nil || codec == nil || timeout <= 0 || attempts <= 0 {
 		return SecureHandshakeResult{}, errors.New("invalid secure handshake arguments")
+	}
+	password := ""
+	if len(passwords) > 0 {
+		password = passwords[0]
+	}
+	if err := auth.ValidatePassword(password); err != nil {
+		return SecureHandshakeResult{}, err
 	}
 	version, err := appversion.Parse(minimumVersion)
 	if err != nil {
@@ -72,6 +79,13 @@ func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketC
 		return SecureHandshakeResult{}, err
 	}
 	finish := protocol.VoicePacket{Type: protocol.PacketAuthFinish, RequestID: requestID, Sequence: uint32(version), Payload: auth.SignFinish(private, digest)}
+	if password != "" {
+		encrypted, err := auth.SealPassword(ackKey, digest, password)
+		if err != nil {
+			return SecureHandshakeResult{}, err
+		}
+		finish.Payload = append(finish.Payload, encrypted...)
+	}
 	ack, err := exchangeAuth(ctx, conn, finish, protocol.PacketAuthAck, requestID, timeout, attempts, version)
 	if err != nil {
 		return SecureHandshakeResult{}, err

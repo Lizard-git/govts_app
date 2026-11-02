@@ -44,6 +44,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     const {m} = useLocale();
     const [server, setServer] = useState(savedServerAddress);
     const [name, setName] = useState("");
+    const [password, setPassword] = useState("");
     const [pending, setPending] = useState(false);
     const [remember, setRemember] = useState(shouldRememberAddress);
     const connecting = useRef(false);
@@ -57,6 +58,8 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
     const connect = async (value: string) => {
         if (connecting.current) return;
         const address = value.trim().replace(/^srx:\/\//i, "");
+        const connectionPassword = address === server.trim().replace(/^srx:\/\//i, "") ? password : "";
+        if (connectionPassword !== password) setPassword("");
         setServer(address);
         rememberServerAddress(address);
         onError("");
@@ -65,7 +68,7 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
         setPending(true);
         try {
             onClearEvents();
-            await desktopAPI.connect({name, server: address, skipHistory: !remember});
+            await desktopAPI.connect({name, server: address, password: connectionPassword, skipHistory: !remember});
             await onRefresh();
             onConnected();
         } catch (connectError) {
@@ -75,7 +78,10 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
             setPending(false);
         }
     };
-    const selectServer = (address: string) => { setServer(address); rememberServerAddress(address); };
+    const selectServer = (address: string) => {
+        if (address !== server) setPassword("");
+        setServer(address); rememberServerAddress(address);
+    };
     return <div className="connection-page"><div className="connection-layout">
         <section className="connection-card connection-hero">
         <div className="connection-rings" aria-hidden="true"><i/><i/><i/><i/><i/></div>
@@ -87,11 +93,11 @@ export function ConnectionPage({view, error, onError, onRefresh, onClearEvents, 
         </div>
         <form className="connection-form" onSubmit={(event) => { event.preventDefault(); void connect(server); }}>
             <label><span>{m.connection.address}</span><span className="connection-input"><Icon name="globe"/><input id="server-address" autoFocus value={server} onChange={(event) => {
-                setServer(event.target.value); rememberServerAddress(event.target.value);
+                setPassword(""); setServer(event.target.value); rememberServerAddress(event.target.value);
             }} placeholder={m.connection.addressPlaceholder} spellCheck={false} autoCapitalize="none" disabled={pending}/></span></label>
             <label><span>{m.connection.nickname}</span><span className="connection-input"><Icon name="users"/><input id="display-name" value={name} onChange={(event) => setName(event.target.value)}
                 placeholder={m.connection.namePlaceholder} maxLength={64} disabled={pending}/></span></label>
-            <label title={m.connection.passwordUnsupported}><span>{m.connection.password}</span><span className="connection-input"><Icon name="lock"/><input id="server-password" type="password" disabled placeholder={m.connection.passwordPlaceholder}/></span></label>
+            <label><span>{m.connection.password}</span><span className="connection-input"><Icon name="lock"/><input id="server-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={pending} autoComplete="off" placeholder={m.connection.passwordPlaceholder}/></span></label>
             <label className="connection-remember" title={m.connection.rememberHint}><input type="checkbox" checked={remember} onChange={(event) => {
                 const checked = event.target.checked;
                 setRemember(checked);

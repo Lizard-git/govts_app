@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -73,6 +75,16 @@ type Authenticator struct {
 	adminRate   map[uint64]authRateWindow
 	policyGate  *sync.Mutex
 	admin       *Administration
+	password    string
+}
+
+// SetPassword configures the optional shared admission password before ServeUDP.
+func (a *Authenticator) SetPassword(password string) error {
+	if err := auth.ValidatePassword(password); err != nil {
+		return err
+	}
+	a.password = password
+	return nil
 }
 
 // SetPolicyGate serializes UDP authorization with local account/channel changes.
@@ -178,11 +190,38 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 		return errors.New("authentication challenge expired")
 	}
 	digest := auth.Transcript(pending.init, pending.challenge, packet.RequestID, pending.version)
-	if err := auth.VerifyFinish(pending.init.PublicKey, digest, packet.Payload); err != nil {
+	if len(packet.Payload) < ed25519.SignatureSize || len(packet.Payload) > ed25519.SignatureSize+12+16+auth.MaxPasswordBytes {
+		delete(a.pending, key)
+		return errors.New("invalid authentication finish")
+	}
+	if err := auth.VerifyFinish(pending.init.PublicKey, digest, packet.Payload[:ed25519.SignatureSize]); err != nil {
 		// One signature check per challenge: a repeated bad Finish finds no
 		// challenge and costs no Ed25519 verification.
 		delete(a.pending, key)
 		return err
+	}
+	c2s, s2c, ackKey, err := auth.DeriveKeys(pending.ephemeral, pending.init.Ephemeral, digest)
+	if err != nil {
+		delete(a.pending, key)
+		return err
+	}
+	password := ""
+	if len(packet.Payload) > ed25519.SignatureSize {
+		password, err = auth.OpenPassword(ackKey, digest, packet.Payload[ed25519.SignatureSize:])
+		if err != nil {
+			delete(a.pending, key)
+			return errors.New("invalid encrypted server password")
+		}
+	}
+	if a.password != "" {
+		want, got := sha256.Sum256([]byte(a.password)), sha256.Sum256([]byte(password))
+		if subtle.ConstantTimeCompare(want[:], got[:]) != 1 {
+			delete(a.pending, key)
+			if password == "" {
+				return errors.New("server-password-required")
+			}
+			return errors.New("server-password-incorrect")
+		}
 	}
 	if pending.ack != nil {
 		return conn.WritePacket(0, addr, *pending.ack)
@@ -204,10 +243,6 @@ func (a *Authenticator) handleFinish(conn *udp.ServerPacketConn, hub *Hub, cache
 	}
 	if account.Banned {
 		return errors.New("account is banned")
-	}
-	c2s, s2c, ackKey, err := auth.DeriveKeys(pending.ephemeral, pending.init.Ephemeral, digest)
-	if err != nil {
-		return err
 	}
 	session, replaced, err := hub.CreateAuthenticatedSession(pending.name, addr, account.ID, account.JoinLevel, account.Permissions, account.Owner)
 	if err != nil {

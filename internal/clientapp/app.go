@@ -19,6 +19,7 @@ import (
 	"uniclog.io/sonoryx/internal/appversion"
 	"uniclog.io/sonoryx/internal/audio"
 	"uniclog.io/sonoryx/internal/audio/voicegate"
+	"uniclog.io/sonoryx/internal/auth"
 	voiceclient "uniclog.io/sonoryx/internal/client"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/identity"
@@ -57,6 +58,7 @@ type Options struct {
 type ConnectOptions struct {
 	Name             string
 	Server           string
+	Password         string
 	MinServerVersion string
 }
 
@@ -132,6 +134,9 @@ func New(options Options) *App {
 }
 
 func (a *App) Connect(options ConnectOptions) error {
+	if err := auth.ValidatePassword(options.Password); err != nil {
+		return err
+	}
 	if options.Name == "" {
 		return errors.New("display name is required")
 	}
@@ -182,7 +187,7 @@ func (a *App) Connect(options ConnectOptions) error {
 }
 
 func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPort, options ConnectOptions) {
-	err := a.runConnection(ctx, endpoint, options.Name, options.MinServerVersion)
+	err := a.runConnection(ctx, endpoint, options.Name, options.MinServerVersion, options.Password)
 
 	a.mu.Lock()
 	a.currentConn = nil
@@ -204,7 +209,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 	close(done)
 }
 
-func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string) (runErr error) {
+func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string, passwords ...string) (runErr error) {
 	private, err := a.loadClientIdentity()
 	if err != nil {
 		return err
@@ -242,7 +247,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		}
 		attempt++
 		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s", attempt, endpoint, conn.LocalAddr())
-		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion)
+		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion, passwords...)
 		sessionID, joinLevel, permissions := result.SessionID, result.JoinLevel, result.Permissions
 		serverIdentity := result.ServerIdentity
 		if err != nil {
