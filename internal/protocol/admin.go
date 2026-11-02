@@ -5,6 +5,7 @@ import (
 	"errors"
 	"unicode/utf8"
 
+	"uniclog.io/sonoryx/internal/auth"
 	"uniclog.io/sonoryx/internal/domain"
 )
 
@@ -49,6 +50,8 @@ const (
 	// AdminDeleteAccount forgets an account and disconnects it; its key
 	// registers a new account on the next connection.
 	AdminDeleteAccount
+	AdminSetServerPassword
+	AdminServerPassword
 )
 
 // AdminRequest is one PacketAdminRequest. Cursor pages AdminAccounts (after
@@ -63,6 +66,7 @@ type AdminRequest struct {
 	Enabled    bool
 	Level      uint16
 	Reason     string
+	Password   string // Only AdminSetServerPassword; never returned or audited.
 	Channel    AdminChannel
 }
 
@@ -141,6 +145,9 @@ func EncodeAdminRequest(r AdminRequest) ([]byte, error) {
 	b = binary.BigEndian.AppendUint64(b, r.TargetID)
 	b = binary.BigEndian.AppendUint16(b, r.Level)
 	b, err := appendString(b, r.Reason, MaxAdminReasonBytes)
+	if err == nil && r.Operation == AdminSetServerPassword {
+		return appendString(b, r.Password, auth.MaxPasswordBytes)
+	}
 	if err != nil || !r.channelOperation() {
 		return b, err
 	}
@@ -161,6 +168,11 @@ func DecodeAdminRequest(b []byte) (AdminRequest, error) {
 	if err != nil {
 		return r, errors.New("invalid admin request reason")
 	}
+	if r.Operation == AdminSetServerPassword {
+		if r.Password, b, err = takeString(b, auth.MaxPasswordBytes); err != nil {
+			return r, errors.New("invalid admin password field")
+		}
+	}
 	if r.channelOperation() {
 		if r.Channel, b, err = takeAdminChannel(b); err != nil {
 			return r, errors.New("invalid admin request channel")
@@ -173,16 +185,18 @@ func DecodeAdminRequest(b []byte) (AdminRequest, error) {
 }
 
 func (r AdminRequest) Validate() error {
-	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount {
+	if r.Operation < AdminAccounts || r.Operation > AdminServerPassword {
 		return errors.New("invalid admin operation")
 	}
 	target, permission, enabled, level, reason := r.TargetID != 0, r.Permission != 0, r.Enabled, r.Level != 0, r.Reason != ""
 	var ok bool
 	switch r.Operation {
+	case AdminSetServerPassword, AdminServerPassword:
+		ok = !target && r.Cursor == 0 && !permission && !enabled && !level && !reason
 	case AdminAccounts, AdminAudit:
 		ok = !target && !permission && !enabled && !level && !reason
 	case AdminDeleteChannel, AdminDeleteAccount:
-		ok =target && r.Cursor == 0 && !permission && !enabled && !level && !reason
+		ok = target && r.Cursor == 0 && !permission && !enabled && !level && !reason
 	case AdminSetPermission:
 		ok = target && r.Cursor == 0 && permission && r.Permission&(r.Permission-1) == 0 && !level && !reason
 	case AdminSetJoinLevel, AdminSetChannelJoinLevel:
@@ -194,6 +208,9 @@ func (r AdminRequest) Validate() error {
 		ok = target == (r.Operation == AdminUpdateChannel) && r.Cursor == 0 && !permission && !enabled && !level && !reason &&
 			c.Name != "" && c.ParentID <= 1<<63-1 && (c.ParentID == 0 || c.ParentID != r.TargetID) &&
 			utf8.ValidString(c.Name) && utf8.ValidString(c.Topic) && utf8.ValidString(c.Description)
+	}
+	if (r.Operation != AdminSetServerPassword && r.Password != "") || auth.ValidatePassword(r.Password) != nil {
+		ok = false
 	}
 	if !r.channelOperation() && r.Channel != (AdminChannel{}) {
 		ok = false
@@ -257,7 +274,7 @@ func AdminAuditEntrySize(e AdminAuditEntry) int {
 const AdminResponseBudget = MaxPayloadSize - adminResponseHeaderSize
 
 func EncodeAdminResponse(r AdminResponse) ([]byte, error) {
-	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminServerPassword || len(r.Accounts) > 255 || len(r.Audit) > 255 || r.Next > 1<<63-1 {
 		return nil, errors.New("invalid admin response")
 	}
 	b := []byte{AdminSchemaVersion, byte(r.Operation), byte(len(r.Accounts)), byte(len(r.Audit))}
@@ -309,7 +326,7 @@ func DecodeAdminResponse(b []byte) (AdminResponse, error) {
 	r.Operation = AdminOperation(b[1])
 	accounts, entries := int(b[2]), int(b[3])
 	r.Next = binary.BigEndian.Uint64(b[4:12])
-	if r.Operation < AdminAccounts || r.Operation > AdminDeleteAccount || r.Next > 1<<63-1 {
+	if r.Operation < AdminAccounts || r.Operation > AdminServerPassword || r.Next > 1<<63-1 {
 		return r, errors.New("invalid admin response")
 	}
 	b = b[adminResponseHeaderSize:]

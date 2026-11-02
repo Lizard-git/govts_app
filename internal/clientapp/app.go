@@ -102,6 +102,7 @@ type App struct {
 	active             bool
 	runCancel          context.CancelFunc
 	runDone            chan struct{}
+	connectionPassword string // In-memory credential for automatic reconnection; guarded by mu.
 	currentConn        *udp.ClientPacketConn
 	chatSession        *chatSession
 	serverEndpoint     netip.AddrPort
@@ -180,6 +181,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	a.runDone = done
 	a.lastError = ""
 	a.serverEndpoint = endpoint
+	a.connectionPassword = options.Password
 	a.events.clear()
 	a.events.append("connection", "Подключение к "+endpoint.String(), 0)
 	go a.run(runCtx, done, endpoint, options)
@@ -191,6 +193,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 
 	a.mu.Lock()
 	a.currentConn = nil
+	a.connectionPassword = ""
 	a.active = false
 	a.runCancel = nil
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -210,6 +213,11 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 }
 
 func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string, passwords ...string) (runErr error) {
+	if len(passwords) > 0 {
+		a.mu.Lock()
+		a.connectionPassword = passwords[0]
+		a.mu.Unlock()
+	}
 	private, err := a.loadClientIdentity()
 	if err != nil {
 		return err
@@ -247,7 +255,10 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		}
 		attempt++
 		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s", attempt, endpoint, conn.LocalAddr())
-		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion, passwords...)
+		a.mu.Lock()
+		password := a.connectionPassword
+		a.mu.Unlock()
+		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion, password)
 		sessionID, joinLevel, permissions := result.SessionID, result.JoinLevel, result.Permissions
 		serverIdentity := result.ServerIdentity
 		if err != nil {
@@ -551,7 +562,15 @@ func (a *App) Administer(ctx context.Context, request protocol.AdminRequest) (pr
 	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
 		return protocol.AdminResponse{}, ErrNotConnected
 	}
-	return voiceclient.Administer(ctx, conn, a.state, request)
+	response, err := voiceclient.Administer(ctx, conn, a.state, request)
+	if err == nil && request.Operation == protocol.AdminSetServerPassword {
+		a.mu.Lock()
+		if a.currentConn == conn {
+			a.connectionPassword = request.Password
+		}
+		a.mu.Unlock()
+	}
+	return response, err
 }
 
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }

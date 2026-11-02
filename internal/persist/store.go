@@ -104,7 +104,7 @@ func (s *Store) initialize() error {
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version < 0 || version > 10 {
+	if version < 0 || version > 11 {
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	if version == 0 {
@@ -260,6 +260,16 @@ func (s *Store) initialize() error {
 	if version < 10 {
 		if err = migrateChatReactions(ctx, tx); err != nil {
 			return err
+		}
+	}
+	if version < 11 {
+		for _, statement := range []string{
+			`ALTER TABLE server_settings ADD COLUMN password TEXT`,
+			`PRAGMA user_version=11`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate server password: %w", err)
+			}
 		}
 	}
 	return tx.Commit()

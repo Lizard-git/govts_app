@@ -78,11 +78,13 @@ type Authenticator struct {
 	password    string
 }
 
-// SetPassword configures the optional shared admission password before ServeUDP.
+// SetPassword updates admission policy. Existing sessions keep their access.
 func (a *Authenticator) SetPassword(password string) error {
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.password = password
 	return nil
 }

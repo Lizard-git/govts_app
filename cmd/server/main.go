@@ -226,7 +226,14 @@ func run(configPath, databasePath, voiceIdentityPath string, port, mediaPort, me
 		return err
 	}
 	authenticator.SetPolicyGate(policyGate)
-	if err := authenticator.SetPassword(definition.Password); err != nil {
+	password, overridden, err := store.ServerPassword(ctx)
+	if err != nil {
+		return fmt.Errorf("load saved server password: %w", err)
+	}
+	if !overridden {
+		password = definition.Password
+	}
+	if err := authenticator.SetPassword(password); err != nil {
 		return fmt.Errorf("configure server password: %w", err)
 	}
 	rawConn, err := udp.ListenUDP(port)

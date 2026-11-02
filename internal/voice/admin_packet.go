@@ -2,6 +2,8 @@ package voice
 
 import (
 	"context"
+	"errors"
+	"log"
 	"net"
 	"time"
 
@@ -79,7 +81,7 @@ func (a *Authenticator) HandleAdmin(conn *udp.ServerPacketConn, hub *Hub, cache 
 		a.codec.Remove(id)
 		cache.RemoveSession(id)
 	}
-	if request.Operation != protocol.AdminAccounts && request.Operation != protocol.AdminAudit {
+	if request.Operation != protocol.AdminAccounts && request.Operation != protocol.AdminAudit && request.Operation != protocol.AdminServerPassword {
 		logAdminChange(actor, request.Operation, request.TargetID, err)
 	}
 	if err != nil {
@@ -100,6 +102,26 @@ func (a *Authenticator) executeAdmin(ctx context.Context, hub *Hub, actor AdminA
 	var change AdminChange
 	var err error
 	switch request.Operation {
+	case protocol.AdminServerPassword, protocol.AdminSetServerPassword:
+		// Administrator permission alone never grants control over admission.
+		if !actor.Owner {
+			return response, nil, ErrPermissionDenied
+		}
+		if request.Operation == protocol.AdminSetServerPassword {
+			if err := a.store.SetServerPassword(ctx, actor.auditName(), request.Password); err != nil {
+				log.Printf("save server password failed: actor=%s error=%v", actor.auditName(), err)
+				return response, nil, errors.New("server-password-save-failed")
+			}
+			if err := a.SetPassword(request.Password); err != nil {
+				return response, nil, err
+			}
+		}
+		a.mu.Lock()
+		if a.password != "" {
+			response.Next = 1
+		}
+		a.mu.Unlock()
+		return response, nil, nil
 	case protocol.AdminAccounts:
 		accounts, err := a.admin.Accounts(ctx, actor, int64(request.Cursor))
 		if err != nil {
