@@ -241,6 +241,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 	// tries to return there instead of the default channel.
 	var previousChannel domain.ChannelID
 	attempt := 0
+	failedHandshakes := 0
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -280,10 +281,14 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 				return err
 			}
 			var rejected *voiceclient.AuthenticationRejectedError
-			if errors.As(err, &rejected) {
+			isRejected := errors.As(err, &rejected)
+			// The first connection reports a refusal at once; only a session
+			// that already worked waits for the server to accept it again.
+			if isRejected && !(everConnected && rejected.Temporary()) {
 				return err
 			}
-			if shouldReplaceClientSocket(err) {
+			failedHandshakes++
+			if shouldReplaceClientSocket(err) || (!isRejected && failedHandshakes%handshakesBeforeSocketReplacement == 0) {
 				replacement, replacementCodec, replaceErr := openClientPacketConn(endpoint)
 				if replaceErr == nil {
 					a.logger.Printf("replacing UDP socket: old_local=%s new_local=%s", conn.LocalAddr(), replacement.LocalAddr())
@@ -294,13 +299,14 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 					a.logger.Printf("replace UDP socket failed: error=%v", replaceErr)
 				}
 			}
-			delay := backoff.Next()
+			delay := reconnectDelay(backoff.Next())
 			a.events.append("reconnect", fmt.Sprintf("Сервер недоступен; повтор через %s", delay), 0)
 			if !a.waitForReconnect(ctx, delay) {
 				return nil
 			}
 			continue
 		}
+		failedHandshakes = 0
 		if err := conn.BindSession(sessionID); err != nil {
 			return fmt.Errorf("bind UDP session: %w", err)
 		}
@@ -349,7 +355,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if !errors.Is(sessionErr, voiceclient.ErrConnectionLost) {
 			return sessionErr
 		}
-		delay := backoff.Next()
+		delay := reconnectDelay(backoff.Next())
 		a.events.append("reconnect", fmt.Sprintf("Соединение потеряно (%s); повтор через %s", sessionErr, delay), 0)
 		if !a.waitForReconnect(ctx, delay) {
 			return nil

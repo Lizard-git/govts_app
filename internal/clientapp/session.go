@@ -65,6 +65,10 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	}
 	player, err := audio.NewSwitchablePlayer(codecConfig, devices.PlaybackID)
 	if err != nil {
+		if !firstConnection {
+			// The device may still be returning after sleep or a driver restart.
+			return fmt.Errorf("%w: create audio player: %w", voiceclient.ErrConnectionLost, err)
+		}
 		return fmt.Errorf("create audio player: %w", err)
 	}
 	playerClosed := false
@@ -146,7 +150,9 @@ func runSession(parent context.Context, conn *udp.ClientPacketConn, state *voice
 	if err := encoder.Configure(activeProfile); err != nil {
 		return finish(fmt.Errorf("configure Opus encoder for channel %d: %w", state.ChannelID(), err))
 	}
-	supervisor.GoNamed("voice_telemetry", func(ctx context.Context) error { return voiceclient.VoiceTelemetryLoop(ctx, conn, state) })
+	supervisor.GoNamed("voice_telemetry", func(ctx context.Context) error {
+		return networkLoop("voice telemetry", func() error { return voiceclient.VoiceTelemetryLoop(ctx, conn, state) })
+	})
 	supervisor.GoNamed("voice_state", func(ctx context.Context) error {
 		return voiceclient.VoiceStateLoop(ctx, conn, state, encoder.Configure)
 	})

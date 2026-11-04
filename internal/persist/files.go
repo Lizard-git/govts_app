@@ -327,3 +327,26 @@ func (s *Store) FileUploads(ctx context.Context) ([]FileUpload, error) {
 	}
 	return list, rows.Err()
 }
+
+// FileCleanupRefs returns the blob hashes and temporary upload IDs that are
+// still in use. It reads only these columns: cleanup runs every minute and the
+// table keeps a row for every attached file.
+func (s *Store) FileCleanupRefs(ctx context.Context) (blobs, temps map[string]bool, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,sha256,state FROM file_uploads WHERE state IN('uploading','verifying','ready','attached')`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	blobs, temps = make(map[string]bool), make(map[string]bool)
+	for rows.Next() {
+		var id, hash, state string
+		if err = rows.Scan(&id, &hash, &state); err != nil {
+			return nil, nil, err
+		}
+		blobs[hash] = true
+		if state == "uploading" || state == "verifying" {
+			temps[id] = true
+		}
+	}
+	return blobs, temps, rows.Err()
+}

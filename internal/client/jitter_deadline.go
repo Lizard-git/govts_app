@@ -5,6 +5,11 @@ import (
 	"uniclog.io/sonoryx/internal/audio"
 )
 
+// maxPlayoutExcess bounds how far the newest frame may sit beyond the target
+// reserve. It covers the largest VAD pre-roll burst (100 ms) plus 60 ms of
+// margin, so ordinary speech onsets stay intact.
+const maxPlayoutExcess = 160 * time.Millisecond
+
 // deadlineJitter is the live v2 playout clock. Packet arrival never drains it.
 // A new talkspurt anchors its newest frame, not its oldest redundant copy.
 type deadlineJitter struct {
@@ -84,12 +89,38 @@ func (d *deadlineJitter) Push(frames []audio.MediaFrame, now time.Time) {
 			d.onMetric(frame.DatagramSequence, 1, 0)
 		}
 	}
+	d.trimDepth(newest.Sequence, arrival)
 	d.goodActive += activeStep
 	if d.goodActive >= 20*time.Second {
 		d.target = max(40*time.Millisecond, d.target-frameDuration)
 		d.goodActive = 0
 	}
 
+}
+
+// trimDepth keeps latency bounded when frames arrive far ahead of the fixed
+// anchor. A sender's capture clock running fast does this gradually and would
+// otherwise queue seconds of unbroken speech; an anchor taken from a delayed
+// packet does it at once when the network recovers. The oldest frames are
+// skipped and the anchor moves by the same amount, so d.deadline stays valid
+// for the new d.next. Plain loss does not trigger this: the distance depends
+// on the newest sequence and its arrival, not on the queue length.
+func (d *deadlineJitter) trimDepth(newest uint32, arrival time.Time) {
+	excess := d.due(newest).Sub(arrival) - d.target - maxPlayoutExcess
+	if excess <= 0 {
+		return
+	}
+	frames := uint32((excess + frameDuration - 1) / frameDuration)
+	d.anchor = d.anchor.Add(-time.Duration(frames) * frameDuration)
+	d.next += frames
+	for sequence, frame := range d.pending {
+		if int32(sequence-d.next) < 0 {
+			delete(d.pending, sequence)
+			if d.onMetric != nil {
+				d.onMetric(frame.DatagramSequence, 0, 1)
+			}
+		}
+	}
 }
 
 func (d *deadlineJitter) Tick(now time.Time) []audio.MediaFrame {

@@ -101,6 +101,11 @@ func (syncer *StateSyncer) run(ctx context.Context, interval time.Duration) erro
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Heartbeat alone decides that the connection is lost.
+			if errors.Is(err, errNoReply) {
+				log.Printf("state sync got no reply: session_id=%d error=%v", syncer.State.SessionID(), err)
+				continue
+			}
 			return fmt.Errorf("%w: state sync: %w", ErrConnectionLost, err)
 		}
 	}

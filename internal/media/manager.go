@@ -369,9 +369,18 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 			return SubscribeResult{}, err
 		}
 	}
+	// The early check avoids building a connection that cannot be admitted, but
+	// parallel requests all pass it. Exclusive m.mu makes this one exact.
+	m.mu.Lock()
+	if err := m.checkPeerLimitLocked(sessionID, streamID); err != nil {
+		m.mu.Unlock()
+		_ = pc.Close()
+		return SubscribeResult{}, err
+	}
 	p.mu.Lock()
 	if !p.ready || isClosed(p.closed) || p.subscribers[subscriberID] != nil {
 		p.mu.Unlock()
+		m.mu.Unlock()
 		_ = pc.Close()
 		return SubscribeResult{}, ErrStreamNotReady
 	}
@@ -381,6 +390,7 @@ func (m *Manager) Subscribe(ctx context.Context, sessionID uint64, streamID doma
 	}
 	p.subscribers[subscriberID] = s
 	p.mu.Unlock()
+	m.mu.Unlock()
 	m.startWorker(func() { drainRTCP(p, s, sender) })
 	if audioSender != nil {
 		m.startWorker(func() { drainAudioRTCP(audioSender) })

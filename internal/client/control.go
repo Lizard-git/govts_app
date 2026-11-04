@@ -20,6 +20,9 @@ const (
 	HeartbeatInterval    = 5 * time.Second
 	HeartbeatACKDeadline = 3 * time.Second
 	heartbeatAttempts    = 3
+	// A session survives a short network stall: reconnecting replaces the whole
+	// audio pipeline, while the server keeps the session for 30 s.
+	heartbeatMaxMisses = 2
 )
 
 func ControlLoop(
@@ -144,8 +147,26 @@ func heartbeatLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	misses := 0
+	probe := func() error {
+		err := heartbeatProbe(ctx, conn, state, deadline)
+		if err == nil {
+			misses = 0
+			return nil
+		}
+		// Any answer from the server, such as SessionInvalid, is final.
+		if !errors.Is(err, errNoReply) {
+			return err
+		}
+		misses++
+		if misses >= heartbeatMaxMisses {
+			return err
+		}
+		log.Printf("heartbeat missed: misses=%d limit=%d error=%v", misses, heartbeatMaxMisses, err)
+		return nil
+	}
 	// Make the first RTT available as soon as the session starts.
-	if err := heartbeatProbe(ctx, conn, state, deadline); err != nil {
+	if err := probe(); err != nil {
 		return err
 	}
 
@@ -154,7 +175,7 @@ func heartbeatLoop(ctx context.Context, conn *udp.ClientPacketConn, state *State
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := heartbeatProbe(ctx, conn, state, deadline); err != nil {
+			if err := probe(); err != nil {
 				return err
 			}
 		}
