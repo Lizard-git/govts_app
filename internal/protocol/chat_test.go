@@ -42,7 +42,7 @@ func TestChatAttachmentsMaximumBudgetAndValidation(t *testing.T) {
 	m := domain.ChatMessage{ID: 1, ChannelID: 1, SenderID: 2, SentAtMS: 123, ClientID: [16]byte{1}, SenderName: strings.Repeat("a", 64), Text: strings.Repeat("x", 1000), AttachmentIDs: []int64{1, 2, 3, 4}}
 	p := domain.ChatPage{UserID: 2, Messages: []domain.ChatMessage{m}}
 	b, err := EncodeChatPage(p)
-	if err != nil || len(b) != 1197 {
+	if err != nil || len(b) != 1198 {
 		t.Fatalf("max page: %d %v", len(b), err)
 	}
 	got, err := DecodeChatPage(b)

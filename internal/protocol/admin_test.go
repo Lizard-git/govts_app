@@ -282,10 +282,10 @@ func TestDeleteRequestsRoundTripAndValidation(t *testing.T) {
 			t.Fatalf("response round trip = %+v, %v", decoded, err)
 		}
 	}
-	if _, err := EncodeAdminRequest(AdminRequest{Operation: AdminDeleteAccount + 1, TargetID: 1}); err == nil {
+	if _, err := EncodeAdminRequest(AdminRequest{Operation: AdminServerPassword + 1, TargetID: 1}); err == nil {
 		t.Fatal("unknown operation accepted")
 	}
-	if _, err := EncodeAdminResponse(AdminResponse{Operation: AdminDeleteAccount + 1}); err == nil {
+	if _, err := EncodeAdminResponse(AdminResponse{Operation: AdminServerPassword + 1}); err == nil {
 		t.Fatal("unknown response operation accepted")
 	}
 }
