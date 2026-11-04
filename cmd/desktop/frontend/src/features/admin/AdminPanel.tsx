@@ -7,7 +7,7 @@ import {errorText} from "../../locales";
 import {useLocale} from "../../locales/Locale";
 import {canBan, canEditAccount, canEditAccountPermissions, canEditChannelLevel, canTogglePermission, channelEditingServerVersion, channelTree, descendantIDs, levelAllowed, parseLevel, reorderPositions, versionAtLeast} from "./adminRules";
 
-type Section = "accounts" | "channels" | "audit" | "files";
+type Section = "accounts" | "channels" | "audit" | "files" | "serverPassword";
 
 const maxReasonBytes = 128;
 
@@ -18,6 +18,7 @@ export function AdminPanel({view}: {view: ClientViewDTO}) {
         <div className="settings-layout">
             <nav className="settings-nav" aria-label={m.admin.sections}>
                 <h2>{m.admin.title}</h2>
+                {view.isOwner && <button type="button" aria-current={section === "serverPassword" ? "page" : undefined} onClick={() => setSection("serverPassword")}><Icon name="lock"/>{m.admin.serverPassword}</button>}
                 <button type="button" aria-current={section === "accounts" ? "page" : undefined} onClick={() => setSection("accounts")}><Icon name="users"/>{m.admin.accounts}</button>
                 <button type="button" aria-current={section === "channels" ? "page" : undefined} onClick={() => setSection("channels")}><Icon name="channels"/>{m.admin.channels}</button>
                 <button type="button" aria-current={section === "audit" ? "page" : undefined} onClick={() => setSection("audit")}><Icon name="shield"/>{m.admin.audit}</button>
@@ -26,6 +27,7 @@ export function AdminPanel({view}: {view: ClientViewDTO}) {
             <div className="settings-panel">
                 <div className="settings-heading"><h2>{section === "files" ? m.files.admin : m.admin[section]}</h2><p>{view.server.name || m.connection.server}</p></div>
             <div className="settings-content">
+                {section === "serverPassword" && view.isOwner && <ServerPasswordSection key={view.chatContext}/>}
                 {section === "accounts" && <AccountsSection view={view}/>}
                 {section === "channels" && <ChannelsSection view={view}/>}
                 {section === "audit" && <AuditSection/>}
@@ -54,6 +56,46 @@ function useStatus() {
         }
     }, [m]);
     return {error, busy, run};
+}
+
+function ServerPasswordSection() {
+    const {m} = useLocale();
+    const {error, busy, run} = useStatus();
+    const [enabled, setEnabled] = useState<boolean | null>(null);
+    const [password, setPassword] = useState("");
+    const [confirmation, setConfirmation] = useState("");
+    const [saved, setSaved] = useState(false);
+    const load = useCallback(() => run(async () => setEnabled(await desktopAPI.adminServerPassword())), [run]);
+    useEffect(() => { void load(); }, [load]);
+    const save = async (next: string) => {
+        setSaved(false);
+        await run(async () => {
+            await desktopAPI.adminSetServerPassword(next);
+            setEnabled(next !== "");
+            setPassword("");
+            setConfirmation("");
+            setSaved(true);
+        });
+    };
+    const tooLong = new TextEncoder().encode(password).length > 256;
+    const mismatch = confirmation !== "" && password !== confirmation;
+    return <form className="settings-card admin-detail-card admin-channel-form" onSubmit={(event) => { event.preventDefault(); if (!busy && enabled !== null && password && password === confirmation && !tooLong) void save(password); }}>
+        <p className="device-hint">{m.admin.passwordHint}</p>
+        <p role="status">{enabled === null ? m.admin.loading : enabled ? m.admin.passwordEnabled : m.admin.passwordDisabled}</p>
+        <label htmlFor="admin-server-password"><span className="setting-label">{m.admin.newPassword}</span>
+        <input id="admin-server-password" type="password" autoComplete="new-password" value={password} disabled={busy || enabled === null} onChange={(event) => { setPassword(event.target.value); setSaved(false); }}/></label>
+        <label htmlFor="admin-server-password-confirm"><span className="setting-label">{m.admin.confirmPassword}</span>
+        <input id="admin-server-password-confirm" type="password" autoComplete="new-password" value={confirmation} disabled={busy || enabled === null} onChange={(event) => { setConfirmation(event.target.value); setSaved(false); }}/></label>
+        {tooLong && <p className="form-error" role="alert">{m.errors["server-password-invalid"]}</p>}
+        {mismatch && <p className="form-error" role="alert">{m.admin.passwordMismatch}</p>}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {saved && <p role="status">{m.admin.passwordSaved}</p>}
+        <div className="admin-list-actions">
+            <button type="submit" className="primary-button" disabled={busy || enabled === null || !password || password !== confirmation || tooLong}>{m.admin.save}</button>
+            <button type="button" disabled={busy || !enabled} onClick={() => void save("")}>{m.admin.removePassword}</button>
+            <button type="button" disabled={busy} onClick={() => void load()}>{m.admin.reload}</button>
+        </div>
+    </form>;
 }
 
 function AccountsSection({view}: {view: ClientViewDTO}) {

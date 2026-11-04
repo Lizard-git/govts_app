@@ -178,8 +178,15 @@ func TestOwnerAndConsoleRights(t *testing.T) {
 	if _, err := f.admin.SetJoinLevel(ctx, owner, f.peer.ID, 60000); err != nil {
 		t.Fatalf("owner changes administrator: %v", err)
 	}
-	if _, err := f.admin.SetPermission(ctx, owner, f.owner.ID, persist.PermissionKick, true); !errors.Is(err, ErrPermissionDenied) {
-		t.Fatalf("owner changes own account remotely: %v", err)
+	// An owner edits their own permission bits, and nothing else about themselves.
+	if change, err = f.admin.SetPermission(ctx, owner, f.owner.ID, persist.PermissionKick, true); err != nil || change.Account.Permissions&persist.PermissionKick == 0 {
+		t.Fatalf("owner grants own permission = %+v, %v", change, err)
+	}
+	if change, err = f.admin.SetPermission(ctx, owner, f.owner.ID, persist.PermissionKick, false); err != nil || change.Account.Permissions&persist.PermissionKick != 0 {
+		t.Fatalf("owner revokes own permission = %+v, %v", change, err)
+	}
+	if _, err := f.admin.SetJoinLevel(ctx, owner, f.owner.ID, 60000); !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("owner changes own join level remotely: %v", err)
 	}
 	change, err = f.admin.SetPermission(ctx, ConsoleAdmin, f.owner.ID, persist.PermissionKick, true)
 	if err != nil || !change.Account.Owner {

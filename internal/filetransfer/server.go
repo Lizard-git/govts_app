@@ -707,6 +707,7 @@ func (s *Server) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	nextCleanup := time.Now().Add(time.Minute)
+	lastCleanup := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -722,35 +723,46 @@ func (s *Server) Run(ctx context.Context) {
 					}
 				}
 			}
-			if time.Now().Before(nextCleanup) {
+			now := time.Now()
+			if now.Before(nextCleanup) {
 				continue
 			}
-			nextCleanup = time.Now().Add(time.Minute)
-			if err := s.Cleanup(ctx); err != nil {
+			// A waiting writer blocks new readers, so one slow chunk would stall
+			// every transfer. Retry each tick until the readers are gone, and
+			// wait for them only when cleanup has been deferred too long.
+			if now.Sub(lastCleanup) >= cleanupMaxDefer {
+				s.files.Lock()
+			} else if !s.files.TryLock() {
+				continue
+			}
+			err = s.cleanupLocked(ctx)
+			s.files.Unlock()
+			lastCleanup = time.Now()
+			nextCleanup = lastCleanup.Add(time.Minute)
+			if err != nil {
 				log.Printf("files cleanup failed: %v", err)
 			}
 		}
 	}
 }
+
+// cleanupMaxDefer bounds how long active transfers can postpone cleanup.
+const cleanupMaxDefer = 15 * time.Minute
+
 func (s *Server) Cleanup(ctx context.Context) error {
 	s.files.Lock()
 	defer s.files.Unlock()
+	return s.cleanupLocked(ctx)
+}
+
+// cleanupLocked requires s.files held for writing.
+func (s *Server) cleanupLocked(ctx context.Context) error {
 	if err := s.store.ExpireFiles(ctx, s.settings().UploadTTL, s.settings().Retention); err != nil {
 		return err
 	}
-	list, err := s.store.FileUploads(ctx)
+	keep, temps, err := s.store.FileCleanupRefs(ctx)
 	if err != nil {
 		return err
-	}
-	keep := map[string]bool{}
-	temps := map[string]bool{}
-	for _, u := range list {
-		if u.State == "ready" || u.State == "attached" || u.State == "uploading" || u.State == "verifying" {
-			keep[u.SHA256] = true
-		}
-		if u.State == "uploading" || u.State == "verifying" {
-			temps[u.ID] = true
-		}
 	}
 	for dir, refs := range map[string]map[string]bool{"blobs": keep, "tmp": temps} {
 		entries, e := os.ReadDir(filepath.Join(s.settings().Directory, dir))

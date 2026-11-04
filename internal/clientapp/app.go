@@ -102,6 +102,7 @@ type App struct {
 	active             bool
 	runCancel          context.CancelFunc
 	runDone            chan struct{}
+	connectionPassword string // In-memory credential for automatic reconnection; guarded by mu.
 	currentConn        *udp.ClientPacketConn
 	chatSession        *chatSession
 	serverEndpoint     netip.AddrPort
@@ -180,6 +181,7 @@ func (a *App) Connect(options ConnectOptions) error {
 	a.runDone = done
 	a.lastError = ""
 	a.serverEndpoint = endpoint
+	a.connectionPassword = options.Password
 	a.events.clear()
 	a.events.append("connection", "Подключение к "+endpoint.String(), 0)
 	go a.run(runCtx, done, endpoint, options)
@@ -191,6 +193,7 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 
 	a.mu.Lock()
 	a.currentConn = nil
+	a.connectionPassword = ""
 	a.active = false
 	a.runCancel = nil
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -210,6 +213,11 @@ func (a *App) run(ctx context.Context, done chan struct{}, endpoint netip.AddrPo
 }
 
 func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, minServerVersion string, passwords ...string) (runErr error) {
+	if len(passwords) > 0 {
+		a.mu.Lock()
+		a.connectionPassword = passwords[0]
+		a.mu.Unlock()
+	}
 	private, err := a.loadClientIdentity()
 	if err != nil {
 		return err
@@ -233,6 +241,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 	// tries to return there instead of the default channel.
 	var previousChannel domain.ChannelID
 	attempt := 0
+	failedHandshakes := 0
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -247,7 +256,10 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		}
 		attempt++
 		a.logger.Printf("handshake starting: attempt=%d server=%s local=%s", attempt, endpoint, conn.LocalAddr())
-		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion, passwords...)
+		a.mu.Lock()
+		password := a.connectionPassword
+		a.mu.Unlock()
+		result, err := voiceclient.PerformSecureHandshakeAttempts(ctx, conn, codec, name, private, a.pinsPath, endpoint.String(), handshakeAttemptTimeout, handshakeAttempts, minServerVersion, password)
 		sessionID, joinLevel, permissions := result.SessionID, result.JoinLevel, result.Permissions
 		serverIdentity := result.ServerIdentity
 		if err != nil {
@@ -269,10 +281,14 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 				return err
 			}
 			var rejected *voiceclient.AuthenticationRejectedError
-			if errors.As(err, &rejected) {
+			isRejected := errors.As(err, &rejected)
+			// The first connection reports a refusal at once; only a session
+			// that already worked waits for the server to accept it again.
+			if isRejected && !(everConnected && rejected.Temporary()) {
 				return err
 			}
-			if shouldReplaceClientSocket(err) {
+			failedHandshakes++
+			if shouldReplaceClientSocket(err) || (!isRejected && failedHandshakes%handshakesBeforeSocketReplacement == 0) {
 				replacement, replacementCodec, replaceErr := openClientPacketConn(endpoint)
 				if replaceErr == nil {
 					a.logger.Printf("replacing UDP socket: old_local=%s new_local=%s", conn.LocalAddr(), replacement.LocalAddr())
@@ -283,13 +299,14 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 					a.logger.Printf("replace UDP socket failed: error=%v", replaceErr)
 				}
 			}
-			delay := backoff.Next()
+			delay := reconnectDelay(backoff.Next())
 			a.events.append("reconnect", fmt.Sprintf("Сервер недоступен; повтор через %s", delay), 0)
 			if !a.waitForReconnect(ctx, delay) {
 				return nil
 			}
 			continue
 		}
+		failedHandshakes = 0
 		if err := conn.BindSession(sessionID); err != nil {
 			return fmt.Errorf("bind UDP session: %w", err)
 		}
@@ -338,7 +355,7 @@ func (a *App) runConnection(ctx context.Context, endpoint netip.AddrPort, name, 
 		if !errors.Is(sessionErr, voiceclient.ErrConnectionLost) {
 			return sessionErr
 		}
-		delay := backoff.Next()
+		delay := reconnectDelay(backoff.Next())
 		a.events.append("reconnect", fmt.Sprintf("Соединение потеряно (%s); повтор через %s", sessionErr, delay), 0)
 		if !a.waitForReconnect(ctx, delay) {
 			return nil
@@ -551,7 +568,15 @@ func (a *App) Administer(ctx context.Context, request protocol.AdminRequest) (pr
 	if conn == nil || a.state.ConnectionStatus() != voiceclient.ConnectionConnected {
 		return protocol.AdminResponse{}, ErrNotConnected
 	}
-	return voiceclient.Administer(ctx, conn, a.state, request)
+	response, err := voiceclient.Administer(ctx, conn, a.state, request)
+	if err == nil && request.Operation == protocol.AdminSetServerPassword {
+		a.mu.Lock()
+		if a.currentConn == conn {
+			a.connectionPassword = request.Password
+		}
+		a.mu.Unlock()
+	}
+	return response, err
 }
 
 func (a *App) Snapshot() voiceclient.ClientViewState { return a.state.SnapshotView() }

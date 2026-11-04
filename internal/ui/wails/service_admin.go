@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"uniclog.io/sonoryx/internal/auth"
 	"uniclog.io/sonoryx/internal/domain"
 	"uniclog.io/sonoryx/internal/protocol"
 )
@@ -260,5 +261,20 @@ func (s *Service) AdminDeleteChannel(channelID string) error {
 		return err
 	}
 	_, err = s.administer(protocol.AdminRequest{Operation: protocol.AdminDeleteChannel, TargetID: id})
+	return err
+}
+
+// AdminServerPassword returns only whether admission requires a password.
+func (s *Service) AdminServerPassword() (bool, error) {
+	response, err := s.administer(protocol.AdminRequest{Operation: protocol.AdminServerPassword})
+	return response.Next == 1, err
+}
+
+// AdminSetServerPassword changes or clears the owner-only admission setting.
+func (s *Service) AdminSetServerPassword(password string) error {
+	if err := auth.ValidatePassword(password); err != nil {
+		return err
+	}
+	_, err := s.administer(protocol.AdminRequest{Operation: protocol.AdminSetServerPassword, Password: password})
 	return err
 }

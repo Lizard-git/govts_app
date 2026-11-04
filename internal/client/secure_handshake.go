@@ -32,6 +32,21 @@ func (e *AuthenticationRejectedError) Error() string {
 	return "server rejected authentication: " + e.Reason
 }
 
+// Temporary reports a refusal that can clear without any user action. The
+// server sends only text, so this list follows the messages of its limits.
+func (e *AuthenticationRejectedError) Temporary() bool {
+	switch e.Reason {
+	case "too many authentication attempts; retry later",
+		"too many pending authentication handshakes",
+		"authentication challenge expired",
+		"authentication failed: server error",
+		"server is full",
+		"too many sessions for this account":
+		return true
+	}
+	return false
+}
+
 func PerformSecureHandshakeAttempts(ctx context.Context, conn *udp.ClientPacketConn, codec *protocol.SecureDatagramCodec, name string, private ed25519.PrivateKey, pinPath, endpoint string, timeout time.Duration, attempts int, minimumVersion string, passwords ...string) (SecureHandshakeResult, error) {
 	if conn == nil || codec == nil || timeout <= 0 || attempts <= 0 {
 		return SecureHandshakeResult{}, errors.New("invalid secure handshake arguments")

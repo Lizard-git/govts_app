@@ -59,7 +59,7 @@ const (
 
 // AuthInit.Sequence carries the requested protocol/server compatibility level,
 // not the desktop executable's independently incremented release version.
-const minimumSecureClientVersion appversion.Number = 4<<16 | 5 // 0.4.5: chat v4 with reactions
+const minimumSecureClientVersion appversion.Number = 5 << 16 // 0.5.0: matches minServerVersion in version/release.json
 
 // Authenticator handles the signed, ephemeral-key handshake before any
 // ordinary session packet reaches the existing voice packet handlers.
@@ -78,11 +78,13 @@ type Authenticator struct {
 	password    string
 }
 
-// SetPassword configures the optional shared admission password before ServeUDP.
+// SetPassword updates admission policy. Existing sessions keep their access.
 func (a *Authenticator) SetPassword(password string) error {
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.password = password
 	return nil
 }

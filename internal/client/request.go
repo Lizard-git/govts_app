@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"time"
 
 	"uniclog.io/sonoryx/internal/appversion"
@@ -18,6 +19,10 @@ const (
 	joinRequestTimeout = 3 * time.Second
 	requestAttempts    = 3
 )
+
+// errNoReply marks a request the server did not answer: every attempt timed
+// out or the datagram could not be sent. The session may still be alive.
+var errNoReply = errors.New("no server reply")
 
 type ServerRequestError struct{ Message string }
 
@@ -86,7 +91,10 @@ func doRequestAttempts(
 		}
 		if err := conn.SendPacket(packet); err != nil {
 			log.Printf("control request send failed: type=%d session_id=%d request_id=%d attempt=%d error=%v", packet.Type, packet.SessionID, requestID, attempt, err)
-			return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
+			if errors.Is(err, net.ErrClosed) {
+				return ControlResponse{}, fmt.Errorf("send request %d: %w", requestID, err)
+			}
+			return ControlResponse{}, fmt.Errorf("send request %d: %w: %w", requestID, errNoReply, err)
 		}
 
 		timer := time.NewTimer(timeout)
@@ -102,12 +110,13 @@ func doRequestAttempts(
 			log.Printf("control request timeout: type=%d session_id=%d request_id=%d attempt=%d attempts=%d timeout=%s", packet.Type, packet.SessionID, requestID, attempt, attempts, timeout)
 			if attempt == attempts {
 				if attempts == 1 {
-					return ControlResponse{}, fmt.Errorf("request %d timed out", requestID)
+					return ControlResponse{}, fmt.Errorf("request %d timed out: %w", requestID, errNoReply)
 				}
 				return ControlResponse{}, fmt.Errorf(
-					"request %d timed out after %d attempts",
+					"request %d timed out after %d attempts: %w",
 					requestID,
 					attempts,
+					errNoReply,
 				)
 			}
 		case <-ctx.Done():
