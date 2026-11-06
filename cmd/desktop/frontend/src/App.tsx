@@ -923,7 +923,8 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                            try {
                                                await desktopAPI.setExclusiveCaptureBufferAdaptive(value);
                                            } catch (error) {
-                                               setAdaptiveBuffer(!value);
+                                               // The mode may have changed even if saving failed.
+                                               setAdaptiveBuffer(await desktopAPI.exclusiveCaptureBufferAdaptive().catch(() => !value));
                                                setDevicesError(rawError(error));
                                            }
                                        }}/>

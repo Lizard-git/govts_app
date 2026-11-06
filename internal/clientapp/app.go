@@ -815,7 +815,7 @@ func (a *App) SetMicrophoneGain(value float32) error {
 }
 
 // SetExclusiveCaptureBufferAdaptive only affects a microphone opened through
-// the exclusive-mode fallback: adaptive picks 60..200 ms, otherwise 180 ms.
+// the exclusive-mode fallback: adaptive grows from 100 up to 200 ms, otherwise 180 ms.
 // The microphone reopens with the new buffer.
 func (a *App) SetExclusiveCaptureBufferAdaptive(value bool) {
 	audio.SetExclusiveCaptureBufferAdaptive(value)

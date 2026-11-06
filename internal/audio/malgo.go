@@ -26,9 +26,6 @@ const (
 	// delivers a whole buffer at once, possibly as one chunk per 20 ms period,
 	// so its limit holds two buffers of the largest size plus slack.
 	captureQueueChunksMax = 2*ExclusiveCaptureBufferMaxMS/ExclusiveCaptureBufferStepMS + 4
-	// captureBurstGap separates two device deliveries: chunks of one delivery
-	// arrive back to back, deliveries are at least a period apart.
-	captureBurstGap = 2 * time.Millisecond
 )
 
 type MalgoRecorder struct {
@@ -52,14 +49,17 @@ type MalgoRecorder struct {
 	droppedChunks  atomic.Uint64
 	rateStart      time.Time
 
-	// Device-thread state of the current delivery; see observeDelivery.
-	burstStart, lastPush time.Time
-	burstFrames          uint64
+	// lastPush is device-thread state; see observeDelivery.
+	lastPush time.Time
 	// Adaptive buffer window, written by push and swapped by adaptBuffer.
-	adaptFrames   atomic.Uint64
-	adaptDropped  atomic.Uint64
-	maxLatenessNS atomic.Int64
-	adaptStart    time.Time
+	adaptFrames  atomic.Uint64
+	adaptDropped atomic.Uint64
+	maxGapNS     atomic.Int64
+	adaptStart   time.Time
+
+	// now and sleep are time.Now and time.Sleep outside tests.
+	now   func() time.Time
+	sleep func(time.Duration)
 
 	closeOnce sync.Once
 	closeErr  error
@@ -72,7 +72,7 @@ type captureRateReport struct {
 }
 
 func newMalgoRecorder(config CodecConfig) *MalgoRecorder {
-	r := &MalgoRecorder{config: config, dataCh: make(chan []byte, captureQueueChunksMax)}
+	r := &MalgoRecorder{config: config, dataCh: make(chan []byte, captureQueueChunksMax), now: time.Now, sleep: time.Sleep}
 	r.queueLimit.Store(captureQueueChunks)
 	return r
 }
@@ -130,7 +130,7 @@ func (r *MalgoRecorder) push(input []byte, frameCount uint32) {
 	}
 	r.callbackFrames.Add(uint64(frameCount))
 	r.adaptFrames.Add(uint64(frameCount))
-	r.observeDelivery(time.Now(), frameCount)
+	r.observeDelivery(r.now())
 
 	chunk := make([]byte, len(input))
 	copy(chunk, input)
@@ -153,28 +153,22 @@ func (r *MalgoRecorder) dropChunk() {
 	r.adaptDropped.Add(1)
 }
 
-// observeDelivery runs on the device thread. A delivery is a run of chunks
-// arriving back to back. The device signals the next one once the previous
-// delivery's worth of audio has accumulated, so a delivery that starts later
-// than that shows how late the capture thread woke.
-func (r *MalgoRecorder) observeDelivery(now time.Time, frameCount uint32) {
-	if !r.lastPush.IsZero() && now.Sub(r.lastPush) <= captureBurstGap {
-		r.lastPush = now
-		r.burstFrames += uint64(frameCount)
-		return
-	}
-	if !r.burstStart.IsZero() && r.config.SampleRate > 0 {
-		expected := time.Duration(r.burstFrames) * time.Second / time.Duration(r.config.SampleRate)
-		if lateness := now.Sub(r.burstStart) - expected; lateness > 0 {
-			for {
-				old := r.maxLatenessNS.Load()
-				if int64(lateness) <= old || r.maxLatenessNS.CompareAndSwap(old, int64(lateness)) {
-					break
-				}
+// observeDelivery runs on the device thread and keeps the longest gap between
+// two callbacks. An exclusive stream gets one event per buffer, so the gap is
+// one buffer when the capture thread wakes on time; adaptBuffer treats the
+// excess as lateness. Chunks of one delivery, even split by preemption, only
+// shorten the gap to the next delivery, so they never look late.
+func (r *MalgoRecorder) observeDelivery(now time.Time) {
+	if !r.lastPush.IsZero() {
+		gap := int64(now.Sub(r.lastPush))
+		for {
+			old := r.maxGapNS.Load()
+			if gap <= old || r.maxGapNS.CompareAndSwap(old, gap) {
+				break
 			}
 		}
 	}
-	r.burstStart, r.lastPush, r.burstFrames = now, now, uint64(frameCount)
+	r.lastPush = now
 }
 
 // adaptBuffer feeds the adaptive exclusive buffer once per captureRateWindow.
@@ -188,7 +182,7 @@ func (r *MalgoRecorder) adaptBuffer(now time.Time) {
 		r.adaptStart = now
 		r.adaptFrames.Store(0)
 		r.adaptDropped.Store(0)
-		r.maxLatenessNS.Store(0)
+		r.maxGapNS.Store(0)
 		return
 	}
 	elapsed := now.Sub(r.adaptStart)
@@ -197,7 +191,7 @@ func (r *MalgoRecorder) adaptBuffer(now time.Time) {
 	}
 	frames := r.adaptFrames.Swap(0)
 	dropped := r.adaptDropped.Swap(0)
-	lateness := time.Duration(r.maxLatenessNS.Swap(0))
+	lateness := max(0, time.Duration(r.maxGapNS.Swap(0))-time.Duration(r.exclusiveMS)*time.Millisecond)
 	r.adaptStart = now
 	if elapsed > captureRateIdle {
 		return
@@ -208,11 +202,11 @@ func (r *MalgoRecorder) adaptBuffer(now time.Time) {
 	expected := elapsed.Seconds() * rate
 	slack := float64(r.exclusiveMS+ExclusiveCaptureBufferStepMS) / 1000 * rate
 	lost := dropped > 0 || float64(frames)+slack < expected*0.99
-	adaptExclusiveCaptureBuffer(r.exclusiveMS, lateness, lost, now)
+	adaptExclusiveCaptureBuffer(r.exclusiveMS, lateness, lost)
 }
 
 func (r *MalgoRecorder) Read(samples []int16) (int, error) {
-	if report, ok := r.checkCaptureRate(time.Now()); ok {
+	if report, ok := r.checkCaptureRate(r.now()); ok {
 		log.Printf("capture rate anomaly: frames_per_s=%.0f expected=%d dropped_chunks=%d window=%s", report.framesPerSecond, r.config.SampleRate, report.dropped, report.window.Round(time.Millisecond))
 	}
 	written := 0
@@ -243,7 +237,7 @@ func (r *MalgoRecorder) Read(samples []int16) (int, error) {
 		r.pending = r.pending[consumedBytes:]
 		written += count
 	}
-	now := time.Now()
+	now := r.now()
 	r.adaptBuffer(now)
 	r.pace(written, now)
 
@@ -273,7 +267,7 @@ func (r *MalgoRecorder) pace(samples int, now time.Time) {
 		return
 	}
 	if wait := r.paceNext.Sub(now); wait > 0 {
-		time.Sleep(wait)
+		r.sleep(wait)
 	}
 	r.paceNext = r.paceNext.Add(frame)
 }

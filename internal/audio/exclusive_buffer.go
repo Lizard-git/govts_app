@@ -12,31 +12,26 @@ import (
 // latency. Shared-mode capture ignores it.
 //
 // By default the buffer is adaptive: it starts at ExclusiveCaptureBufferStartMS
-// and the recorder moves it within ExclusiveCaptureBufferMinMS..MaxMS from the
-// measured wake-up lateness of the capture thread. With adaptation off it is
-// ExclusiveCaptureBufferFixedMS. Each change reopens the exclusive stream,
-// which is a short gap in the voice, so changes stay rare.
+// and the recorder grows it up to ExclusiveCaptureBufferMaxMS from the measured
+// wake-up lateness of the capture thread. It never shrinks: each change
+// reopens the exclusive stream, which is a short gap in the voice, and a busy
+// CPU tends to stay busy. With adaptation off it is
+// ExclusiveCaptureBufferFixedMS.
 const (
 	ExclusiveCaptureBufferStepMS  = 20
-	ExclusiveCaptureBufferMinMS   = 60
-	ExclusiveCaptureBufferMaxMS   = 200
 	ExclusiveCaptureBufferStartMS = 100
+	ExclusiveCaptureBufferMaxMS   = 200
 	ExclusiveCaptureBufferFixedMS = 180
 
 	// A buffer of B ms tolerates a wake-up up to B ms late. The controller
 	// keeps half of it as reserve: lateness above B/2 grows the buffer.
 	exclusiveBufferReserveFactor = 2
-	// The buffer shrinks one step only after this long without lateness that
-	// the smaller buffer would not have covered with the same reserve.
-	exclusiveBufferShrinkAfter = 10 * time.Minute
 )
 
 type exclusiveBufferState struct {
 	mu       sync.Mutex
 	adaptive bool
 	ms       int
-	// calmSince is when lateness last needed the current buffer.
-	calmSince time.Time
 }
 
 var exclusiveBuffer = exclusiveBufferState{adaptive: true, ms: ExclusiveCaptureBufferStartMS}
@@ -69,7 +64,6 @@ func SetExclusiveCaptureBufferAdaptive(adaptive bool) {
 	if adaptive {
 		exclusiveBuffer.ms = ExclusiveCaptureBufferStartMS
 	}
-	exclusiveBuffer.calmSince = time.Time{}
 	log.Printf("exclusive capture buffer mode: adaptive=%t buffer_ms=%d", adaptive, exclusiveBuffer.ms)
 }
 
@@ -77,8 +71,8 @@ func SetExclusiveCaptureBufferAdaptive(adaptive bool) {
 // the exclusive recorder that opened with openedMS. lateness is the largest
 // wake-up delay of the capture thread in the window; lost reports audio the
 // device delivered short of real time or chunks the queue dropped. It returns
-// the new buffer when it changed; the recorder then reopens.
-func adaptExclusiveCaptureBuffer(openedMS int, lateness time.Duration, lost bool, now time.Time) (int, bool) {
+// the new buffer when it grew; the recorder then reopens.
+func adaptExclusiveCaptureBuffer(openedMS int, lateness time.Duration, lost bool) (int, bool) {
 	exclusiveBuffer.mu.Lock()
 	defer exclusiveBuffer.mu.Unlock()
 	state := &exclusiveBuffer
@@ -86,34 +80,18 @@ func adaptExclusiveCaptureBuffer(openedMS int, lateness time.Duration, lost bool
 	if !state.adaptive || state.ms != openedMS {
 		return 0, false
 	}
-	if state.calmSince.IsZero() {
-		state.calmSince = now
-	}
 	needed := roundUpBufferStep(time.Duration(exclusiveBufferReserveFactor) * lateness)
 	if lost {
 		needed = max(needed, state.ms+ExclusiveCaptureBufferStepMS)
 	}
 	needed = min(needed, ExclusiveCaptureBufferMaxMS)
-	if needed > state.ms {
-		previous := state.ms
-		state.ms = needed
-		state.calmSince = now
-		log.Printf("exclusive capture buffer grown: from_ms=%d to_ms=%d lateness=%s lost=%t", previous, needed, lateness.Round(time.Millisecond), lost)
-		return needed, true
-	}
-	smaller := state.ms - ExclusiveCaptureBufferStepMS
-	if needed > smaller {
-		// The smaller buffer would not keep the reserve: stay calm-checking from now.
-		state.calmSince = now
+	if needed <= state.ms {
 		return 0, false
 	}
-	if smaller < ExclusiveCaptureBufferMinMS || now.Sub(state.calmSince) < exclusiveBufferShrinkAfter {
-		return 0, false
-	}
-	state.ms = smaller
-	state.calmSince = now
-	log.Printf("exclusive capture buffer shrunk: from_ms=%d to_ms=%d", smaller+ExclusiveCaptureBufferStepMS, smaller)
-	return smaller, true
+	previous := state.ms
+	state.ms = needed
+	log.Printf("exclusive capture buffer grown: from_ms=%d to_ms=%d lateness=%s lost=%t", previous, needed, lateness.Round(time.Millisecond), lost)
+	return needed, true
 }
 
 func roundUpBufferStep(d time.Duration) int {

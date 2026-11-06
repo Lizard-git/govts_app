@@ -155,7 +155,7 @@ func (s *Service) SetMicrophoneGain(value float32) error {
 }
 
 // SetExclusiveCaptureBufferAdaptive applies to a microphone opened in
-// exclusive mode: adaptive picks 60..200 ms, otherwise the buffer is 180 ms.
+// exclusive mode: adaptive grows from 100 up to 200 ms, otherwise the buffer is 180 ms.
 func (s *Service) SetExclusiveCaptureBufferAdaptive(value bool) error {
 	s.client.SetExclusiveCaptureBufferAdaptive(value)
 	return s.saveSettings()
