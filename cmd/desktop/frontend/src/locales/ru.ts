@@ -447,8 +447,8 @@ export const ru = {
     theme: {
         names: {
             light: "Светлая",
-            neutral: "Темная",
-            dark: "Темно-синяя",
+            dark: "Тёмная",
+            navy: "Тёмно-синяя",
             beige: "Бежевая",
             brown: "Коричневая",
             purple: "Фиолетовая",

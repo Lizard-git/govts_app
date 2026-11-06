@@ -446,8 +446,8 @@ export const ky = {
     theme: {
         names: {
             light: "Ачык",
-            neutral: "Караңгы",
-            dark: "Кочкул көк",
+            dark: "Караңгы",
+            navy: "Кочкул көк",
             beige: "Беж",
             brown: "Күрөң",
             purple: "Кызгылт көк",

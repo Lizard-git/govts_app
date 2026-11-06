@@ -446,8 +446,8 @@ export const en = {
     theme: {
         names: {
             light: "Light",
-            neutral: "Dark",
-            dark: "Navy",
+            dark: "Dark",
+            navy: "Navy",
             beige: "Beige",
             brown: "Brown",
             purple: "Purple",
