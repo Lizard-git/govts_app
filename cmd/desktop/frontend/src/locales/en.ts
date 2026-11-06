@@ -406,6 +406,8 @@ export const en = {
         noMic: "No microphone found. Choose a device when it appears. Until then you stay in the channel without sending voice.",
         gain: "Microphone gain",
         gainHint: "Below 100% is quieter, above is louder. Applied before noise suppression and the transmit gate.",
+        adaptiveBuffer: "Adaptive microphone buffer",
+        adaptiveBufferHint: "Applies only when the microphone is opened in exclusive mode. The app picks a buffer from 60 to 200 ms based on CPU load; when off, it is 180 ms. A larger buffer drops less audio but adds latency.",
         denoise: "Noise suppression",
         denoiseHint: "Removes steady background noise before voice activity is analyzed.",
         denoiseAmount: "Noise suppression strength",
