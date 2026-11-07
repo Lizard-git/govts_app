@@ -8,39 +8,22 @@ import (
 const ms = time.Millisecond
 
 // setBufferState replaces the global buffer state for one test.
-func setBufferState(t *testing.T, adaptive bool, bufferMS int) {
+func setBufferState(t *testing.T, bufferMS int) {
 	t.Helper()
 	exclusiveBuffer.mu.Lock()
-	savedAdaptive, savedMS := exclusiveBuffer.adaptive, exclusiveBuffer.ms
-	exclusiveBuffer.adaptive, exclusiveBuffer.ms = adaptive, bufferMS
+	savedMS := exclusiveBuffer.ms
+	exclusiveBuffer.ms = bufferMS
 	exclusiveBuffer.mu.Unlock()
 	t.Cleanup(func() {
 		exclusiveBuffer.mu.Lock()
-		exclusiveBuffer.adaptive, exclusiveBuffer.ms = savedAdaptive, savedMS
+		exclusiveBuffer.ms = savedMS
 		exclusiveBuffer.mu.Unlock()
 	})
 }
 
-func TestExclusiveBufferDefaultsToAdaptiveStart(t *testing.T) {
-	if !ExclusiveCaptureBufferAdaptive() || ExclusiveCaptureBufferMS() != ExclusiveCaptureBufferStartMS {
-		t.Fatalf("default = adaptive %t, %d ms; want adaptive, %d ms", ExclusiveCaptureBufferAdaptive(), ExclusiveCaptureBufferMS(), ExclusiveCaptureBufferStartMS)
-	}
-}
-
-func TestExclusiveBufferModeSwitch(t *testing.T) {
-	setBufferState(t, true, 140)
-
-	SetExclusiveCaptureBufferAdaptive(true)
-	if ExclusiveCaptureBufferMS() != 140 {
-		t.Fatalf("same mode changed the buffer to %d ms", ExclusiveCaptureBufferMS())
-	}
-	SetExclusiveCaptureBufferAdaptive(false)
-	if ExclusiveCaptureBufferAdaptive() || ExclusiveCaptureBufferMS() != ExclusiveCaptureBufferFixedMS {
-		t.Fatalf("fixed mode = adaptive %t, %d ms; want %d ms", ExclusiveCaptureBufferAdaptive(), ExclusiveCaptureBufferMS(), ExclusiveCaptureBufferFixedMS)
-	}
-	SetExclusiveCaptureBufferAdaptive(true)
-	if !ExclusiveCaptureBufferAdaptive() || ExclusiveCaptureBufferMS() != ExclusiveCaptureBufferStartMS {
-		t.Fatalf("adaptive mode = %d ms, want restart at %d ms", ExclusiveCaptureBufferMS(), ExclusiveCaptureBufferStartMS)
+func TestExclusiveBufferDefaultsToStart(t *testing.T) {
+	if ExclusiveCaptureBufferMS() != ExclusiveCaptureBufferStartMS {
+		t.Fatalf("default = %d ms, want %d ms", ExclusiveCaptureBufferMS(), ExclusiveCaptureBufferStartMS)
 	}
 }
 
@@ -65,7 +48,7 @@ func TestAdaptExclusiveBufferGrowth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setBufferState(t, true, tt.bufferMS)
+			setBufferState(t, tt.bufferMS)
 			got, changed := adaptExclusiveCaptureBuffer(tt.bufferMS, tt.lateness, tt.lost)
 			if changed != tt.changed || ExclusiveCaptureBufferMS() != tt.want {
 				t.Fatalf("adapt = %d, %t; buffer %d ms; want %d ms, changed %t", got, changed, ExclusiveCaptureBufferMS(), tt.want, tt.changed)
@@ -78,7 +61,7 @@ func TestAdaptExclusiveBufferGrowth(t *testing.T) {
 }
 
 func TestAdaptExclusiveBufferNeverShrinksOverManyWindows(t *testing.T) {
-	setBufferState(t, true, 100)
+	setBufferState(t, 100)
 	adaptExclusiveCaptureBuffer(100, 80*ms, false)
 	// An hour of 5 s windows without lateness.
 	for i := 0; i < 720; i++ {
@@ -92,13 +75,9 @@ func TestAdaptExclusiveBufferNeverShrinksOverManyWindows(t *testing.T) {
 }
 
 func TestAdaptExclusiveBufferIgnoresStaleRecorder(t *testing.T) {
-	setBufferState(t, true, 140)
+	setBufferState(t, 140)
 	if _, changed := adaptExclusiveCaptureBuffer(100, 200*ms, true); changed || ExclusiveCaptureBufferMS() != 140 {
 		t.Fatalf("a recorder opened with another buffer changed it to %d ms", ExclusiveCaptureBufferMS())
-	}
-	setBufferState(t, false, ExclusiveCaptureBufferFixedMS)
-	if _, changed := adaptExclusiveCaptureBuffer(ExclusiveCaptureBufferFixedMS, 200*ms, true); changed || ExclusiveCaptureBufferMS() != ExclusiveCaptureBufferFixedMS {
-		t.Fatalf("fixed buffer changed to %d ms", ExclusiveCaptureBufferMS())
 	}
 }
 

@@ -32,7 +32,7 @@ import {InterfaceSettings} from "./features/settings/InterfaceSettings";
 import {AdminPanel} from "./features/admin/AdminPanel";
 import {StageScene} from "./features/settings/StageScene";
 import {HotkeySettings} from "./features/settings/HotkeySettings";
-import {loadForceMotion, saveForceMotion} from "./features/settings/motion";
+import {loadReduceMotion, saveReduceMotion} from "./features/settings/motion";
 
 const contentTabs = ["chat", "events"] as const;
 type ContentTab = typeof contentTabs[number] | `direct:${string}`;
@@ -805,7 +805,7 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
     updates: UpdatesState;
 }) {
     const {m} = useLocale();
-    const [forceMotion, setForceMotion] = useState(loadForceMotion);
+    const [reduceMotion, setReduceMotion] = useState(loadReduceMotion);
     const [sensitivity, setSensitivity] = useState(view.audio.vadSensitivity);
     useEffect(() => setSensitivity(view.audio.vadSensitivity), [view.audio.vadSensitivity]);
     const [rnnoiseSensitivity, setRNNoiseSensitivity] = useState(view.audio.rnnoiseSensitivity);
@@ -820,12 +820,8 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
     useEffect(() => setSoundVolume(view.soundVolume), [view.soundVolume]);
     const [closeToTray, setCloseToTrayState] = useState(false);
     const [rememberVolumes, setRememberVolumes] = useState(true);
-    const [adaptiveBuffer, setAdaptiveBuffer] = useState(true);
     useEffect(() => {
         let active = true;
-        void desktopAPI.exclusiveCaptureBufferAdaptive().then((value) => {
-            if (active) setAdaptiveBuffer(value);
-        }).catch(() => undefined);
         void desktopAPI.closeToTray().then((value) => {
             if (active) setCloseToTrayState(value);
         }).catch(() => undefined);
@@ -915,19 +911,6 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                                            value={microphoneGain} disabled={false}
                                            onChange={setMicrophoneGain}
                                            onCommit={(value) => invoke(() => desktopAPI.setMicrophoneGain(value))}/>
-                        <SettingToggle title={m.settings.adaptiveBuffer}
-                                       description={m.settings.adaptiveBufferHint}
-                                       checked={adaptiveBuffer}
-                                       onChange={async (value) => {
-                                           setAdaptiveBuffer(value);
-                                           try {
-                                               await desktopAPI.setExclusiveCaptureBufferAdaptive(value);
-                                           } catch (error) {
-                                               // The mode may have changed even if saving failed.
-                                               setAdaptiveBuffer(await desktopAPI.exclusiveCaptureBufferAdaptive().catch(() => !value));
-                                               setDevicesError(rawError(error));
-                                           }
-                                       }}/>
                     </section>
                     <section className="settings-card">
                         <SettingToggle title={m.settings.denoise}
@@ -985,8 +968,8 @@ function SettingsPage({view, invoke, appearance, setTheme, createCustomTheme, up
                         <LocaleSwitch labelledBy="locale-label"/>
                     </div>
                     <InterfaceSettings appearance={appearance} onTheme={(value) => invoke(() => setTheme(value))} onCreate={createCustomTheme} onChange={updateAppearance} onOpenSaved={openSavedTheme} onSave={saveNamedTheme} onImport={importThemeFile} onExport={exportTheme} onDelete={deleteSavedTheme}/>
-                    <SettingToggle title={m.settings.forceMotion} description={m.settings.forceMotionHint} checked={forceMotion}
-                                   onChange={async (value) => { saveForceMotion(value); setForceMotion(value); }}/>
+                    <SettingToggle title={m.settings.reduceMotion} description={m.settings.reduceMotionHint} checked={reduceMotion}
+                                   onChange={async (value) => { saveReduceMotion(value); setReduceMotion(value); }}/>
                 </section>
                 <section className="settings-card"><h3>{m.settings.sounds}</h3>
                     <Select id="sound-pack" label={m.settings.soundPack} hint={m.settings.soundPackHint}

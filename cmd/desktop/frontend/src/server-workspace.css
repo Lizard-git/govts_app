@@ -84,9 +84,7 @@
   15% { opacity: 1; }
   100% { opacity: 0; transform: scale(1); }
 }
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-force-motion]) .workspace-stage-art i { display: none; }
-}
+:root[data-reduce-motion] .workspace-stage-art i { display: none; }
 .stage-speaking-summary, .stage-member-summary { position: absolute; z-index: 2; top: 18px; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 128px); min-height: 25px; padding: 4px 10px; border-radius: 99px; color: var(--muted); background: color-mix(in srgb, var(--card) 45%, transparent); font-size: .6875rem; }
 .stage-speaking-summary { left: 18px; }
 .stage-speaking-summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -162,15 +162,13 @@
   .connection-hero h1 { font-size: 34px; }
   .connection-server-card { padding: 18px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-force-motion]) .connection-switch, :root:not([data-force-motion]) .connection-switch::after { transition: none; }
-  :root:not([data-force-motion]) .connection-rings::before { animation: none; }
-  :root:not([data-force-motion]) .connection-rings i { animation: none; opacity: .5; transform: scale(.2); }
-  :root:not([data-force-motion]) .connection-rings i:nth-child(2) { transform: scale(.34); }
-  :root:not([data-force-motion]) .connection-rings i:nth-child(3) { transform: scale(.48); }
-  :root:not([data-force-motion]) .connection-rings i:nth-child(4) { transform: scale(.62); }
-  :root:not([data-force-motion]) .connection-rings i:nth-child(5) { transform: scale(.76); }
-}
+:root[data-reduce-motion] .connection-switch, :root[data-reduce-motion] .connection-switch::after { transition: none; }
+:root[data-reduce-motion] .connection-rings::before { animation: none; }
+:root[data-reduce-motion] .connection-rings i { animation: none; opacity: .5; transform: scale(.2); }
+:root[data-reduce-motion] .connection-rings i:nth-child(2) { transform: scale(.34); }
+:root[data-reduce-motion] .connection-rings i:nth-child(3) { transform: scale(.48); }
+:root[data-reduce-motion] .connection-rings i:nth-child(4) { transform: scale(.62); }
+:root[data-reduce-motion] .connection-rings i:nth-child(5) { transform: scale(.76); }
 
 .connection-server-list .recent-server-label > .recent-server-version { font-size: 10px; line-height: 13px; color: var(--muted); }
 .server-key-change { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card-strong); text-align: left; font-size: .75rem; }

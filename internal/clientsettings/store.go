@@ -14,22 +14,19 @@ const version = 1
 
 // Settings contains desktop client preferences that survive application restarts.
 type Settings struct {
-	VoiceUplinkReserveKiB int     `json:"voiceUplinkReserveKiB,omitempty"`
-	DisplayName           string  `json:"displayName"`
-	CaptureDeviceID       string  `json:"captureDeviceId"`
-	PlaybackDeviceID      string  `json:"playbackDeviceId"`
-	Deafened              bool    `json:"deafened"`
-	RNNoiseEnabled        bool    `json:"rnnoiseEnabled"`
-	RNNoiseSensitivity    float32 `json:"rnnoiseSensitivity"`
-	MicrophoneGain        float32 `json:"microphoneGain"`
-	// ExclusiveCaptureBufferFixed turns off the adaptive WASAPI buffer of the
-	// exclusive-mode microphone fallback; it is then 180 ms. False is adaptive.
-	ExclusiveCaptureBufferFixed bool              `json:"exclusiveCaptureBufferFixed,omitempty"`
-	VADEnabled                  bool              `json:"vadEnabled"`
-	VADMode                     string            `json:"vadMode"`
-	VADSensitivity              float32           `json:"vadSensitivity"`
-	TrustedMediaKeys            map[string]string `json:"trustedMediaKeys,omitempty"`
-	Theme                       string            `json:"theme,omitempty"`
+	VoiceUplinkReserveKiB int               `json:"voiceUplinkReserveKiB,omitempty"`
+	DisplayName           string            `json:"displayName"`
+	CaptureDeviceID       string            `json:"captureDeviceId"`
+	PlaybackDeviceID      string            `json:"playbackDeviceId"`
+	Deafened              bool              `json:"deafened"`
+	RNNoiseEnabled        bool              `json:"rnnoiseEnabled"`
+	RNNoiseSensitivity    float32           `json:"rnnoiseSensitivity"`
+	MicrophoneGain        float32           `json:"microphoneGain"`
+	VADEnabled            bool              `json:"vadEnabled"`
+	VADMode               string            `json:"vadMode"`
+	VADSensitivity        float32           `json:"vadSensitivity"`
+	TrustedMediaKeys      map[string]string `json:"trustedMediaKeys,omitempty"`
+	Theme                 string            `json:"theme,omitempty"`
 	// Locale is the interface language: 2–8 lowercase letters, for example ru, en, ky.
 	// Empty means Russian. Unknown values are kept only if they match that shape,
 	// so a new language does not require a settings change. Version stays 1.

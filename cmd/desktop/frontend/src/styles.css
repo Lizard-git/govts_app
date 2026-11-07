@@ -53,8 +53,15 @@ select:hover:not(:disabled), select:focus { background-image: var(--field-chevro
   from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-blue) 45%, transparent); }
   to { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 28%, transparent); }
 }
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-force-motion]) :is(input, textarea, select, .app-select-trigger), :root:not([data-force-motion]) .app-select-trigger::after { transition: none; animation: none; }
+/* "Turn off animations" (features/settings/motion.ts). Windows reduced motion is
+   ignored. Near-zero durations instead of none keep every animation's end state. */
+:root[data-reduce-motion] *, :root[data-reduce-motion] *::before, :root[data-reduce-motion] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
 }
 
 h1, h2, h3, p { margin-top: 0; }

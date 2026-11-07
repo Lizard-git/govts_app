@@ -101,7 +101,7 @@ func TestAdaptBufferLatenessIsGapBeyondBuffer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setBufferState(t, true, 100)
+			setBufferState(t, 100)
 			r, clock := exclusiveRecorder(100)
 			adaptWindow(r, clock, tt.callbacks...)
 			if ExclusiveCaptureBufferMS() != tt.want {
@@ -113,7 +113,7 @@ func TestAdaptBufferLatenessIsGapBeyondBuffer(t *testing.T) {
 
 func TestAdaptBufferWaitsForWindowAndResetsCounters(t *testing.T) {
 	start := time.Unix(1000, 0)
-	setBufferState(t, true, 100)
+	setBufferState(t, 100)
 	r, _ := exclusiveRecorder(100)
 	r.adaptBuffer(start)
 
@@ -134,7 +134,7 @@ func TestAdaptBufferWaitsForWindowAndResetsCounters(t *testing.T) {
 
 func TestAdaptBufferDiscardsStartupWindow(t *testing.T) {
 	start := time.Unix(1000, 0)
-	setBufferState(t, true, 100)
+	setBufferState(t, 100)
 	r, _ := exclusiveRecorder(100)
 	// A gap and drops from the device start-up, before the first window.
 	r.maxGapNS.Store(int64(400 * ms))
@@ -163,7 +163,7 @@ func TestAdaptBufferDetectsLostAudio(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Unix(1000, 0)
-			setBufferState(t, true, 100)
+			setBufferState(t, 100)
 			r, _ := exclusiveRecorder(100)
 			r.adaptBuffer(start)
 			r.adaptFrames.Store(tt.frames)
@@ -178,7 +178,7 @@ func TestAdaptBufferDetectsLostAudio(t *testing.T) {
 
 func TestAdaptBufferIgnoresIdleReaderAndSharedStream(t *testing.T) {
 	start := time.Unix(1000, 0)
-	setBufferState(t, true, 100)
+	setBufferState(t, 100)
 
 	r, _ := exclusiveRecorder(100)
 	r.adaptBuffer(start)
@@ -198,7 +198,7 @@ func TestAdaptBufferIgnoresIdleReaderAndSharedStream(t *testing.T) {
 }
 
 func TestExclusiveQueueHoldsTwoBuffers(t *testing.T) {
-	for _, bufferMS := range []int{ExclusiveCaptureBufferStartMS, ExclusiveCaptureBufferFixedMS, ExclusiveCaptureBufferMaxMS} {
+	for _, bufferMS := range []int{ExclusiveCaptureBufferStartMS, 160, ExclusiveCaptureBufferMaxMS} {
 		r, _ := exclusiveRecorder(bufferMS)
 		chunks := 2 * bufferMS / ExclusiveCaptureBufferStepMS
 		pushChunks(r, chunks)
@@ -309,8 +309,8 @@ type bufferedDevice struct {
 
 func (d *bufferedDevice) ExclusiveBufferMS() int { return d.bufferMS }
 
-func TestSwitchableReopensWhenBufferModeChanges(t *testing.T) {
-	setBufferState(t, true, ExclusiveCaptureBufferStartMS)
+func TestSwitchableReopensWhenBufferGrows(t *testing.T) {
+	setBufferState(t, ExclusiveCaptureBufferStartMS)
 	jack := &endpoint{}
 	var mu sync.Mutex
 	var opened []int
@@ -332,14 +332,14 @@ func TestSwitchableReopensWhenBufferModeChanges(t *testing.T) {
 	defer recorder.Close()
 
 	readOne(t, recorder)
-	SetExclusiveCaptureBufferAdaptive(false)
+	adaptExclusiveCaptureBuffer(ExclusiveCaptureBufferStartMS, 0, true)
 	readOne(t, recorder)
 	readOne(t, recorder)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(opened) != 2 || opened[0] != ExclusiveCaptureBufferStartMS || opened[1] != ExclusiveCaptureBufferFixedMS {
-		t.Fatalf("opened with %v ms, want [%d %d]", opened, ExclusiveCaptureBufferStartMS, ExclusiveCaptureBufferFixedMS)
+	if len(opened) != 2 || opened[0] != ExclusiveCaptureBufferStartMS || opened[1] != ExclusiveCaptureBufferStartMS+ExclusiveCaptureBufferStepMS {
+		t.Fatalf("opened with %v ms, want [%d %d]", opened, ExclusiveCaptureBufferStartMS, ExclusiveCaptureBufferStartMS+ExclusiveCaptureBufferStepMS)
 	}
 	if !jack.held() {
 		t.Fatal("reopened device does not hold the endpoint")
